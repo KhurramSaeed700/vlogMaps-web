@@ -1,7 +1,7 @@
-"use client"
-
 import { CreatorVideoEditorPage } from "@/components/creator-video-editor-page"
 
-export default function EditCreatorVideoPage({ params }: { params: { id: string } }) {
-  return <CreatorVideoEditorPage id={params.id} />
+export default async function EditCreatorVideoPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+
+  return <CreatorVideoEditorPage id={id} />
 }
