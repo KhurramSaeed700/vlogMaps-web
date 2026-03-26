@@ -133,16 +133,21 @@ function CreatorApplicationContent() {
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         {isSubmitted && (
-          <Card className="mb-8 border-green-200 bg-green-50">
-            <CardContent className="flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="font-semibold text-green-900">Application queued for review</p>
-                <p className="text-sm text-green-800">
-                  This prototype now keeps the success state in-app. The next backend step is saving the form and files
-                  to a real review queue.
+          <Card className="mx-auto mb-8 max-w-2xl border-green-200 bg-green-50">
+            <CardContent className="space-y-6 p-8 text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-100">
+                <CheckCircle className="h-7 w-7 text-green-700" />
+              </div>
+              <div className="space-y-2">
+                <p className="text-2xl font-semibold text-green-950">Form submitted</p>
+                <p className="text-sm text-green-900">
+                  Your creator application has been submitted successfully. In a real backend flow, this would now be
+                  sent to the review queue.
                 </p>
               </div>
-              <Button onClick={() => router.push("/dashboard")}>Back to Dashboard</Button>
+              <div className="flex justify-center">
+                <Button onClick={() => router.push("/dashboard")}>Go Back</Button>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -159,6 +164,8 @@ function CreatorApplicationContent() {
           </p>
         </div>
 
+        {!isSubmitted && (
+          <>
         {/* Requirements Card */}
         <Card className="mb-8 border-blue-200 bg-blue-50/50">
           <CardHeader>
@@ -453,7 +460,7 @@ function CreatorApplicationContent() {
                     : `${validationErrors.length} item${validationErrors.length === 1 ? "" : "s"} still needed.`}
                 </p>
                 <Button type="submit" size="lg" disabled={isSubmitting} className="px-8">
-                  {isSubmitting ? "Submitting Application..." : isSubmitted ? "Submitted" : "Submit Application"}
+                  {isSubmitting ? "Submitting Application..." : "Submit Application"}
                 </Button>
               </div>
             </form>
@@ -497,6 +504,8 @@ function CreatorApplicationContent() {
             </div>
           </CardContent>
         </Card>
+          </>
+        )}
       </div>
     </div>
   )

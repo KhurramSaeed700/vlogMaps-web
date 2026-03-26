@@ -1,7 +1,7 @@
-"use client"
-
 import { WatchPageClient } from "@/components/watch-page-client"
 
-export default function WatchPage({ params }: { params: { id: string } }) {
-  return <WatchPageClient id={params.id} />
+export default async function WatchPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+
+  return <WatchPageClient id={id} />
 }
