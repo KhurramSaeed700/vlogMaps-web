@@ -26,12 +26,12 @@ export function WatchPageClient({ id }: { id: string }) {
   if (video === null) {
     return (
       <div className="min-h-screen bg-black p-6">
-        <Card>
-          <CardContent className="p-6 text-sm text-gray-500">
-            This video could not be found. If it was added from a pasted YouTube URL, recreate it from the creator workspace.
-          </CardContent>
-        </Card>
-      </div>
+          <Card>
+            <CardContent className="p-6 text-sm text-gray-500">
+            This video could not be found. If it came from a pasted YouTube URL, launch it again from the homepage or creator workspace.
+            </CardContent>
+          </Card>
+        </div>
     )
   }
 

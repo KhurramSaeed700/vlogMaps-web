@@ -84,7 +84,7 @@ export function WatchExperience({ video }: WatchExperienceProps) {
       <header className="absolute left-0 right-0 top-0 z-50 bg-black/80 p-4 backdrop-blur-sm">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <Link href="/dashboard">
+            <Link href="/">
               <Button variant="ghost" size="icon" className="text-white hover:bg-white/20">
                 <ArrowLeft className="h-5 w-5" />
               </Button>
