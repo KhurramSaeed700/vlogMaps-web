@@ -5,10 +5,7 @@ import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
 import { Button } from "@/components/ui/button"
 import { MapPin, Layers, Navigation, Satellite, MapIcon } from "lucide-react"
-
-// Set Mapbox access token
-mapboxgl.accessToken =
-  "pk.eyJ1Ijoia2h1cnJhbXNhZWVkIiwiYSI6ImNtYjY3bHViNDB5YnkycHNhcDdtMHRyZjgifQ.zBAB4G4S9K3js20sp7wDLw"
+import { mapboxAccessToken } from "@/lib/mapbox"
 
 interface Keyframe {
   time: number
@@ -31,11 +28,92 @@ export function MapboxTravelMap({
   onLocationClick,
   className = "w-full h-full",
 }: MapboxTravelMapProps) {
+  mapboxgl.accessToken = mapboxAccessToken
+
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<mapboxgl.Map | null>(null)
   const markerRef = useRef<mapboxgl.Marker | null>(null)
+  const keyframeMarkersRef = useRef<mapboxgl.Marker[]>([])
+  const onLocationClickRef = useRef(onLocationClick)
   const [mapStyle, setMapStyle] = useState("mapbox://styles/mapbox/streets-v12")
   const [isLoaded, setIsLoaded] = useState(false)
+
+  useEffect(() => {
+    onLocationClickRef.current = onLocationClick
+  }, [onLocationClick])
+
+  const clearKeyframeMarkers = () => {
+    keyframeMarkersRef.current.forEach((marker) => marker.remove())
+    keyframeMarkersRef.current = []
+  }
+
+  const drawRoute = (map: mapboxgl.Map) => {
+    clearKeyframeMarkers()
+
+    if (keyframes.length <= 1) {
+      return
+    }
+
+    const coordinates = keyframes.map((kf) => [kf.lng, kf.lat] as [number, number])
+
+    if (!map.getSource("route")) {
+      map.addSource("route", {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "LineString",
+            coordinates,
+          },
+        },
+      })
+    }
+
+    if (!map.getLayer("route")) {
+      map.addLayer({
+        id: "route",
+        type: "line",
+        source: "route",
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": "#3b82f6",
+          "line-width": 4,
+          "line-opacity": 0.8,
+        },
+      })
+    }
+
+    keyframeMarkersRef.current = keyframes.map((keyframe, index) => {
+      const el = document.createElement("button")
+      el.type = "button"
+      el.className = "keyframe-marker"
+      el.style.cssText = `
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background-color: #3b82f6;
+        border: 2px solid white;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 10px;
+        font-weight: bold;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      `
+      el.textContent = (index + 1).toString()
+      el.addEventListener("click", () => {
+        onLocationClickRef.current?.(keyframe)
+      })
+
+      return new mapboxgl.Marker(el).setLngLat([keyframe.lng, keyframe.lat]).addTo(map)
+    })
+  }
 
   // Initialize map
   useEffect(() => {
@@ -64,78 +142,22 @@ export function MapboxTravelMap({
     mapInstanceRef.current = map
     markerRef.current = marker
 
-    map.on("load", () => {
+    const handleMapLoad = () => {
       setIsLoaded(true)
+      drawRoute(map)
 
-      // Add route line if multiple keyframes exist
       if (keyframes.length > 1) {
-        const coordinates = keyframes.map((kf) => [kf.lng, kf.lat])
-
-        // Add route source
-        map.addSource("route", {
-          type: "geojson",
-          data: {
-            type: "Feature",
-            properties: {},
-            geometry: {
-              type: "LineString",
-              coordinates: coordinates,
-            },
-          },
-        })
-
-        // Add route layer
-        map.addLayer({
-          id: "route",
-          type: "line",
-          source: "route",
-          layout: {
-            "line-join": "round",
-            "line-cap": "round",
-          },
-          paint: {
-            "line-color": "#3b82f6",
-            "line-width": 4,
-            "line-opacity": 0.8,
-          },
-        })
-
-        // Add keyframe markers
-        keyframes.forEach((keyframe, index) => {
-          const el = document.createElement("div")
-          el.className = "keyframe-marker"
-          el.style.cssText = `
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            background-color: #3b82f6;
-            border: 2px solid white;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 10px;
-            font-weight: bold;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-          `
-          el.textContent = (index + 1).toString()
-
-          el.addEventListener("click", () => {
-            onLocationClick?.(keyframe)
-          })
-
-          new mapboxgl.Marker(el).setLngLat([keyframe.lng, keyframe.lat]).addTo(map)
-        })
-
-        // Fit map to show all keyframes
         const bounds = new mapboxgl.LngLatBounds()
         keyframes.forEach((kf) => bounds.extend([kf.lng, kf.lat]))
         map.fitBounds(bounds, { padding: 50 })
       }
-    })
+    }
+
+    map.on("load", handleMapLoad)
+    map.on("style.load", handleMapLoad)
 
     return () => {
+      clearKeyframeMarkers()
       map.remove()
       mapInstanceRef.current = null
       markerRef.current = null
@@ -148,11 +170,11 @@ export function MapboxTravelMap({
       // Update marker position
       markerRef.current.setLngLat([currentKeyframe.lng, currentKeyframe.lat])
 
-      // Fly to new location
-      mapInstanceRef.current.flyTo({
+      // Ease the marker across the route for a simple travel-style movement.
+      mapInstanceRef.current.easeTo({
         center: [currentKeyframe.lng, currentKeyframe.lat],
-        zoom: 12,
-        duration: 1500,
+        zoom: 10,
+        duration: 700,
         essential: true,
       })
     }

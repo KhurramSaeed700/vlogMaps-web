@@ -14,8 +14,19 @@ export function ClerkProviderWrapper({ children }: ClerkProviderWrapperProps) {
     throw new Error("Missing Publishable Key")
   }
 
+  const ClientClerkProvider = ClerkProvider as unknown as React.ComponentType<{
+    children: React.ReactNode
+    publishableKey: string
+    appearance?: {
+      baseTheme?: undefined
+      variables?: {
+        colorPrimary?: string
+      }
+    }
+  }>
+
   return (
-    <ClerkProvider
+    <ClientClerkProvider
       publishableKey={publishableKey}
       appearance={{
         baseTheme: undefined,
@@ -25,6 +36,6 @@ export function ClerkProviderWrapper({ children }: ClerkProviderWrapperProps) {
       }}
     >
       {children}
-    </ClerkProvider>
+    </ClientClerkProvider>
   )
 }

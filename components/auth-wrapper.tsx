@@ -2,19 +2,22 @@
 
 import type React from "react"
 
-import { SignedIn, SignedOut, RedirectToSignIn } from "@clerk/nextjs"
+import { RedirectToSignIn, useUser } from "@clerk/nextjs"
 
 interface AuthWrapperProps {
   children: React.ReactNode
 }
 
 export function AuthWrapper({ children }: AuthWrapperProps) {
-  return (
-    <>
-      <SignedIn>{children}</SignedIn>
-      <SignedOut>
-        <RedirectToSignIn />
-      </SignedOut>
-    </>
-  )
+  const { isLoaded, isSignedIn } = useUser()
+
+  if (!isLoaded) {
+    return null
+  }
+
+  if (!isSignedIn) {
+    return <RedirectToSignIn />
+  }
+
+  return <>{children}</>
 }

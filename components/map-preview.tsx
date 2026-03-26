@@ -4,10 +4,7 @@ import { useEffect, useRef } from "react"
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
 import { MapPin } from "lucide-react"
-
-// Set Mapbox access token
-mapboxgl.accessToken =
-  "pk.eyJ1Ijoia2h1cnJhbXNhZWVkIiwiYSI6ImNtYjY3bHViNDB5YnkycHNhcDdtMHRyZjgifQ.zBAB4G4S9K3js20sp7wDLw"
+import { mapboxAccessToken } from "@/lib/mapbox"
 
 interface MapPreviewProps {
   keyframes?: Array<{
@@ -19,6 +16,7 @@ interface MapPreviewProps {
 }
 
 export function MapPreview({ keyframes = [], className = "w-full h-32" }: MapPreviewProps) {
+  mapboxgl.accessToken = mapboxAccessToken
   const mapRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

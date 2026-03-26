@@ -1,6 +1,6 @@
 import type React from "react"
-import { ClerkProvider } from "@clerk/nextjs"
 import { Inter } from "next/font/google"
+import { ClerkProviderWrapper } from "@/components/clerk-provider-wrapper"
 import "./globals.css"
 
 const inter = Inter({ subsets: ["latin"] })
@@ -17,18 +17,10 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <ClerkProvider
-      publishableKey={process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
-      appearance={{
-        baseTheme: undefined,
-        variables: {
-          colorPrimary: "#2563eb",
-        },
-      }}
-    >
-      <html lang="en">
-        <body className={inter.className}>{children}</body>
-      </html>
-    </ClerkProvider>
+    <html lang="en">
+      <body className={inter.className}>
+        <ClerkProviderWrapper>{children}</ClerkProviderWrapper>
+      </body>
+    </html>
   )
 }

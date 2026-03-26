@@ -1,11 +1,16 @@
+"use client"
+
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { MapPin, Play, Users, Shield, Zap, Globe } from "lucide-react"
 import Link from "next/link"
-import { SignInButton, SignUpButton, SignedIn, SignedOut, UserButton } from "@clerk/nextjs"
+import { UserButton, useUser } from "@clerk/nextjs"
 
 export default function HomePage() {
+  const { isLoaded, isSignedIn } = useUser()
+  const showSignedIn = isLoaded && isSignedIn
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
       {/* Header */}
@@ -16,15 +21,17 @@ export default function HomePage() {
             <span className="text-2xl font-bold text-gray-900">TravelMap</span>
           </div>
           <div className="flex items-center gap-4">
-            <SignedOut>
-              <SignInButton>
+            {!showSignedIn ? (
+              <>
+              <Link href="/auth/login">
                 <Button variant="ghost">Sign In</Button>
-              </SignInButton>
-              <SignUpButton>
+              </Link>
+              <Link href="/auth/register">
                 <Button>Get Started</Button>
-              </SignUpButton>
-            </SignedOut>
-            <SignedIn>
+              </Link>
+              </>
+            ) : (
+              <>
               <Link href="/dashboard">
                 <Button variant="ghost">Dashboard</Button>
               </Link>
@@ -36,7 +43,8 @@ export default function HomePage() {
                   },
                 }}
               />
-            </SignedIn>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -57,22 +65,21 @@ export default function HomePage() {
             interactive map that updates in real-time with the video.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <SignedOut>
-              <SignUpButton>
+            {!showSignedIn ? (
+              <Link href="/auth/register">
                 <Button size="lg" className="text-lg px-8">
                   <Play className="h-5 w-5 mr-2" />
                   Start Watching
                 </Button>
-              </SignUpButton>
-            </SignedOut>
-            <SignedIn>
+              </Link>
+            ) : (
               <Link href="/dashboard">
                 <Button size="lg" className="text-lg px-8">
                   <Play className="h-5 w-5 mr-2" />
                   Go to Dashboard
                 </Button>
               </Link>
-            </SignedIn>
+            )}
             <Link href="/creator/apply">
               <Button size="lg" variant="outline" className="text-lg px-8">
                 <MapPin className="h-5 w-5 mr-2" />

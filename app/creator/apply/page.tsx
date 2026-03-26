@@ -2,7 +2,8 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -12,9 +13,10 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { MapPin, Upload, Youtube, Shield, CheckCircle, AlertCircle, ArrowLeft, FileText, Camera } from "lucide-react"
 import Link from "next/link"
-import { useUser, SignedIn, SignedOut, RedirectToSignIn } from "@clerk/nextjs"
+import { RedirectToSignIn, useUser } from "@clerk/nextjs"
 
 function CreatorApplicationContent() {
+  const router = useRouter()
   const { user } = useUser()
   const [formData, setFormData] = useState({
     fullName: user?.fullName || "",
@@ -29,8 +31,21 @@ function CreatorApplicationContent() {
     agreeToTerms: false,
     agreeToVerification: false,
   })
-  const [uploadedFiles, setUploadedFiles] = useState<string[]>([])
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSubmitted, setIsSubmitted] = useState(false)
+
+  useEffect(() => {
+    if (!user) {
+      return
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      fullName: prev.fullName || user.fullName || "",
+      email: prev.email || user.primaryEmailAddress?.emailAddress || "",
+    }))
+  }, [user])
 
   const handleInputChange = (field: string, value: string | boolean) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
@@ -39,8 +54,11 @@ function CreatorApplicationContent() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (files) {
-      const fileNames = Array.from(files).map((file) => file.name)
-      setUploadedFiles((prev) => [...prev, ...fileNames])
+      const nextFiles = Array.from(files)
+      setUploadedFiles((prev) => {
+        const existingNames = new Set(prev.map((file) => file.name))
+        return [...prev, ...nextFiles.filter((file) => !existingNames.has(file.name))]
+      })
     }
   }
 
@@ -48,17 +66,9 @@ function CreatorApplicationContent() {
     e.preventDefault()
     setIsSubmitting(true)
 
-    // TODO: Implement form submission to backend
-    console.log("Creator application:", formData, uploadedFiles)
-
-    // Simulate API call
     setTimeout(() => {
       setIsSubmitting(false)
-      alert(
-        "Application submitted successfully! Our team will review your application and contact you within 3-5 business days.",
-      )
-      // Redirect to dashboard
-      window.location.href = "/dashboard"
+      setIsSubmitted(true)
     }, 2000)
   }
 
@@ -89,6 +99,21 @@ function CreatorApplicationContent() {
       </header>
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
+        {isSubmitted && (
+          <Card className="mb-8 border-green-200 bg-green-50">
+            <CardContent className="flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="font-semibold text-green-900">Application queued for review</p>
+                <p className="text-sm text-green-800">
+                  This prototype now keeps the success state in-app. The next backend step is saving the form and files
+                  to a real review queue.
+                </p>
+              </div>
+              <Button onClick={() => router.push("/dashboard")}>Back to Dashboard</Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Header Section */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-2 mb-4">
@@ -309,7 +334,7 @@ function CreatorApplicationContent() {
                       {uploadedFiles.map((file, index) => (
                         <Badge key={index} variant="secondary" className="flex items-center gap-1">
                           <FileText className="h-3 w-3" />
-                          {file}
+                          {file.name}
                         </Badge>
                       ))}
                     </div>
@@ -374,7 +399,7 @@ function CreatorApplicationContent() {
               {/* Submit Button */}
               <div className="flex justify-end">
                 <Button type="submit" size="lg" disabled={!isFormValid() || isSubmitting} className="px-8">
-                  {isSubmitting ? "Submitting Application..." : "Submit Application"}
+                  {isSubmitting ? "Submitting Application..." : isSubmitted ? "Submitted" : "Submit Application"}
                 </Button>
               </div>
             </form>
@@ -394,7 +419,7 @@ function CreatorApplicationContent() {
                 </div>
                 <h4 className="font-semibold mb-2">Review Process</h4>
                 <p className="text-sm text-gray-600">
-                  Our team will review your application and verify your documents within 3-5 business days.
+                  Our team will review your application and verify your documents within 2 business days.
                 </p>
               </div>
               <div className="text-center">
@@ -424,14 +449,15 @@ function CreatorApplicationContent() {
 }
 
 export default function CreatorApplicationPage() {
-  return (
-    <>
-      <SignedIn>
-        <CreatorApplicationContent />
-      </SignedIn>
-      <SignedOut>
-        <RedirectToSignIn />
-      </SignedOut>
-    </>
-  )
+  const { isLoaded, isSignedIn } = useUser()
+
+  if (!isLoaded) {
+    return <div className="p-8 text-sm text-gray-500">Loading application form...</div>
+  }
+
+  if (!isSignedIn) {
+    return <RedirectToSignIn />
+  }
+
+  return <CreatorApplicationContent />
 }
