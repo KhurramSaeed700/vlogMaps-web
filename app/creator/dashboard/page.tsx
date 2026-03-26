@@ -1,62 +1,51 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
+import { RedirectToSignIn, UserButton, useUser } from "@clerk/nextjs"
+import { BarChart3, Edit, Eye, Heart, MapPin, Plus, Settings, Trash2, TrendingUp, Youtube } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { MapPin, Plus, Edit, Trash2, Eye, BarChart3, Settings, Youtube, Heart, TrendingUp } from "lucide-react"
-import Link from "next/link"
-import { useUser, SignedIn, SignedOut, RedirectToSignIn, UserButton } from "@clerk/nextjs"
-
-// Mock data for creator's videos
-const creatorVideos = [
-  {
-    id: 1,
-    title: "Epic Road Trip: New York to Los Angeles",
-    youtubeId: "dQw4w9WgXcQ",
-    status: "published",
-    keyframes: 6,
-    views: "125K",
-    mapViews: "89K",
-    likes: "3.2K",
-    createdAt: "2024-01-15",
-    thumbnail: "/placeholder.svg?height=120&width=200",
-  },
-  {
-    id: 2,
-    title: "Backpacking Through Europe: 30 Days",
-    youtubeId: "dQw4w9WgXcQ",
-    status: "draft",
-    keyframes: 12,
-    views: "0",
-    mapViews: "0",
-    likes: "0",
-    createdAt: "2024-01-20",
-    thumbnail: "/placeholder.svg?height=120&width=200",
-  },
-]
-
-const stats = {
-  totalVideos: 15,
-  totalViews: "2.3M",
-  totalMapViews: "1.8M",
-  avgEngagement: "12.5%",
-  monthlyGrowth: "+23%",
-}
+import { CreatorAccessGuard } from "@/components/creator-access-guard"
+import { creatorProfile, formatCompactNumber, formatDuration, type TravelVideo } from "@/lib/demo-data"
+import { loadCreatorPoints } from "@/lib/creator-points"
+import { getAllCreatorVideosClient } from "@/lib/creator-videos"
 
 function CreatorDashboardContent() {
   const { user } = useUser()
   const [searchQuery, setSearchQuery] = useState("")
+  const [allCreatorVideos, setAllCreatorVideos] = useState<TravelVideo[]>([])
 
-  const filteredVideos = creatorVideos.filter((video) => video.title.toLowerCase().includes(searchQuery.toLowerCase()))
+  useEffect(() => {
+    setAllCreatorVideos(getAllCreatorVideosClient())
+  }, [])
+
+  const creatorVideos = useMemo(
+    () => allCreatorVideos.filter((video) => video.title.toLowerCase().includes(searchQuery.toLowerCase())),
+    [allCreatorVideos, searchQuery],
+  )
+
+  const stats = useMemo(() => {
+    const totalViews = allCreatorVideos.reduce((sum, video) => sum + video.views, 0)
+    const totalMapViews = allCreatorVideos.reduce((sum, video) => sum + video.mapViews, 0)
+    const totalLikes = allCreatorVideos.reduce((sum, video) => sum + video.likes, 0)
+
+    return {
+      totalVideos: allCreatorVideos.length,
+      totalViews,
+      totalMapViews,
+      totalLikes,
+      avgEngagement: totalViews === 0 ? 0 : Math.round((totalLikes / totalViews) * 1000) / 10,
+    }
+  }, [allCreatorVideos])
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b">
+      <header className="border-b bg-white">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -72,7 +61,7 @@ function CreatorDashboardContent() {
             <div className="flex items-center gap-4">
               <Link href="/dashboard">
                 <Button variant="ghost">
-                  <Eye className="h-4 w-4 mr-2" />
+                  <Eye className="mr-2 h-4 w-4" />
                   Viewer Mode
                 </Button>
               </Link>
@@ -86,14 +75,12 @@ function CreatorDashboardContent() {
       </header>
 
       <div className="container mx-auto px-4 py-8">
-        {/* Welcome Section */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome back, {user?.firstName || "Creator"}! 👋</h1>
-          <p className="text-gray-600">Manage your travel videos and interactive maps from your creator dashboard.</p>
+          <h1 className="mb-2 text-3xl font-bold text-gray-900">Welcome back, {user?.firstName || "Creator"}!</h1>
+          <p className="text-gray-600">Manage your travel videos, map keyframes, and creator profile from one place.</p>
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
+        <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-5">
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -111,7 +98,7 @@ function CreatorDashboardContent() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total Views</p>
-                  <p className="text-2xl font-bold">{stats.totalViews}</p>
+                  <p className="text-2xl font-bold">{formatCompactNumber(stats.totalViews)}</p>
                 </div>
                 <Eye className="h-8 w-8 text-blue-500" />
               </div>
@@ -123,7 +110,7 @@ function CreatorDashboardContent() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Map Views</p>
-                  <p className="text-2xl font-bold">{stats.totalMapViews}</p>
+                  <p className="text-2xl font-bold">{formatCompactNumber(stats.totalMapViews)}</p>
                 </div>
                 <MapPin className="h-8 w-8 text-green-500" />
               </div>
@@ -134,8 +121,8 @@ function CreatorDashboardContent() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Engagement</p>
-                  <p className="text-2xl font-bold">{stats.avgEngagement}</p>
+                  <p className="text-sm font-medium text-gray-600">Likes</p>
+                  <p className="text-2xl font-bold">{formatCompactNumber(stats.totalLikes)}</p>
                 </div>
                 <Heart className="h-8 w-8 text-pink-500" />
               </div>
@@ -146,8 +133,8 @@ function CreatorDashboardContent() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Growth</p>
-                  <p className="text-2xl font-bold text-green-600">{stats.monthlyGrowth}</p>
+                  <p className="text-sm font-medium text-gray-600">Engagement</p>
+                  <p className="text-2xl font-bold text-green-600">{stats.avgEngagement}%</p>
                 </div>
                 <TrendingUp className="h-8 w-8 text-green-500" />
               </div>
@@ -163,7 +150,6 @@ function CreatorDashboardContent() {
           </TabsList>
 
           <TabsContent value="videos" className="space-y-6">
-            {/* Videos Header */}
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">My Videos</h2>
@@ -171,13 +157,12 @@ function CreatorDashboardContent() {
               </div>
               <Link href="/creator/video/new">
                 <Button>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add New Video
+                  <Plus className="mr-2 h-4 w-4" />
+                  Paste YouTube URL
                 </Button>
               </Link>
             </div>
 
-            {/* Search */}
             <div className="flex items-center gap-4">
               <div className="relative flex-1 max-w-md">
                 <Input
@@ -188,23 +173,18 @@ function CreatorDashboardContent() {
               </div>
             </div>
 
-            {/* Videos List */}
             <div className="space-y-4">
-              {filteredVideos.map((video) => (
+              {creatorVideos.map((video) => (
                 <Card key={video.id} className="overflow-hidden">
                   <div className="flex">
                     <div className="w-48 flex-shrink-0">
-                      <img
-                        src={video.thumbnail || "/placeholder.svg"}
-                        alt={video.title}
-                        className="w-full h-32 object-cover"
-                      />
+                      <img src={video.thumbnail || "/placeholder.svg"} alt={video.title} className="h-32 w-full object-cover" />
                     </div>
 
                     <CardContent className="flex-1 p-6">
-                      <div className="flex items-start justify-between mb-4">
+                      <div className="mb-4 flex items-start justify-between">
                         <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
+                          <div className="mb-2 flex items-center gap-2">
                             <h3 className="text-lg font-semibold">{video.title}</h3>
                             <Badge
                               variant={video.status === "published" ? "default" : "secondary"}
@@ -213,22 +193,22 @@ function CreatorDashboardContent() {
                               {video.status}
                             </Badge>
                           </div>
-                          <p className="text-sm text-gray-600 mb-2">YouTube ID: {video.youtubeId}</p>
+                          <p className="mb-2 text-sm text-gray-600">YouTube ID: {video.youtubeId}</p>
                           <p className="text-sm text-gray-500">
-                            Created: {new Date(video.createdAt).toLocaleDateString()}
+                            Created: {new Date(video.createdAt).toLocaleDateString()} - {formatDuration(video.durationSeconds)}
                           </p>
                         </div>
 
                         <div className="flex items-center gap-2">
                           <Link href={`/creator/video/${video.id}/edit`}>
                             <Button variant="outline" size="sm">
-                              <Edit className="h-4 w-4 mr-1" />
+                              <Edit className="mr-1 h-4 w-4" />
                               Edit
                             </Button>
                           </Link>
                           <Link href={`/watch/${video.id}`}>
                             <Button variant="outline" size="sm">
-                              <Eye className="h-4 w-4 mr-1" />
+                              <Eye className="mr-1 h-4 w-4" />
                               Preview
                             </Button>
                           </Link>
@@ -241,19 +221,19 @@ function CreatorDashboardContent() {
                       <div className="grid grid-cols-4 gap-4 text-sm">
                         <div>
                           <p className="text-gray-500">Keyframes</p>
-                          <p className="font-medium">{video.keyframes}</p>
+                          <p className="font-medium">{loadCreatorPoints(video.id, video.keyframes).length}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Views</p>
-                          <p className="font-medium">{video.views}</p>
+                          <p className="font-medium">{formatCompactNumber(video.views)}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Map Views</p>
-                          <p className="font-medium">{video.mapViews}</p>
+                          <p className="font-medium">{formatCompactNumber(video.mapViews)}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Likes</p>
-                          <p className="font-medium">{video.likes}</p>
+                          <p className="font-medium">{formatCompactNumber(video.likes)}</p>
                         </div>
                       </div>
                     </CardContent>
@@ -265,20 +245,20 @@ function CreatorDashboardContent() {
 
           <TabsContent value="analytics" className="space-y-6">
             <div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">Analytics</h2>
-              <p className="text-gray-600">Track your video performance and engagement</p>
+              <h2 className="mb-2 text-2xl font-bold text-gray-900">Analytics</h2>
+              <p className="text-gray-600">Track video performance and map engagement with route-aware signals.</p>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
               <Card>
                 <CardHeader>
                   <CardTitle>Views Over Time</CardTitle>
-                  <CardDescription>Video views vs Map interactions</CardDescription>
+                  <CardDescription>Video views compared with map interactions</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="h-64 bg-gray-100 rounded-lg flex items-center justify-center">
+                  <div className="flex h-64 items-center justify-center rounded-lg bg-gray-100">
                     <BarChart3 className="h-12 w-12 text-gray-400" />
-                    <span className="ml-2 text-gray-500">Chart placeholder</span>
+                    <span className="ml-2 text-gray-500">Connect real analytics next</span>
                   </div>
                 </CardContent>
               </Card>
@@ -290,17 +270,19 @@ function CreatorDashboardContent() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {creatorVideos.slice(0, 3).map((video, index) => (
-                      <div key={video.id} className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-bold">
-                          {index + 1}
+                    {[...allCreatorVideos]
+                      .sort((a, b) => b.mapViews - a.mapViews)
+                      .map((video, index) => (
+                        <div key={video.id} className="flex items-center gap-3">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600">
+                            {index + 1}
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">{video.title}</p>
+                            <p className="text-xs text-gray-500">{formatCompactNumber(video.mapViews)} map views</p>
+                          </div>
                         </div>
-                        <div className="flex-1">
-                          <p className="font-medium text-sm">{video.title}</p>
-                          <p className="text-xs text-gray-500">{video.mapViews} map views</p>
-                        </div>
-                      </div>
-                    ))}
+                      ))}
                   </div>
                 </CardContent>
               </Card>
@@ -309,8 +291,8 @@ function CreatorDashboardContent() {
 
           <TabsContent value="settings" className="space-y-6">
             <div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">Creator Settings</h2>
-              <p className="text-gray-600">Manage your creator profile and preferences</p>
+              <h2 className="mb-2 text-2xl font-bold text-gray-900">Creator Settings</h2>
+              <p className="text-gray-600">Manage your creator profile and the information shown with your videos.</p>
             </div>
 
             <div className="grid gap-6">
@@ -323,45 +305,18 @@ function CreatorDashboardContent() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="channelName">Channel Name</Label>
-                      <Input id="channelName" value="AdventureSeeker" readOnly />
+                      <Input id="channelName" value={creatorProfile.name} readOnly />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="channelUrl">Channel URL</Label>
-                      <Input id="channelUrl" value="https://youtube.com/@adventureseeker" readOnly />
+                      <Input id="channelUrl" value={creatorProfile.channelUrl} readOnly />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="bio">Channel Description</Label>
-                    <Input id="bio" placeholder="Tell viewers about your travel content..." />
+                    <Input id="bio" value={creatorProfile.description} readOnly />
                   </div>
                   <Button>Update Profile</Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Notification Preferences</CardTitle>
-                  <CardDescription>Choose how you want to be notified</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">New video views</p>
-                      <p className="text-sm text-gray-500">Get notified when your videos get new views</p>
-                    </div>
-                    <Button variant="outline" size="sm">
-                      Enable
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">Map interactions</p>
-                      <p className="text-sm text-gray-500">Get notified about map engagement</p>
-                    </div>
-                    <Button variant="outline" size="sm">
-                      Enable
-                    </Button>
-                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -373,14 +328,19 @@ function CreatorDashboardContent() {
 }
 
 export default function CreatorDashboardPage() {
+  const { isLoaded, isSignedIn } = useUser()
+
+  if (!isLoaded) {
+    return <div className="p-8 text-sm text-gray-500">Loading creator workspace...</div>
+  }
+
+  if (!isSignedIn) {
+    return <RedirectToSignIn />
+  }
+
   return (
-    <>
-      <SignedIn>
-        <CreatorDashboardContent />
-      </SignedIn>
-      <SignedOut>
-        <RedirectToSignIn />
-      </SignedOut>
-    </>
+    <CreatorAccessGuard>
+      <CreatorDashboardContent />
+    </CreatorAccessGuard>
   )
 }

@@ -1,253 +1,192 @@
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { MapPin, Play, Users, Shield, Zap, Globe } from "lucide-react"
+"use client"
+
+import { useEffect, useMemo, useState, useTransition } from "react"
 import Link from "next/link"
-import { SignInButton, SignUpButton, SignedIn, SignedOut, UserButton } from "@clerk/nextjs"
+import { useRouter } from "next/navigation"
+import { UserButton, useUser } from "@clerk/nextjs"
+import { Building2, Compass, MapPin, Mountain, Search, UtensilsCrossed, Waves } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { createInstantWatchVideo } from "@/lib/creator-videos"
+import { formatCompactNumber, formatDuration, getPublishedTravelVideos } from "@/lib/demo-data"
+
+const preferenceStorageKey = "travelmap:home-preference"
+
+const preferenceOptions = [
+  { id: "all", label: "All", icon: Compass },
+  { id: "road-trips", label: "Road Trips", icon: MapPin },
+  { id: "cities", label: "Cities", icon: Building2 },
+  { id: "beaches", label: "Beaches", icon: Waves },
+  { id: "mountains", label: "Mountains", icon: Mountain },
+  { id: "food", label: "Food", icon: UtensilsCrossed },
+] as const
+
+type PreferenceId = (typeof preferenceOptions)[number]["id"]
 
 export default function HomePage() {
+  const router = useRouter()
+  const { isLoaded, isSignedIn } = useUser()
+  const [youtubeUrl, setYoutubeUrl] = useState("")
+  const [selectedPreference, setSelectedPreference] = useState<PreferenceId>("all")
+  const [launcherError, setLauncherError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
+
+  useEffect(() => {
+    const savedPreference = window.localStorage.getItem(preferenceStorageKey) as PreferenceId | null
+    if (savedPreference && preferenceOptions.some((option) => option.id === savedPreference)) {
+      setSelectedPreference(savedPreference)
+    }
+  }, [])
+
+  const videos = useMemo(() => {
+    const publishedVideos = getPublishedTravelVideos()
+    const filtered =
+      selectedPreference === "all"
+        ? publishedVideos
+        : publishedVideos.filter((video) => video.tags?.includes(selectedPreference))
+
+    const nextVideos = filtered.length > 0 ? filtered : publishedVideos
+    return [...nextVideos].sort((a, b) => b.views - a.views)
+  }, [selectedPreference])
+
+  const handleLaunch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLauncherError(null)
+
+    try {
+      const video = createInstantWatchVideo({
+        youtubeUrl,
+        preferredTag: selectedPreference === "all" ? undefined : selectedPreference,
+      })
+
+      startTransition(() => {
+        router.push(`/watch/${video.id}`)
+      })
+    } catch (error) {
+      setLauncherError(error instanceof Error ? error.message : "Paste a valid YouTube link.")
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
-      {/* Header */}
-      <header className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-white text-slate-950">
+      <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex max-w-screen-2xl items-center gap-4 px-4 py-3">
+          <Link href="/" className="flex items-center gap-2 whitespace-nowrap">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-600 text-white">
+              <MapPin className="h-4 w-4" />
+            </div>
+            <span className="text-lg font-semibold">TravelMap</span>
+          </Link>
+
+          <form onSubmit={handleLaunch} className="mx-auto flex w-full max-w-2xl items-center">
+            <Input
+              value={youtubeUrl}
+              onChange={(event) => setYoutubeUrl(event.target.value)}
+              placeholder="Paste YouTube video link"
+              className="h-11 rounded-l-full rounded-r-none border-slate-300 bg-white px-4 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
+            <Button
+              type="submit"
+              size="icon"
+              disabled={isPending}
+              className="h-11 w-14 rounded-l-none rounded-r-full border border-l-0 border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200"
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+          </form>
+
           <div className="flex items-center gap-2">
-            <MapPin className="h-8 w-8 text-blue-600" />
-            <span className="text-2xl font-bold text-gray-900">TravelMap</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <SignedOut>
-              <SignInButton>
-                <Button variant="ghost">Sign In</Button>
-              </SignInButton>
-              <SignUpButton>
-                <Button>Get Started</Button>
-              </SignUpButton>
-            </SignedOut>
-            <SignedIn>
-              <Link href="/dashboard">
-                <Button variant="ghost">Dashboard</Button>
-              </Link>
+            {!isLoaded || !isSignedIn ? (
+              <>
+                <Link href="/auth/login" className="hidden sm:block">
+                  <Button variant="ghost" className="rounded-full">
+                    Sign In
+                  </Button>
+                </Link>
+                <Link href="/creator/apply" className="hidden md:block">
+                  <Button variant="outline" className="rounded-full">
+                    Creator
+                  </Button>
+                </Link>
+              </>
+            ) : (
               <UserButton
                 afterSignOutUrl="/"
                 appearance={{
                   elements: {
-                    avatarBox: "h-8 w-8",
+                    avatarBox: "h-9 w-9",
                   },
                 }}
               />
-            </SignedIn>
+            )}
           </div>
         </div>
+
+        {launcherError && (
+          <div className="border-t border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm text-amber-900">
+            {launcherError}
+          </div>
+        )}
       </header>
 
-      {/* Hero Section */}
-      <section className="py-20 px-4">
-        <div className="container mx-auto text-center max-w-4xl">
-          <Badge className="mb-4" variant="secondary">
-            <Zap className="h-4 w-4 mr-1" />
-            Interactive Travel Experience
-          </Badge>
-          <h1 className="text-5xl font-bold text-gray-900 mb-6 leading-tight">
-            Watch Travel Videos with
-            <span className="text-blue-600"> Live Interactive Maps</span>
-          </h1>
-          <p className="text-xl text-gray-600 mb-8 leading-relaxed">
-            Experience travel content like never before. Watch YouTube travel videos while following the journey on an
-            interactive map that updates in real-time with the video.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <SignedOut>
-              <SignUpButton>
-                <Button size="lg" className="text-lg px-8">
-                  <Play className="h-5 w-5 mr-2" />
-                  Start Watching
-                </Button>
-              </SignUpButton>
-            </SignedOut>
-            <SignedIn>
-              <Link href="/dashboard">
-                <Button size="lg" className="text-lg px-8">
-                  <Play className="h-5 w-5 mr-2" />
-                  Go to Dashboard
-                </Button>
-              </Link>
-            </SignedIn>
-            <Link href="/creator/apply">
-              <Button size="lg" variant="outline" className="text-lg px-8">
-                <MapPin className="h-5 w-5 mr-2" />
-                I'm a Creator
+      <main className="mx-auto max-w-screen-2xl px-4 py-6">
+        <div className="mb-6 flex flex-wrap gap-2">
+          {preferenceOptions.map((option) => {
+            const Icon = option.icon
+
+            return (
+              <Button
+                key={option.id}
+                type="button"
+                variant={selectedPreference === option.id ? "default" : "outline"}
+                className={
+                  selectedPreference === option.id
+                    ? "rounded-full bg-slate-950 text-white hover:bg-slate-800"
+                    : "rounded-full border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                }
+                onClick={() => {
+                  setSelectedPreference(option.id)
+                  window.localStorage.setItem(preferenceStorageKey, option.id)
+                }}
+              >
+                <Icon className="mr-2 h-4 w-4" />
+                {option.label}
               </Button>
-            </Link>
-          </div>
+            )
+          })}
         </div>
-      </section>
 
-      {/* Features Section */}
-      <section className="py-16 px-4 bg-white">
-        <div className="container mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-gray-900 mb-4">Two Ways to Experience Travel</h2>
-            <p className="text-gray-600 max-w-2xl mx-auto">
-              Whether you're exploring the world from your couch or sharing your adventures, we've got you covered.
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-            {/* Viewers */}
-            <Card className="border-2 hover:border-blue-200 transition-colors">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-blue-100 rounded-lg">
-                    <Users className="h-6 w-6 text-blue-600" />
+        <div className="grid gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+          {videos.map((video) => (
+            <Link key={video.id} href={`/watch/${video.id}`} className="group block">
+              <div className="space-y-3">
+                <div className="relative overflow-hidden rounded-2xl bg-slate-100">
+                  <img
+                    src={video.thumbnail || "/placeholder.svg"}
+                    alt={video.title}
+                    className="aspect-video w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+                  />
+                  <div className="absolute left-3 top-3">
+                    <Badge className="border-0 bg-black/75 text-white">Live map</Badge>
                   </div>
-                  <div>
-                    <CardTitle>For Viewers</CardTitle>
-                    <CardDescription>Explore the world through interactive travel videos</CardDescription>
+                  <div className="absolute bottom-3 right-3 rounded bg-black/80 px-2 py-1 text-xs text-white">
+                    {formatDuration(video.durationSeconds)}
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-start gap-3">
-                  <div className="w-2 h-2 bg-blue-600 rounded-full mt-2"></div>
-                  <p className="text-sm text-gray-600">Watch videos with synchronized interactive maps</p>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="w-2 h-2 bg-blue-600 rounded-full mt-2"></div>
-                  <p className="text-sm text-gray-600">Multiple viewing modes: split-screen or fullscreen map</p>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="w-2 h-2 bg-blue-600 rounded-full mt-2"></div>
-                  <p className="text-sm text-gray-600">Scrub through video to jump to different locations</p>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="w-2 h-2 bg-blue-600 rounded-full mt-2"></div>
-                  <p className="text-sm text-gray-600">Follow the journey in real-time on the map</p>
-                </div>
-              </CardContent>
-            </Card>
 
-            {/* Creators */}
-            <Card className="border-2 hover:border-green-200 transition-colors">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-green-100 rounded-lg">
-                    <Globe className="h-6 w-6 text-green-600" />
-                  </div>
-                  <div>
-                    <CardTitle>For Creators</CardTitle>
-                    <CardDescription>Link your travel videos to interactive maps</CardDescription>
-                  </div>
+                <div className="space-y-1 px-1">
+                  <h2 className="line-clamp-2 text-[15px] font-semibold leading-5 text-slate-950">{video.title}</h2>
+                  <p className="text-sm text-slate-600">{video.creator}</p>
+                  <p className="text-sm text-slate-500">
+                    {formatCompactNumber(video.views)} views • {video.locations[0]}
+                  </p>
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-start gap-3">
-                  <div className="w-2 h-2 bg-green-600 rounded-full mt-2"></div>
-                  <p className="text-sm text-gray-600">Easy dashboard to add keyframes and coordinates</p>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="w-2 h-2 bg-green-600 rounded-full mt-2"></div>
-                  <p className="text-sm text-gray-600">Verified creator program with security checks</p>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="w-2 h-2 bg-green-600 rounded-full mt-2"></div>
-                  <p className="text-sm text-gray-600">Link only your own YouTube videos</p>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="w-2 h-2 bg-green-600 rounded-full mt-2"></div>
-                  <p className="text-sm text-gray-600">Enhance viewer engagement with your content</p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      </section>
-
-      {/* How It Works */}
-      <section className="py-16 px-4 bg-gray-50">
-        <div className="container mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-gray-900 mb-4">How It Works</h2>
-            <p className="text-gray-600 max-w-2xl mx-auto">Simple steps to start your interactive travel experience</p>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            <div className="text-center">
-              <div className="w-16 h-16 bg-blue-600 text-white rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-4">
-                1
               </div>
-              <h3 className="text-xl font-semibold mb-2">Sign Up</h3>
-              <p className="text-gray-600">
-                Create your account and start as a viewer. Upgrade to creator later if you make travel content.
-              </p>
-            </div>
-            <div className="text-center">
-              <div className="w-16 h-16 bg-blue-600 text-white rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-4">
-                2
-              </div>
-              <h3 className="text-xl font-semibold mb-2">Watch & Explore</h3>
-              <p className="text-gray-600">
-                Browse travel videos with interactive maps. Follow journeys in real-time as you watch.
-              </p>
-            </div>
-            <div className="text-center">
-              <div className="w-16 h-16 bg-blue-600 text-white rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-4">
-                3
-              </div>
-              <h3 className="text-xl font-semibold mb-2">Create & Share</h3>
-              <p className="text-gray-600">
-                Apply to become a verified creator and link your own travel videos to interactive maps.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Security Section */}
-      <section className="py-16 px-4 bg-white">
-        <div className="container mx-auto text-center max-w-3xl">
-          <div className="flex items-center justify-center gap-3 mb-6">
-            <Shield className="h-8 w-8 text-green-600" />
-            <h2 className="text-3xl font-bold text-gray-900">Secure & Verified</h2>
-          </div>
-          <p className="text-lg text-gray-600 mb-8">
-            We take security seriously. Only verified creators can link their own YouTube videos to our interactive
-            maps. Our verification process ensures authenticity and prevents misuse.
-          </p>
-          <div className="grid sm:grid-cols-2 gap-6">
-            <div className="p-6 bg-green-50 rounded-lg">
-              <h3 className="font-semibold text-green-800 mb-2">Creator Verification</h3>
-              <p className="text-sm text-green-700">Multi-step verification process to confirm channel ownership</p>
-            </div>
-            <div className="p-6 bg-blue-50 rounded-lg">
-              <h3 className="font-semibold text-blue-800 mb-2">Secure Authentication</h3>
-              <p className="text-sm text-blue-700">Enterprise-grade security for all user accounts</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="bg-gray-900 text-white py-12 px-4">
-        <div className="container mx-auto text-center">
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <MapPin className="h-6 w-6" />
-            <span className="text-xl font-bold">TravelMap</span>
-          </div>
-          <p className="text-gray-400 mb-6">Experience travel content like never before with interactive maps.</p>
-          <div className="flex justify-center gap-6 text-sm text-gray-400">
-            <Link href="/privacy" className="hover:text-white">
-              Privacy Policy
             </Link>
-            <Link href="/terms" className="hover:text-white">
-              Terms of Service
-            </Link>
-            <Link href="/contact" className="hover:text-white">
-              Contact
-            </Link>
-          </div>
+          ))}
         </div>
-      </footer>
+      </main>
     </div>
   )
 }

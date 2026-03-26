@@ -2,7 +2,8 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -12,10 +13,12 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { MapPin, Upload, Youtube, Shield, CheckCircle, AlertCircle, ArrowLeft, FileText, Camera } from "lucide-react"
 import Link from "next/link"
-import { useUser, SignedIn, SignedOut, RedirectToSignIn } from "@clerk/nextjs"
+import { RedirectToSignIn, useUser } from "@clerk/nextjs"
 
 function CreatorApplicationContent() {
+  const router = useRouter()
   const { user } = useUser()
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [formData, setFormData] = useState({
     fullName: user?.fullName || "",
     email: user?.primaryEmailAddress?.emailAddress || "",
@@ -29,8 +32,22 @@ function CreatorApplicationContent() {
     agreeToTerms: false,
     agreeToVerification: false,
   })
-  const [uploadedFiles, setUploadedFiles] = useState<string[]>([])
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSubmitted, setIsSubmitted] = useState(false)
+  const [submitMessage, setSubmitMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!user) {
+      return
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      fullName: prev.fullName || user.fullName || "",
+      email: prev.email || user.primaryEmailAddress?.emailAddress || "",
+    }))
+  }, [user])
 
   const handleInputChange = (field: string, value: string | boolean) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
@@ -39,41 +56,67 @@ function CreatorApplicationContent() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (files) {
-      const fileNames = Array.from(files).map((file) => file.name)
-      setUploadedFiles((prev) => [...prev, ...fileNames])
+      const nextFiles = Array.from(files)
+      setUploadedFiles((prev) => {
+        const existingNames = new Set(prev.map((file) => file.name))
+        return [...prev, ...nextFiles.filter((file) => !existingNames.has(file.name))]
+      })
+      setSubmitMessage(null)
     }
+
+    event.target.value = ""
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (validationErrors.length > 0) {
+      setSubmitMessage(`Please complete: ${validationErrors.join(", ")}.`)
+      return
+    }
+
+    setSubmitMessage("Submitting your creator application...")
     setIsSubmitting(true)
 
-    // TODO: Implement form submission to backend
-    console.log("Creator application:", formData, uploadedFiles)
-
-    // Simulate API call
     setTimeout(() => {
       setIsSubmitting(false)
-      alert(
-        "Application submitted successfully! Our team will review your application and contact you within 3-5 business days.",
-      )
-      // Redirect to dashboard
-      window.location.href = "/dashboard"
+      setIsSubmitted(true)
+      setSubmitMessage("Application submitted. Our review queue would persist this in a real backend.")
     }, 2000)
   }
 
-  const isFormValid = () => {
-    return (
-      formData.fullName &&
-      formData.email &&
-      formData.channelName &&
-      formData.channelUrl &&
-      formData.subscriberCount &&
-      formData.agreeToTerms &&
-      formData.agreeToVerification &&
-      uploadedFiles.length > 0
-    )
-  }
+  const validationErrors = useMemo(() => {
+    const errors: string[] = []
+
+    if (!formData.fullName.trim()) {
+      errors.push("full name")
+    }
+    if (!formData.email.trim()) {
+      errors.push("email")
+    }
+    if (!formData.channelName.trim()) {
+      errors.push("channel name")
+    }
+    if (!formData.channelUrl.trim()) {
+      errors.push("channel URL")
+    }
+    if (!formData.subscriberCount.trim()) {
+      errors.push("subscriber count")
+    }
+    if (!formData.travelContentPercentage.trim()) {
+      errors.push("travel content percentage")
+    }
+    if (!formData.agreeToTerms) {
+      errors.push("creator terms")
+    }
+    if (!formData.agreeToVerification) {
+      errors.push("verification consent")
+    }
+    if (uploadedFiles.length === 0) {
+      errors.push("verification files")
+    }
+
+    return errors
+  }, [formData, uploadedFiles.length])
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
@@ -89,6 +132,26 @@ function CreatorApplicationContent() {
       </header>
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
+        {isSubmitted && (
+          <Card className="mx-auto mb-8 max-w-2xl border-green-200 bg-green-50">
+            <CardContent className="space-y-6 p-8 text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-100">
+                <CheckCircle className="h-7 w-7 text-green-700" />
+              </div>
+              <div className="space-y-2">
+                <p className="text-2xl font-semibold text-green-950">Form submitted</p>
+                <p className="text-sm text-green-900">
+                  Your creator application has been submitted successfully. In a real backend flow, this would now be
+                  sent to the review queue.
+                </p>
+              </div>
+              <div className="flex justify-center">
+                <Button onClick={() => router.push("/dashboard")}>Go Back</Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Header Section */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-2 mb-4">
@@ -101,6 +164,8 @@ function CreatorApplicationContent() {
           </p>
         </div>
 
+        {!isSubmitted && (
+          <>
         {/* Requirements Card */}
         <Card className="mb-8 border-blue-200 bg-blue-50/50">
           <CardHeader>
@@ -154,6 +219,18 @@ function CreatorApplicationContent() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
+              {submitMessage && (
+                <div
+                  className={`rounded-lg border px-4 py-3 text-sm ${
+                    validationErrors.length > 0 && !isSubmitted
+                      ? "border-amber-200 bg-amber-50 text-amber-900"
+                      : "border-blue-200 bg-blue-50 text-blue-900"
+                  }`}
+                >
+                  {submitMessage}
+                </div>
+              )}
+
               {/* Personal Information */}
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
@@ -288,6 +365,7 @@ function CreatorApplicationContent() {
                     Required: Government ID, Channel ownership proof (screenshot of YouTube Studio)
                   </p>
                   <input
+                    ref={fileInputRef}
                     type="file"
                     multiple
                     accept=".pdf,.jpg,.jpeg,.png"
@@ -295,11 +373,14 @@ function CreatorApplicationContent() {
                     className="hidden"
                     id="file-upload"
                   />
-                  <Label htmlFor="file-upload">
-                    <Button type="button" variant="outline" className="cursor-pointer">
-                      Choose Files
-                    </Button>
-                  </Label>
+                  <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                    Choose Files
+                  </Button>
+                  <p className="mt-3 text-xs text-gray-500">
+                    {uploadedFiles.length > 0
+                      ? `${uploadedFiles.length} file${uploadedFiles.length === 1 ? "" : "s"} selected`
+                      : "No files selected yet"}
+                  </p>
                 </div>
 
                 {uploadedFiles.length > 0 && (
@@ -309,7 +390,7 @@ function CreatorApplicationContent() {
                       {uploadedFiles.map((file, index) => (
                         <Badge key={index} variant="secondary" className="flex items-center gap-1">
                           <FileText className="h-3 w-3" />
-                          {file}
+                          {file.name}
                         </Badge>
                       ))}
                     </div>
@@ -372,8 +453,13 @@ function CreatorApplicationContent() {
               </div>
 
               {/* Submit Button */}
-              <div className="flex justify-end">
-                <Button type="submit" size="lg" disabled={!isFormValid() || isSubmitting} className="px-8">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <p className="text-sm text-gray-500">
+                  {validationErrors.length === 0
+                    ? "Everything looks ready to submit."
+                    : `${validationErrors.length} item${validationErrors.length === 1 ? "" : "s"} still needed.`}
+                </p>
+                <Button type="submit" size="lg" disabled={isSubmitting} className="px-8">
                   {isSubmitting ? "Submitting Application..." : "Submit Application"}
                 </Button>
               </div>
@@ -394,7 +480,7 @@ function CreatorApplicationContent() {
                 </div>
                 <h4 className="font-semibold mb-2">Review Process</h4>
                 <p className="text-sm text-gray-600">
-                  Our team will review your application and verify your documents within 3-5 business days.
+                  Our team will review your application and verify your documents within 2 business days.
                 </p>
               </div>
               <div className="text-center">
@@ -418,20 +504,23 @@ function CreatorApplicationContent() {
             </div>
           </CardContent>
         </Card>
+          </>
+        )}
       </div>
     </div>
   )
 }
 
 export default function CreatorApplicationPage() {
-  return (
-    <>
-      <SignedIn>
-        <CreatorApplicationContent />
-      </SignedIn>
-      <SignedOut>
-        <RedirectToSignIn />
-      </SignedOut>
-    </>
-  )
+  const { isLoaded, isSignedIn } = useUser()
+
+  if (!isLoaded) {
+    return <div className="p-8 text-sm text-gray-500">Loading application form...</div>
+  }
+
+  if (!isSignedIn) {
+    return <RedirectToSignIn />
+  }
+
+  return <CreatorApplicationContent />
 }
