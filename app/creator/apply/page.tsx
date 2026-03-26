@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -18,6 +18,7 @@ import { RedirectToSignIn, useUser } from "@clerk/nextjs"
 function CreatorApplicationContent() {
   const router = useRouter()
   const { user } = useUser()
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [formData, setFormData] = useState({
     fullName: user?.fullName || "",
     email: user?.primaryEmailAddress?.emailAddress || "",
@@ -34,6 +35,7 @@ function CreatorApplicationContent() {
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSubmitted, setIsSubmitted] = useState(false)
+  const [submitMessage, setSubmitMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (!user) {
@@ -59,31 +61,62 @@ function CreatorApplicationContent() {
         const existingNames = new Set(prev.map((file) => file.name))
         return [...prev, ...nextFiles.filter((file) => !existingNames.has(file.name))]
       })
+      setSubmitMessage(null)
     }
+
+    event.target.value = ""
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (validationErrors.length > 0) {
+      setSubmitMessage(`Please complete: ${validationErrors.join(", ")}.`)
+      return
+    }
+
+    setSubmitMessage("Submitting your creator application...")
     setIsSubmitting(true)
 
     setTimeout(() => {
       setIsSubmitting(false)
       setIsSubmitted(true)
+      setSubmitMessage("Application submitted. Our review queue would persist this in a real backend.")
     }, 2000)
   }
 
-  const isFormValid = () => {
-    return (
-      formData.fullName &&
-      formData.email &&
-      formData.channelName &&
-      formData.channelUrl &&
-      formData.subscriberCount &&
-      formData.agreeToTerms &&
-      formData.agreeToVerification &&
-      uploadedFiles.length > 0
-    )
-  }
+  const validationErrors = useMemo(() => {
+    const errors: string[] = []
+
+    if (!formData.fullName.trim()) {
+      errors.push("full name")
+    }
+    if (!formData.email.trim()) {
+      errors.push("email")
+    }
+    if (!formData.channelName.trim()) {
+      errors.push("channel name")
+    }
+    if (!formData.channelUrl.trim()) {
+      errors.push("channel URL")
+    }
+    if (!formData.subscriberCount.trim()) {
+      errors.push("subscriber count")
+    }
+    if (!formData.travelContentPercentage.trim()) {
+      errors.push("travel content percentage")
+    }
+    if (!formData.agreeToTerms) {
+      errors.push("creator terms")
+    }
+    if (!formData.agreeToVerification) {
+      errors.push("verification consent")
+    }
+    if (uploadedFiles.length === 0) {
+      errors.push("verification files")
+    }
+
+    return errors
+  }, [formData, uploadedFiles.length])
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
@@ -179,6 +212,18 @@ function CreatorApplicationContent() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
+              {submitMessage && (
+                <div
+                  className={`rounded-lg border px-4 py-3 text-sm ${
+                    validationErrors.length > 0 && !isSubmitted
+                      ? "border-amber-200 bg-amber-50 text-amber-900"
+                      : "border-blue-200 bg-blue-50 text-blue-900"
+                  }`}
+                >
+                  {submitMessage}
+                </div>
+              )}
+
               {/* Personal Information */}
               <div className="space-y-4">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
@@ -313,6 +358,7 @@ function CreatorApplicationContent() {
                     Required: Government ID, Channel ownership proof (screenshot of YouTube Studio)
                   </p>
                   <input
+                    ref={fileInputRef}
                     type="file"
                     multiple
                     accept=".pdf,.jpg,.jpeg,.png"
@@ -320,11 +366,14 @@ function CreatorApplicationContent() {
                     className="hidden"
                     id="file-upload"
                   />
-                  <Label htmlFor="file-upload">
-                    <Button type="button" variant="outline" className="cursor-pointer">
-                      Choose Files
-                    </Button>
-                  </Label>
+                  <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                    Choose Files
+                  </Button>
+                  <p className="mt-3 text-xs text-gray-500">
+                    {uploadedFiles.length > 0
+                      ? `${uploadedFiles.length} file${uploadedFiles.length === 1 ? "" : "s"} selected`
+                      : "No files selected yet"}
+                  </p>
                 </div>
 
                 {uploadedFiles.length > 0 && (
@@ -397,8 +446,13 @@ function CreatorApplicationContent() {
               </div>
 
               {/* Submit Button */}
-              <div className="flex justify-end">
-                <Button type="submit" size="lg" disabled={!isFormValid() || isSubmitting} className="px-8">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <p className="text-sm text-gray-500">
+                  {validationErrors.length === 0
+                    ? "Everything looks ready to submit."
+                    : `${validationErrors.length} item${validationErrors.length === 1 ? "" : "s"} still needed.`}
+                </p>
+                <Button type="submit" size="lg" disabled={isSubmitting} className="px-8">
                   {isSubmitting ? "Submitting Application..." : isSubmitted ? "Submitted" : "Submit Application"}
                 </Button>
               </div>
