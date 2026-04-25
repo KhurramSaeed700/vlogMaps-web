@@ -12,17 +12,35 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CreatorAccessGuard } from "@/components/creator-access-guard"
 import { creatorProfile, formatCompactNumber, formatDuration, type TravelVideo } from "@/lib/demo-data"
-import { loadCreatorPoints } from "@/lib/creator-points"
-import { getAllCreatorVideosClient } from "@/lib/creator-videos"
+import { clearCreatorPoints, loadCreatorPoints } from "@/lib/creator-points"
+import { deleteLocalCreatorVideo, getAllCreatorVideosClient } from "@/lib/creator-videos"
 
 function CreatorDashboardContent() {
   const { user } = useUser()
   const [searchQuery, setSearchQuery] = useState("")
   const [allCreatorVideos, setAllCreatorVideos] = useState<TravelVideo[]>([])
+  const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
 
   useEffect(() => {
     setAllCreatorVideos(getAllCreatorVideosClient())
   }, [])
+
+  const handleDeleteVideo = (videoId: string, videoTitle: string) => {
+    const shouldDelete = window.confirm(`Delete "${videoTitle}" and all of its saved timestamp points?`)
+    if (!shouldDelete) {
+      return
+    }
+
+    setDeletingVideoId(videoId)
+
+    const deleted = deleteLocalCreatorVideo(videoId)
+    if (deleted) {
+      clearCreatorPoints(videoId)
+      setAllCreatorVideos((currentVideos) => currentVideos.filter((video) => video.id !== videoId))
+    }
+
+    setDeletingVideoId(null)
+  }
 
   const creatorVideos = useMemo(
     () => allCreatorVideos.filter((video) => video.title.toLowerCase().includes(searchQuery.toLowerCase())),
@@ -174,72 +192,89 @@ function CreatorDashboardContent() {
             </div>
 
             <div className="space-y-4">
-              {creatorVideos.map((video) => (
-                <Card key={video.id} className="overflow-hidden">
-                  <div className="flex">
-                    <div className="w-48 flex-shrink-0">
-                      <img src={video.thumbnail || "/placeholder.svg"} alt={video.title} className="h-32 w-full object-cover" />
-                    </div>
-
-                    <CardContent className="flex-1 p-6">
-                      <div className="mb-4 flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="mb-2 flex items-center gap-2">
-                            <h3 className="text-lg font-semibold">{video.title}</h3>
-                            <Badge
-                              variant={video.status === "published" ? "default" : "secondary"}
-                              className={video.status === "published" ? "bg-green-100 text-green-800" : ""}
-                            >
-                              {video.status}
-                            </Badge>
-                          </div>
-                          <p className="mb-2 text-sm text-gray-600">YouTube ID: {video.youtubeId}</p>
-                          <p className="text-sm text-gray-500">
-                            Created: {new Date(video.createdAt).toLocaleDateString()} - {formatDuration(video.durationSeconds)}
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <Link href={`/creator/video/${video.id}/edit`}>
-                            <Button variant="outline" size="sm">
-                              <Edit className="mr-1 h-4 w-4" />
-                              Edit
-                            </Button>
-                          </Link>
-                          <Link href={`/watch/${video.id}`}>
-                            <Button variant="outline" size="sm">
-                              <Eye className="mr-1 h-4 w-4" />
-                              Preview
-                            </Button>
-                          </Link>
-                          <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-4 gap-4 text-sm">
-                        <div>
-                          <p className="text-gray-500">Keyframes</p>
-                          <p className="font-medium">{loadCreatorPoints(video.id, video.keyframes).length}</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Views</p>
-                          <p className="font-medium">{formatCompactNumber(video.views)}</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Map Views</p>
-                          <p className="font-medium">{formatCompactNumber(video.mapViews)}</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Likes</p>
-                          <p className="font-medium">{formatCompactNumber(video.likes)}</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </div>
+              {creatorVideos.length === 0 ? (
+                <Card>
+                  <CardContent className="p-10 text-center">
+                    <p className="text-base font-medium text-gray-900">No creator videos yet</p>
+                    <p className="mt-2 text-sm text-gray-500">
+                      Demo videos have been removed. Paste a YouTube URL to create your first mapped draft.
+                    </p>
+                  </CardContent>
                 </Card>
-              ))}
+              ) : (
+                creatorVideos.map((video) => (
+                  <Card key={video.id} className="overflow-hidden">
+                    <div className="flex">
+                      <div className="w-48 flex-shrink-0">
+                        <img src={video.thumbnail || "/placeholder.svg"} alt={video.title} className="h-32 w-full object-cover" />
+                      </div>
+
+                      <CardContent className="flex-1 p-6">
+                        <div className="mb-4 flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="mb-2 flex items-center gap-2">
+                              <h3 className="text-lg font-semibold">{video.title}</h3>
+                              <Badge
+                                variant={video.status === "published" ? "default" : "secondary"}
+                                className={video.status === "published" ? "bg-green-100 text-green-800" : ""}
+                              >
+                                {video.status}
+                              </Badge>
+                            </div>
+                            <p className="mb-2 text-sm text-gray-600">YouTube ID: {video.youtubeId}</p>
+                            <p className="text-sm text-gray-500">
+                              Created: {new Date(video.createdAt).toLocaleDateString()} - {formatDuration(video.durationSeconds)}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <Link href={`/creator/video/${video.id}/edit`}>
+                              <Button variant="outline" size="sm">
+                                <Edit className="mr-1 h-4 w-4" />
+                                Edit
+                              </Button>
+                            </Link>
+                            <Link href={`/watch/${video.id}`}>
+                              <Button variant="outline" size="sm">
+                                <Eye className="mr-1 h-4 w-4" />
+                                Preview
+                              </Button>
+                            </Link>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-red-600 hover:text-red-700"
+                              onClick={() => handleDeleteVideo(video.id, video.title)}
+                              disabled={deletingVideoId === video.id}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <p className="text-gray-500">Keyframes</p>
+                            <p className="font-medium">{loadCreatorPoints(video.id, video.keyframes).length}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500">Views</p>
+                            <p className="font-medium">{formatCompactNumber(video.views)}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500">Map Views</p>
+                            <p className="font-medium">{formatCompactNumber(video.mapViews)}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500">Likes</p>
+                            <p className="font-medium">{formatCompactNumber(video.likes)}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </div>
+                  </Card>
+                ))
+              )}
             </div>
           </TabsContent>
 
@@ -269,21 +304,25 @@ function CreatorDashboardContent() {
                   <CardDescription>Based on map engagement</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    {[...allCreatorVideos]
-                      .sort((a, b) => b.mapViews - a.mapViews)
-                      .map((video, index) => (
-                        <div key={video.id} className="flex items-center gap-3">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600">
-                            {index + 1}
+                  {allCreatorVideos.length === 0 ? (
+                    <p className="text-sm text-gray-500">Create a video first to see engagement rankings here.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {[...allCreatorVideos]
+                        .sort((a, b) => b.mapViews - a.mapViews)
+                        .map((video, index) => (
+                          <div key={video.id} className="flex items-center gap-3">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600">
+                              {index + 1}
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-sm font-medium">{video.title}</p>
+                              <p className="text-xs text-gray-500">{formatCompactNumber(video.mapViews)} map views</p>
+                            </div>
                           </div>
-                          <div className="flex-1">
-                            <p className="text-sm font-medium">{video.title}</p>
-                            <p className="text-xs text-gray-500">{formatCompactNumber(video.mapViews)} map views</p>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
+                        ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>

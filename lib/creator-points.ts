@@ -55,6 +55,14 @@ export function saveCreatorPoints(videoId: string, points: CreatorMapPoint[]) {
   window.localStorage.setItem(getStorageKey(videoId), JSON.stringify(sortCreatorPoints(points)))
 }
 
+export function clearCreatorPoints(videoId: string) {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  window.localStorage.removeItem(getStorageKey(videoId))
+}
+
 export function upsertCreatorPoint(videoId: string, points: CreatorMapPoint[], point: Omit<CreatorMapPoint, "id"> & { id?: string }) {
   const nextPoint: CreatorMapPoint = {
     ...point,

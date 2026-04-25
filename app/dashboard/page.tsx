@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { RedirectToSignIn, UserButton, useUser } from "@clerk/nextjs"
 import { Clock, Eye, Filter, Grid, Heart, List, MapPin, Play, Search, Settings, Share2 } from "lucide-react"
@@ -8,9 +8,12 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MapPreview } from "@/components/map-preview"
-import { formatCompactNumber, formatDuration, travelVideos } from "@/lib/demo-data"
+import { getPublishedTravelVideosClient } from "@/lib/creator-videos"
+import { formatCompactNumber, formatDuration } from "@/lib/demo-data"
+import { hydrateTravelVideos, toHydratedTravelVideo, type HydratedTravelVideo } from "@/lib/youtube-client"
 
 type TabKey = "all" | "trending" | "recent" | "favorites"
 
@@ -18,27 +21,44 @@ function DashboardContent() {
   const { user } = useUser()
   const [searchQuery, setSearchQuery] = useState("")
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
+  const [videos, setVideos] = useState<HydratedTravelVideo[]>([])
+
+  useEffect(() => {
+    const baseVideos = getPublishedTravelVideosClient()
+    setVideos(baseVideos.map(toHydratedTravelVideo))
+
+    let isMounted = true
+    hydrateTravelVideos(baseVideos).then((nextVideos) => {
+      if (isMounted) {
+        setVideos(nextVideos)
+      }
+    })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   const filteredByQuery = useMemo(() => {
-    return travelVideos.filter(
+    return videos.filter(
       (video) =>
         video.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         video.creator.toLowerCase().includes(searchQuery.toLowerCase()) ||
         video.locations.some((location) => location.toLowerCase().includes(searchQuery.toLowerCase())),
     )
-  }, [searchQuery])
+  }, [searchQuery, videos])
 
-  const videosByTab = useMemo<Record<TabKey, typeof travelVideos>>(
+  const videosByTab = useMemo<Record<TabKey, HydratedTravelVideo[]>>(
     () => ({
       all: filteredByQuery,
       trending: [...filteredByQuery].sort((a, b) => b.views - a.views).slice(0, 2),
       recent: [...filteredByQuery].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
-      favorites: filteredByQuery.filter((video) => video.id !== "3"),
+      favorites: filteredByQuery.slice(0, 3),
     }),
     [filteredByQuery],
   )
 
-  const renderVideoCard = (video: (typeof travelVideos)[number]) => (
+  const renderVideoCard = (video: HydratedTravelVideo) => (
     <Card key={video.id} className="overflow-hidden transition-shadow hover:shadow-lg">
       <div className="relative">
         <div className="mb-2 h-32">
@@ -55,22 +75,39 @@ function DashboardContent() {
       </div>
 
       <CardContent className="p-4">
-        <h3 className="mb-2 line-clamp-2 text-lg font-semibold">{video.title}</h3>
-        <p className="mb-2 text-sm text-gray-600">by {video.creator}</p>
-        <p className="mb-3 line-clamp-2 text-sm text-gray-500">{video.description}</p>
-
-        <div className="mb-3 flex items-center justify-between text-sm text-gray-500">
-          <div className="flex items-center gap-4">
-            <span className="flex items-center gap-1">
-              <Eye className="h-4 w-4" />
-              {formatCompactNumber(video.views)}
-            </span>
-            <span className="flex items-center gap-1">
-              <Heart className="h-4 w-4" />
-              {formatCompactNumber(video.likes)}
-            </span>
+        {video.isMetadataLoading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-5 w-11/12" />
+            <Skeleton className="h-4 w-2/5" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-1/3" />
           </div>
-        </div>
+        ) : (
+          <>
+            <h3 className="mb-2 line-clamp-2 text-lg font-semibold">{video.title}</h3>
+            <p className="mb-2 text-sm text-gray-600">by {video.creator}</p>
+            <p className="mb-3 line-clamp-2 text-sm text-gray-500">{video.description}</p>
+
+            {video.hasLiveViewCount || video.hasLiveLikeCount ? (
+              <div className="mb-3 flex items-center justify-between text-sm text-gray-500">
+                <div className="flex items-center gap-4">
+                  {video.hasLiveViewCount ? (
+                    <span className="flex items-center gap-1">
+                      <Eye className="h-4 w-4" />
+                      {formatCompactNumber(video.views)}
+                    </span>
+                  ) : null}
+                  {video.hasLiveLikeCount ? (
+                    <span className="flex items-center gap-1">
+                      <Heart className="h-4 w-4" />
+                      {formatCompactNumber(video.likes)}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </>
+        )}
 
         <div className="mb-4 flex flex-wrap gap-1">
           {video.locations.slice(0, 3).map((location) => (
@@ -100,7 +137,7 @@ function DashboardContent() {
     </Card>
   )
 
-  const renderVideoList = (video: (typeof travelVideos)[number]) => (
+  const renderVideoList = (video: HydratedTravelVideo) => (
     <Card key={video.id} className="overflow-hidden transition-shadow hover:shadow-lg">
       <div className="flex">
         <div className="relative w-80 flex-shrink-0">
@@ -115,67 +152,89 @@ function DashboardContent() {
         </div>
 
         <CardContent className="flex-1 p-4">
-          <div className="mb-2 flex items-start justify-between">
-            <h3 className="line-clamp-2 flex-1 text-lg font-semibold">{video.title}</h3>
-            <div className="ml-4 flex gap-2">
-              <Link href={`/watch/${video.id}`}>
-                <Button>
-                  <Play className="mr-2 h-4 w-4" />
-                  Watch
-                </Button>
-              </Link>
-              <Button variant="outline" size="icon">
-                <Share2 className="h-4 w-4" />
-              </Button>
+          {video.isMetadataLoading ? (
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <Skeleton className="h-5 w-1/2" />
+                <div className="ml-4 flex gap-2">
+                  <Link href={`/watch/${video.id}`}>
+                    <Button>
+                      <Play className="mr-2 h-4 w-4" />
+                      Watch
+                    </Button>
+                  </Link>
+                  <Button variant="outline" size="icon">
+                    <Share2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              <Skeleton className="h-4 w-1/4" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-1/3" />
             </div>
-          </div>
+          ) : (
+            <>
+              <div className="mb-2 flex items-start justify-between">
+                <h3 className="line-clamp-2 flex-1 text-lg font-semibold">{video.title}</h3>
+                <div className="ml-4 flex gap-2">
+                  <Link href={`/watch/${video.id}`}>
+                    <Button>
+                      <Play className="mr-2 h-4 w-4" />
+                      Watch
+                    </Button>
+                  </Link>
+                  <Button variant="outline" size="icon">
+                    <Share2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
 
-          <p className="mb-2 text-sm text-gray-600">by {video.creator}</p>
-          <p className="mb-3 line-clamp-2 text-sm text-gray-500">{video.description}</p>
+              <p className="mb-2 text-sm text-gray-600">by {video.creator}</p>
+              <p className="mb-3 line-clamp-2 text-sm text-gray-500">{video.description}</p>
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4 text-sm text-gray-500">
-              <span className="flex items-center gap-1">
-                <Eye className="h-4 w-4" />
-                {formatCompactNumber(video.views)}
-              </span>
-              <span className="flex items-center gap-1">
-                <Heart className="h-4 w-4" />
-                {formatCompactNumber(video.likes)}
-              </span>
-            </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4 text-sm text-gray-500">
+                  {video.hasLiveViewCount ? (
+                    <span className="flex items-center gap-1">
+                      <Eye className="h-4 w-4" />
+                      {formatCompactNumber(video.views)}
+                    </span>
+                  ) : null}
+                  {video.hasLiveLikeCount ? (
+                    <span className="flex items-center gap-1">
+                      <Heart className="h-4 w-4" />
+                      {formatCompactNumber(video.likes)}
+                    </span>
+                  ) : null}
+                </div>
 
-            <div className="flex flex-wrap gap-1">
-              {video.locations.slice(0, 3).map((location) => (
-                <Badge key={`${video.id}-${location}`} variant="secondary" className="text-xs">
-                  {location}
-                </Badge>
-              ))}
-            </div>
-          </div>
+                <div className="flex flex-wrap gap-1">
+                  {video.locations.slice(0, 3).map((location) => (
+                    <Badge key={`${video.id}-${location}`} variant="secondary" className="text-xs">
+                      {location}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </CardContent>
       </div>
     </Card>
   )
 
   const renderVideos = (tab: TabKey) => {
-    const videos = videosByTab[tab]
+    const tabVideos = videosByTab[tab]
 
-    if (videos.length === 0) {
-      return (
-        <Card>
-          <CardContent className="p-10 text-center text-sm text-gray-500">
-            No videos matched your search yet. Try a creator name or location.
-          </CardContent>
-        </Card>
-      )
+    if (tabVideos.length === 0) {
+      return null
     }
 
     if (viewMode === "grid") {
-      return <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">{videos.map(renderVideoCard)}</div>
+      return <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">{tabVideos.map(renderVideoCard)}</div>
     }
 
-    return <div className="space-y-4">{videos.map(renderVideoList)}</div>
+    return <div className="space-y-4">{tabVideos.map(renderVideoList)}</div>
   }
 
   return (

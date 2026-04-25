@@ -8,6 +8,8 @@ interface YouTubePlayerProps {
   isPlaying: boolean
   volume: number
   isMuted: boolean
+  showControls?: boolean
+  allowKeyboard?: boolean
   onReady?: (duration: number) => void
   onTimeChange?: (time: number) => void
   onPlayingChange?: (isPlaying: boolean) => void
@@ -94,6 +96,8 @@ export function YouTubePlayer({
   isPlaying,
   volume,
   isMuted,
+  showControls = false,
+  allowKeyboard = false,
   onReady,
   onTimeChange,
   onPlayingChange,
@@ -121,16 +125,20 @@ export function YouTubePlayer({
       }
     }
 
+    const emitCurrentTime = () => {
+      const player = playerRef.current
+      if (!player) {
+        return
+      }
+
+      onTimeChangeRef.current?.(player.getCurrentTime())
+    }
+
     const startProgressInterval = () => {
       clearProgressInterval()
       progressIntervalRef.current = window.setInterval(() => {
-        const player = playerRef.current
-        if (!player) {
-          return
-        }
-
-        onTimeChangeRef.current?.(Math.floor(player.getCurrentTime()))
-      }, 500)
+        emitCurrentTime()
+      }, 100)
     }
 
     loadYouTubeApi().then((YT) => {
@@ -141,8 +149,9 @@ export function YouTubePlayer({
       const player = new YT.Player(containerRef.current, {
         videoId,
         playerVars: {
-          controls: 0,
-          disablekb: 1,
+          controls: showControls ? 1 : 0,
+          disablekb: allowKeyboard ? 0 : 1,
+          playsinline: 1,
           rel: 0,
         },
         events: {
@@ -153,7 +162,7 @@ export function YouTubePlayer({
               event.target.mute()
             }
             onReadyRef.current?.(Math.floor(event.target.getDuration()))
-            onTimeChangeRef.current?.(Math.floor(event.target.getCurrentTime()))
+            emitCurrentTime()
           },
           onStateChange: (event) => {
             if (event.data === YT.PlayerState.PLAYING) {
@@ -164,7 +173,7 @@ export function YouTubePlayer({
             if (event.data === YT.PlayerState.PAUSED || event.data === YT.PlayerState.ENDED) {
               clearProgressInterval()
               onPlayingChangeRef.current?.(false)
-              onTimeChangeRef.current?.(Math.floor(event.target.getCurrentTime()))
+              onTimeChangeRef.current?.(event.target.getCurrentTime())
             }
           },
         },
@@ -179,7 +188,7 @@ export function YouTubePlayer({
       playerRef.current?.destroy()
       playerRef.current = null
     }
-  }, [videoId])
+  }, [allowKeyboard, isMuted, showControls, videoId, volume])
 
   useEffect(() => {
     const player = playerRef.current
@@ -188,7 +197,7 @@ export function YouTubePlayer({
     }
 
     const liveTime = player.getCurrentTime()
-    if (Math.abs(liveTime - currentTime) > 1.5) {
+    if (Math.abs(liveTime - currentTime) > 0.75) {
       player.seekTo(currentTime, true)
     }
   }, [currentTime])

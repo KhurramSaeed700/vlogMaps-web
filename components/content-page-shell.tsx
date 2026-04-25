@@ -7,6 +7,8 @@ interface ContentPageShellProps {
   description: string
   backHref?: string
   backLabel?: string
+  maxWidthClassName?: string
+  contentClassName?: string
   children: ReactNode
 }
 
@@ -15,6 +17,8 @@ export function ContentPageShell({
   description,
   backHref = "/",
   backLabel = "Back",
+  maxWidthClassName = "max-w-4xl",
+  contentClassName = "",
   children,
 }: ContentPageShellProps) {
   return (
@@ -32,13 +36,13 @@ export function ContentPageShell({
         </div>
       </header>
 
-      <main className="container mx-auto max-w-4xl px-4 py-12">
+      <main className={`container mx-auto ${maxWidthClassName} px-4 py-12`}>
         <div className="mb-8 text-center">
           <h1 className="mb-3 text-3xl font-bold text-gray-900">{title}</h1>
           <p className="mx-auto max-w-2xl text-gray-600">{description}</p>
         </div>
 
-        <div className="rounded-2xl border bg-white p-6 shadow-sm">{children}</div>
+        <div className={`rounded-2xl border bg-white p-6 shadow-sm ${contentClassName}`.trim()}>{children}</div>
       </main>
     </div>
   )

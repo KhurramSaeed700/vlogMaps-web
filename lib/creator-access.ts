@@ -1,4 +1,4 @@
-export const demoCreatorEmails = ["creator@travelmap.dev", "adventure.seeker@example.com"]
+export const demoCreatorEmails = ["creator@travelmap.dev", "adventure.seeker@example.com", "kssuper007@gmail.com"]
 
 export function isCreatorEmail(email?: string | null) {
   if (!email) {

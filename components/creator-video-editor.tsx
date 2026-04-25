@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { Clock3, MapPin, Pause, Play, Plus, Save, SkipBack, SkipForward, Trash2 } from "lucide-react"
+import { Clock3, Crosshair, MapPin, Pause, Play, Save, SkipBack, SkipForward, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -59,13 +59,15 @@ export function CreatorVideoEditor({ video }: CreatorVideoEditorProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [volume, setVolume] = useState(75)
   const [isMuted, setIsMuted] = useState(false)
-  const [saveMessage, setSaveMessage] = useState("Saved points are stored locally for this demo.")
-  const [draftPoint, setDraftPoint] = useState<DraftPoint>(() => createDraftPoint(loadCreatorPoints(video.id, video.keyframes)[0]))
+  const [saveMessage, setSaveMessage] = useState("Saved points are stored locally in this browser.")
+  const [draftPoint, setDraftPoint] = useState<DraftPoint | null>(null)
+  const [isAwaitingMapPlacement, setIsAwaitingMapPlacement] = useState(false)
 
   useEffect(() => {
     const nextPoints = loadCreatorPoints(video.id, video.keyframes)
     setPoints(nextPoints)
-    setDraftPoint(createDraftPoint(nextPoints[0]))
+    setDraftPoint(null)
+    setIsAwaitingMapPlacement(false)
     setCurrentTime(0)
     setDuration(video.durationSeconds)
     setIsPlaying(false)
@@ -83,108 +85,177 @@ export function CreatorVideoEditor({ video }: CreatorVideoEditorProps) {
     setSaveMessage(message)
   }
 
-  const captureTimestamp = () => {
-    setIsPlaying(false)
-    setDraftPoint((prev) => ({
-      ...prev,
-      time: currentTime,
-      location: prev.location || `Stop at ${formatDuration(currentTime)}`,
-    }))
-    setSaveMessage("Timestamp captured. Place the map marker and save the point.")
+  const getSavedPointFromList = (nextPoints: CreatorMapPoint[], nextDraft: DraftPoint) => {
+    if (nextDraft.id) {
+      return nextPoints.find((point) => point.id === nextDraft.id) ?? null
+    }
+
+    return (
+      nextPoints.find(
+        (point) => point.time === nextDraft.time && point.lat === nextDraft.lat && point.lng === nextDraft.lng,
+      ) ?? null
+    )
   }
 
-  const saveDraftPoint = () => {
-    if (draftPoint.lat === null || draftPoint.lng === null) {
-      setSaveMessage("Pick a spot on the map before saving.")
+  const captureTimestamp = () => {
+    setIsPlaying(false)
+    setDraftPoint({
+      id: undefined,
+      time: currentTime,
+      lat: null,
+      lng: null,
+      location: `Point at ${formatDuration(currentTime)}`,
+      description: "Route point captured from the creator editor.",
+    })
+    setIsAwaitingMapPlacement(true)
+    setSaveMessage("Timestamp captured. Move the map and click where the traveler is.")
+  }
+
+  const savePointFromMap = (value: { lat: number; lng: number }) => {
+    if (!draftPoint) {
+      setSaveMessage("Capture a timestamp or choose an existing point before pinning it on the map.")
       return
     }
 
-    const lat = draftPoint.lat
-    const lng = draftPoint.lng
+    const nextDraft: DraftPoint = {
+      ...draftPoint,
+      lat: value.lat,
+      lng: value.lng,
+      location: draftPoint.location.trim() || `Point at ${formatDuration(draftPoint.time)}`,
+      description: draftPoint.description.trim() || "Route point captured from the creator editor.",
+    }
+
+    const nextPoints = upsertCreatorPoint(video.id, points, {
+      ...nextDraft,
+      lat: value.lat,
+      lng: value.lng,
+      location: nextDraft.location,
+      description: nextDraft.description,
+    })
+
+    persistPoints(nextPoints, `Saved ${formatDuration(nextDraft.time)} at ${value.lat.toFixed(4)}, ${value.lng.toFixed(4)}.`)
+    const savedPoint = getSavedPointFromList(nextPoints, nextDraft)
+    setDraftPoint(savedPoint ? createDraftPoint(savedPoint) : nextDraft)
+    setIsAwaitingMapPlacement(false)
+  }
+
+  const saveDraftDetails = () => {
+    if (!draftPoint) {
+      setSaveMessage("Capture a timestamp or select a saved point first.")
+      return
+    }
+
+    if (draftPoint.lat === null || draftPoint.lng === null) {
+      setSaveMessage("Pin this timestamp on the map before saving its details.")
+      return
+    }
 
     const nextPoints = upsertCreatorPoint(video.id, points, {
       ...draftPoint,
-      lat,
-      lng,
+      lat: draftPoint.lat,
+      lng: draftPoint.lng,
       location: draftPoint.location.trim() || `Stop at ${formatDuration(draftPoint.time)}`,
-      description: draftPoint.description.trim() || "Route point captured from the creator dashboard.",
+      description: draftPoint.description.trim() || "Route point captured from the creator editor.",
     })
 
-    persistPoints(nextPoints, `Saved ${nextPoints.length} route point${nextPoints.length === 1 ? "" : "s"} for this video.`)
-    const savedPoint = nextPoints.find((point) => point.time === draftPoint.time && point.lat === draftPoint.lat && point.lng === draftPoint.lng)
+    persistPoints(nextPoints, `Updated the details for ${formatDuration(draftPoint.time)}.`)
+    const savedPoint = getSavedPointFromList(nextPoints, draftPoint)
     if (savedPoint) {
       setDraftPoint(createDraftPoint(savedPoint))
     }
+    setIsAwaitingMapPlacement(false)
   }
 
   const editPoint = (point: CreatorMapPoint) => {
     setIsPlaying(false)
     setCurrentTime(point.time)
     setDraftPoint(createDraftPoint(point))
-    setSaveMessage(`Editing ${point.location}. Adjust the timestamp, marker, or copy and save again.`)
+    setIsAwaitingMapPlacement(true)
+    setSaveMessage(`Editing ${point.location}. Move the map and click to adjust its location, or update the details below.`)
   }
 
   const deletePoint = (id: string) => {
     const nextPoints = points.filter((point) => point.id !== id)
     persistPoints(nextPoints, `Deleted route point. ${nextPoints.length} point${nextPoints.length === 1 ? "" : "s"} remain.`)
-    if (draftPoint.id === id && nextPoints[0]) {
-      setDraftPoint(createDraftPoint(nextPoints[0]))
-    } else if (draftPoint.id === id) {
-      setDraftPoint(createDraftPoint())
+    if (draftPoint?.id === id) {
+      setDraftPoint(null)
+      setIsAwaitingMapPlacement(false)
     }
   }
 
   const resetDraft = () => {
-    setDraftPoint({
-      id: undefined,
-      time: currentTime,
-      lat: null,
-      lng: null,
-      location: "",
-      description: "",
-    })
-    setSaveMessage("Started a fresh route point draft.")
+    setDraftPoint(null)
+    setIsAwaitingMapPlacement(false)
+    setSaveMessage("Selection cleared. Capture another moment whenever you're ready.")
   }
 
+  const pendingPointLabel = draftPoint ? formatDuration(draftPoint.time) : null
+  const selectedCoordinates =
+    draftPoint?.lat === null || draftPoint?.lng === null || !draftPoint
+      ? "Waiting for map pin"
+      : `${draftPoint.lat.toFixed(5)}, ${draftPoint.lng.toFixed(5)}`
+
+  const instructionTitle = draftPoint
+    ? isAwaitingMapPlacement
+      ? `Timestamp ${formatDuration(draftPoint.time)} is ready to pin.`
+      : `Point ${formatDuration(draftPoint.time)} is selected.`
+    : "Capture a moment from the video to start a new map point."
+
+  const instructionBody = draftPoint
+    ? isAwaitingMapPlacement
+      ? "Pause is already handled for you. Move the map on the right, then click the exact location of the traveler."
+      : "You can refine its title and notes here, or pick the point again on the map if it needs adjustment."
+    : "Use the capture button below the player. That grabs the current timestamp, then the next click on the map saves its coordinates."
+
   return (
-    <div className="space-y-6">
-      <div className="grid gap-6 lg:grid-cols-[1.25fr_0.9fr]">
+    <div className="grid gap-6 xl:grid-cols-[minmax(320px,1fr)_minmax(0,2fr)]">
+      <div className="space-y-6">
         <Card className="overflow-hidden">
-          <CardHeader className="border-b bg-gray-950 text-white">
-            <CardTitle>{video.title}</CardTitle>
-            <CardDescription className="text-gray-300">
-              Pause, scrub, or jump through the video, then capture the right moment.
+          <CardHeader className="border-b bg-slate-950 text-white">
+            <CardTitle className="line-clamp-2">{video.title}</CardTitle>
+            <CardDescription className="text-slate-300">
+              Keep the video on the left, capture the right moment, then pin it on the map.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4 p-4">
-            <div className="overflow-hidden rounded-2xl bg-black">
-              <div className="aspect-video w-full">
-                <YouTubePlayer
-                  videoId={video.youtubeId}
-                  currentTime={currentTime}
-                  isPlaying={isPlaying}
-                  volume={volume}
-                  isMuted={isMuted}
-                  onReady={(nextDuration) => {
-                    const resolvedDuration = nextDuration || video.durationSeconds
-                    setDuration(resolvedDuration)
-                    updateLocalCreatorVideo(video.id, { durationSeconds: resolvedDuration })
-                  }}
-                  onTimeChange={setCurrentTime}
-                  onPlayingChange={setIsPlaying}
-                />
-              </div>
+          <CardContent className="p-0">
+            <div className="aspect-video overflow-hidden bg-black">
+              <YouTubePlayer
+                videoId={video.youtubeId}
+                currentTime={currentTime}
+                isPlaying={isPlaying}
+                volume={volume}
+                isMuted={isMuted}
+                showControls
+                allowKeyboard
+                onReady={(nextDuration) => {
+                  const resolvedDuration = nextDuration || video.durationSeconds
+                  setDuration(resolvedDuration)
+                  updateLocalCreatorVideo(video.id, { durationSeconds: resolvedDuration })
+                }}
+                onTimeChange={setCurrentTime}
+                onPlayingChange={setIsPlaying}
+              />
             </div>
+          </CardContent>
+        </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle>Capture Controls</CardTitle>
+            <CardDescription>
+              Press capture to pause the video and lock in the current timestamp before placing it on the map.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
             <div className="space-y-3">
-              <Slider value={[currentTime]} max={duration} step={1} onValueChange={(value) => setCurrentTime(value[0])} />
-              <div className="flex items-center justify-between text-sm text-gray-600">
+              <Slider value={[currentTime]} max={duration || 1} step={1} onValueChange={(value) => setCurrentTime(value[0])} />
+              <div className="flex items-center justify-between text-sm text-slate-600">
                 <span>{formatDuration(currentTime)}</span>
                 <span>{formatDuration(duration)}</span>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button onClick={() => setIsPlaying((prev) => !prev)}>
                 {isPlaying ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
                 {isPlaying ? "Pause" : "Play"}
@@ -199,11 +270,11 @@ export function CreatorVideoEditor({ video }: CreatorVideoEditorProps) {
               </Button>
               <Button variant="secondary" onClick={captureTimestamp}>
                 <Clock3 className="mr-2 h-4 w-4" />
-                Pause and Capture
+                Capture Timestamp
               </Button>
             </div>
 
-            <div className="flex items-center gap-3 text-xs text-gray-500">
+            <div className="flex items-center gap-3 text-xs text-slate-500">
               <span>Volume</span>
               <Slider
                 value={[isMuted ? 0 : volume]}
@@ -216,128 +287,177 @@ export function CreatorVideoEditor({ video }: CreatorVideoEditorProps) {
                 className="w-40"
               />
             </div>
+
+            <div className="rounded-2xl border bg-slate-50 p-4">
+              <div className="flex items-start gap-3">
+                <Crosshair className="mt-0.5 h-5 w-5 text-orange-500" />
+                <div className="space-y-1">
+                  <p className="font-medium text-slate-900">{instructionTitle}</p>
+                  <p className="text-sm text-slate-600">{instructionBody}</p>
+                  <p className="text-xs text-slate-500">{saveMessage}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4 rounded-2xl border p-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="timestamp">Selected Timestamp</Label>
+                  <Input id="timestamp" value={draftPoint ? formatDuration(draftPoint.time) : "No point selected"} readOnly />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="coordinates">Coordinates</Label>
+                  <Input id="coordinates" value={selectedCoordinates} readOnly />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="locationName">Location Label</Label>
+                <Input
+                  id="locationName"
+                  value={draftPoint?.location ?? ""}
+                  onChange={(event) =>
+                    setDraftPoint((prev) => (prev ? { ...prev, location: event.target.value } : prev))
+                  }
+                  placeholder="e.g. Sharan Forest Checkpoint"
+                  disabled={!draftPoint}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="description">Notes</Label>
+                <Textarea
+                  id="description"
+                  value={draftPoint?.description ?? ""}
+                  onChange={(event) =>
+                    setDraftPoint((prev) => (prev ? { ...prev, description: event.target.value } : prev))
+                  }
+                  placeholder="Add context for what is happening at this moment in the trip."
+                  rows={3}
+                  disabled={!draftPoint}
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={saveDraftDetails} disabled={!draftPoint}>
+                  <Save className="mr-2 h-4 w-4" />
+                  Save Details
+                </Button>
+                <Button variant="outline" onClick={resetDraft} disabled={!draftPoint}>
+                  Clear Selection
+                </Button>
+                <Link href={`/watch/${video.id}`}>
+                  <Button variant="outline">
+                    <MapPin className="mr-2 h-4 w-4" />
+                    Preview Watch Experience
+                  </Button>
+                </Link>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Route Point Editor</CardTitle>
+            <CardTitle>Captured Timestamps</CardTitle>
             <CardDescription>
-              Capture a timestamp, click the map to place the stop, then save it to the video route.
+              Every saved point stays in local storage and powers the map route for this video.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="timestamp">Timestamp</Label>
-                <Input
-                  id="timestamp"
-                  value={formatDuration(draftPoint.time)}
-                  onChange={(event) => {
-                    const nextValue = Number(event.target.value)
-                    if (!Number.isNaN(nextValue)) {
-                      setDraftPoint((prev) => ({ ...prev, time: nextValue }))
-                    }
-                  }}
-                  readOnly
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="locationName">Location Name</Label>
-                <Input
-                  id="locationName"
-                  value={draftPoint.location}
-                  onChange={(event) => setDraftPoint((prev) => ({ ...prev, location: event.target.value }))}
-                  placeholder="e.g. Times Square"
-                />
-              </div>
-            </div>
+          <CardContent>
+            <div className="space-y-3">
+              {draftPoint && !draftPoint.id && (
+                <div className="rounded-2xl border border-dashed border-orange-300 bg-orange-50 p-4">
+                  <div className="flex items-center gap-2">
+                    <Badge className="border-0 bg-orange-500 text-white">Pending</Badge>
+                    <p className="font-medium text-slate-900">{formatDuration(draftPoint.time)}</p>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-600">Move the map on the right and click the traveler&apos;s location to save the coordinates.</p>
+                </div>
+              )}
 
-            <div className="space-y-2">
-              <Label htmlFor="description">Notes</Label>
-              <Textarea
-                id="description"
-                value={draftPoint.description}
-                onChange={(event) => setDraftPoint((prev) => ({ ...prev, description: event.target.value }))}
-                placeholder="Why this moment matters in the trip."
-                rows={3}
-              />
-            </div>
+              {sortedPoints.length === 0 ? (
+                <div className="rounded-2xl border border-dashed p-6 text-sm text-slate-500">
+                  No route points yet. Play the video, press <span className="font-medium text-slate-700">Capture Timestamp</span>, then
+                  pin the moment on the map.
+                </div>
+              ) : (
+                <div className="max-h-[28rem] space-y-3 overflow-y-auto pr-1">
+                  {sortedPoints.map((point, index) => {
+                    const isSelected = draftPoint?.id === point.id
 
-            <div className="space-y-2 text-xs text-gray-500">
-              <p>
-                Coordinates:{" "}
-                {draftPoint.lat === null || draftPoint.lng === null
-                  ? "Pick a location on the map"
-                  : `${draftPoint.lat.toFixed(4)}, ${draftPoint.lng.toFixed(4)}`}
-              </p>
-              <p>{saveMessage}</p>
-            </div>
+                    return (
+                      <div
+                        key={point.id}
+                        className={`rounded-2xl border p-4 transition ${
+                          isSelected ? "border-orange-300 bg-orange-50" : "border-slate-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <button type="button" className="flex-1 text-left" onClick={() => editPoint(point)}>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="secondary">#{index + 1}</Badge>
+                              <p className="font-medium text-slate-900">{point.location}</p>
+                              <p className="text-xs text-slate-500">{formatDuration(point.time)}</p>
+                            </div>
+                            <p className="mt-2 text-sm text-slate-600">{point.description}</p>
+                            <p className="mt-2 text-xs text-slate-500">
+                              {point.lat.toFixed(5)}, {point.lng.toFixed(5)}
+                            </p>
+                          </button>
 
-            <div className="h-72">
-              <MapboxLocationPicker
-                value={draftPoint.lat === null || draftPoint.lng === null ? null : { lat: draftPoint.lat, lng: draftPoint.lng }}
-                points={sortedPoints}
-                onChange={(value) => setDraftPoint((prev) => ({ ...prev, ...value }))}
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={saveDraftPoint}>
-                <Save className="mr-2 h-4 w-4" />
-                Save Point
-              </Button>
-              <Button variant="outline" onClick={resetDraft}>
-                <Plus className="mr-2 h-4 w-4" />
-                New Point
-              </Button>
-              <Link href={`/watch/${video.id}`}>
-                <Button variant="outline">
-                  <MapPin className="mr-2 h-4 w-4" />
-                  Preview Watch Experience
-                </Button>
-              </Link>
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => editPoint(point)}>
+                              Edit
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-red-600 hover:text-red-700"
+                              onClick={() => deletePoint(point.id)}
+                            >
+                              <Trash2 className="mr-1 h-4 w-4" />
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Saved Route Points</CardTitle>
-          <CardDescription>
-            These points are persisted in local storage for the signed-in creator and will drive the watch map.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {sortedPoints.map((point, index) => (
-              <div key={point.id} className="flex flex-col gap-3 rounded-2xl border p-4 md:flex-row md:items-center md:justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary">#{index + 1}</Badge>
-                    <p className="font-medium text-gray-900">{point.location}</p>
-                    <p className="text-xs text-gray-500">{formatDuration(point.time)}</p>
-                  </div>
-                  <p className="text-sm text-gray-600">{point.description}</p>
-                  <p className="text-xs text-gray-500">
-                    {point.lat.toFixed(4)}, {point.lng.toFixed(4)}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => editPoint(point)}>
-                    Edit
-                  </Button>
-                  <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700" onClick={() => deletePoint(point.id)}>
-                    <Trash2 className="mr-1 h-4 w-4" />
-                    Delete
-                  </Button>
-                </div>
+      <div>
+        <Card className="overflow-hidden xl:sticky xl:top-24">
+          <CardHeader className="border-b bg-slate-950 text-white">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <CardTitle>Map Capture</CardTitle>
+                <CardDescription className="text-slate-300">
+                  Satellite view is the default. Pan and zoom freely, then click the exact location for the captured moment.
+                </CardDescription>
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+              <Badge className="border-0 bg-white/15 text-white">
+                {pendingPointLabel ? `Selected ${pendingPointLabel}` : "No timestamp selected"}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <MapboxLocationPicker
+              value={draftPoint?.lat === null || draftPoint?.lng === null || !draftPoint ? null : { lat: draftPoint.lat, lng: draftPoint.lng }}
+              points={sortedPoints}
+              onChange={savePointFromMap}
+              className="min-h-[520px] h-[58vh] xl:h-[calc(100vh-14rem)]"
+              isAwaitingPlacement={isAwaitingMapPlacement}
+              selectedTimestampLabel={pendingPointLabel}
+            />
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

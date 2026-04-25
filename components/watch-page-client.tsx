@@ -4,13 +4,30 @@ import { useEffect, useState } from "react"
 import { WatchExperience } from "@/components/watch-experience"
 import { Card, CardContent } from "@/components/ui/card"
 import { getTravelVideoByIdClient } from "@/lib/creator-videos"
-import type { TravelVideo } from "@/lib/demo-data"
+import { hydrateTravelVideo, toHydratedTravelVideo, type HydratedTravelVideo } from "@/lib/youtube-client"
 
 export function WatchPageClient({ id }: { id: string }) {
-  const [video, setVideo] = useState<TravelVideo | null | undefined>(undefined)
+  const [video, setVideo] = useState<HydratedTravelVideo | null | undefined>(undefined)
 
   useEffect(() => {
-    setVideo(getTravelVideoByIdClient(id) ?? null)
+    const baseVideo = getTravelVideoByIdClient(id)
+    if (!baseVideo) {
+      setVideo(null)
+      return
+    }
+
+    setVideo(toHydratedTravelVideo(baseVideo))
+
+    let isMounted = true
+    hydrateTravelVideo(baseVideo).then((nextVideo) => {
+      if (isMounted) {
+        setVideo(nextVideo)
+      }
+    })
+
+    return () => {
+      isMounted = false
+    }
   }, [id])
 
   if (video === undefined) {
