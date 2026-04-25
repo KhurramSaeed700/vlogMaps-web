@@ -1,6 +1,6 @@
 import type { TravelVideo, VideoKeyframe } from "@/lib/demo-data"
-import { creatorProfile, getTravelVideoById, getCreatorVideos } from "@/lib/demo-data"
-import { extractYouTubeId, getYouTubeThumbnailUrl } from "@/lib/youtube"
+import { creatorProfile, getPublishedTravelVideos, getTravelVideoById } from "@/lib/demo-data"
+import { extractYouTubeId, getYouTubeThumbnailUrl, type ResolvedYouTubeMetadata } from "@/lib/youtube"
 
 const creatorVideosStorageKey = "travelmap:creator-videos"
 const instantVideosStorageKey = "travelmap:instant-videos"
@@ -150,26 +150,43 @@ export function saveInstantWatchVideos(videos: TravelVideo[]) {
 }
 
 export function getAllCreatorVideosClient() {
-  return [...getCreatorVideos(), ...loadLocalCreatorVideos()]
+  return loadLocalCreatorVideos()
+}
+
+export function getPublishedTravelVideosClient() {
+  return [...getPublishedTravelVideos(), ...loadLocalCreatorVideos().filter((video) => video.status === "published"), ...loadInstantWatchVideos()]
 }
 
 export function getTravelVideoByIdClient(id: string) {
-  const demoVideo = getTravelVideoById(id)
-  if (demoVideo) {
-    return demoVideo
+  const catalogVideo = getTravelVideoById(id)
+  if (catalogVideo) {
+    return catalogVideo
   }
 
   return [...loadLocalCreatorVideos(), ...loadInstantWatchVideos()].find((video) => video.id === id)
 }
 
-export function createLocalCreatorVideo({
+async function fetchMetadataForCreatorVideo(youtubeId: string) {
+  let response: Response
+  try {
+    response = await fetch(`/api/youtube/video/${youtubeId}`, {
+      cache: "no-store",
+    })
+  } catch {
+    return null
+  }
+
+  if (!response.ok) {
+    return null
+  }
+
+  return (await response.json()) as ResolvedYouTubeMetadata
+}
+
+export async function createLocalCreatorVideo({
   youtubeUrl,
-  title,
-  description,
 }: {
   youtubeUrl: string
-  title?: string
-  description?: string
 }) {
   const youtubeId = extractYouTubeId(youtubeUrl)
 
@@ -182,21 +199,23 @@ export function createLocalCreatorVideo({
     return existingVideo
   }
 
+  const metadata = await fetchMetadataForCreatorVideo(youtubeId)
   const now = new Date().toISOString()
   const video: TravelVideo = {
     id: `custom-${youtubeId}-${Date.now()}`,
-    title: title?.trim() || `New travel video (${youtubeId})`,
-    creator: creatorProfile.name,
-    creatorChannelUrl: creatorProfile.channelUrl,
+    title: metadata?.title || `New travel video (${youtubeId})`,
+    creator: metadata?.creator || creatorProfile.name,
+    creatorChannelUrl: metadata?.creatorChannelUrl || creatorProfile.channelUrl,
     youtubeId,
-    thumbnail: getYouTubeThumbnailUrl(youtubeId),
-    durationSeconds: 0,
-    views: 0,
+    thumbnail: metadata?.thumbnail || getYouTubeThumbnailUrl(youtubeId),
+    durationSeconds: metadata?.durationSeconds ?? 0,
+    views: metadata?.views ?? 0,
     mapViews: 0,
-    likes: 0,
+    likes: metadata?.likes ?? 0,
     status: "draft",
     createdAt: now,
-    description: description?.trim() || "Creator-added travel video. Add timestamped route points to bring the map to life.",
+    description:
+      metadata?.description?.trim() || "Creator-added travel video. Add timestamped route points to bring the map to life.",
     locations: [],
     keyframes: [],
     tags: ["creator"],
@@ -258,7 +277,7 @@ export function createInstantWatchVideo({
 
 export function updateLocalCreatorVideo(videoId: string, updates: Partial<TravelVideo>) {
   if (!isLocalCreatorVideoId(videoId)) {
-    return getTravelVideoById(videoId) ?? null
+    return null
   }
 
   const videos = loadLocalCreatorVideos()
@@ -275,6 +294,22 @@ export function updateLocalCreatorVideo(videoId: string, updates: Partial<Travel
 
   saveLocalCreatorVideos(nextVideos)
   return nextVideos.find((video) => video.id === videoId) ?? null
+}
+
+export function deleteLocalCreatorVideo(videoId: string) {
+  if (!isLocalCreatorVideoId(videoId)) {
+    return false
+  }
+
+  const videos = loadLocalCreatorVideos()
+  const nextVideos = videos.filter((video) => video.id !== videoId)
+
+  if (nextVideos.length === videos.length) {
+    return false
+  }
+
+  saveLocalCreatorVideos(nextVideos)
+  return true
 }
 
 export function syncVideoRouteMetadata(videoId: string, keyframes: VideoKeyframe[]) {

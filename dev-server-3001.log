@@ -1,0 +1,18 @@
+
+> my-v0-project@0.1.0 dev
+> next dev --port 3001
+
+   ▲ Next.js 15.2.4
+   - Local:        http://localhost:3001
+   - Network:      http://192.168.1.27:3001
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 6.9s
+ ○ Compiling /middleware ...
+ ✓ Compiled /middleware in 722ms (211 modules)
+ ○ Compiling /watch/[id] ...
+ ✓ Compiled /watch/[id] in 15.6s (1256 modules)
+ GET / 200 in 16635ms
+ GET /watch/featured-wykkpsdveso 200 in 18215ms
+ GET /watch/featured-wykkpsdveso 200 in 74ms

@@ -30,20 +30,27 @@ export function CreatorAccessGuard({ children }: CreatorAccessGuardProps) {
         <CardHeader>
           <CardTitle>Creator access required</CardTitle>
           <CardDescription>
-            This editor is locked to demo creator accounts so the authoring flow stays scoped and testable.
+            Creator tools should only open for approved travel YouTube creators after manual review.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 text-sm text-amber-900">
+          <p>
+            Apply as a creator so your team can verify that you own a real travel-focused YouTube channel before
+            timestamp editing access is granted.
+          </p>
           <div className="flex flex-wrap gap-2">
             {demoCreatorEmails.map((demoEmail) => (
               <Badge key={demoEmail} variant="secondary" className="bg-white text-amber-900">
-                {demoEmail}
+                Demo access: {demoEmail}
               </Badge>
             ))}
           </div>
-          <p>Sign in with one of the demo creator emails above, or update the allowlist in `lib/creator-access.ts` for your own test account.</p>
+          <p>
+            This prototype still uses the local allowlist in `lib/creator-access.ts` for final dashboard access after
+            approval.
+          </p>
           <Link href="/creator/apply">
-            <Button>Go to Creator Application</Button>
+            <Button>Open Creator Verification Form</Button>
           </Link>
         </CardContent>
       </Card>

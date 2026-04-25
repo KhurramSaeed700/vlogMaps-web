@@ -34,7 +34,7 @@ export function CreatorVideoEditorPage({ id }: { id: string }) {
     return (
       <ContentPageShell
         title="Video not found"
-        description="This creator video could not be found in the demo data or your local creator workspace."
+        description="This creator video could not be found in your local creator workspace."
         backHref="/creator/video/new"
         backLabel="Back to Workspace"
       >
@@ -53,6 +53,8 @@ export function CreatorVideoEditorPage({ id }: { id: string }) {
       description="Paste a video, open the player, capture timestamps, and pair each moment with a location on the map."
       backHref="/creator/dashboard"
       backLabel="Back to Dashboard"
+      maxWidthClassName="max-w-screen-2xl"
+      contentClassName="p-4 lg:p-6"
     >
       <CreatorAccessGuard>
         <CreatorVideoEditor video={video} />

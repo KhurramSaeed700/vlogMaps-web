@@ -4,12 +4,15 @@ import { useEffect, useMemo, useState, useTransition } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { UserButton, useUser } from "@clerk/nextjs"
-import { Building2, Compass, MapPin, Mountain, Search, UtensilsCrossed, Waves } from "lucide-react"
+import { Building2, Compass, Loader2, MapPin, Mountain, Search, UtensilsCrossed, Waves } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { createInstantWatchVideo } from "@/lib/creator-videos"
-import { formatCompactNumber, formatDuration, getPublishedTravelVideos } from "@/lib/demo-data"
+import { Skeleton } from "@/components/ui/skeleton"
+import { isCreatorEmail } from "@/lib/creator-access"
+import { createInstantWatchVideo, getPublishedTravelVideosClient } from "@/lib/creator-videos"
+import { formatCompactNumber, formatDuration } from "@/lib/demo-data"
+import { hydrateTravelVideos, toHydratedTravelVideo, type HydratedTravelVideo } from "@/lib/youtube-client"
 
 const preferenceStorageKey = "travelmap:home-preference"
 
@@ -23,12 +26,16 @@ const preferenceOptions = [
 ] as const
 
 type PreferenceId = (typeof preferenceOptions)[number]["id"]
+const homeSkeletonCardCount = 10
 
 export default function HomePage() {
   const router = useRouter()
-  const { isLoaded, isSignedIn } = useUser()
+  const { isLoaded, isSignedIn, user } = useUser()
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [selectedPreference, setSelectedPreference] = useState<PreferenceId>("all")
+  const [catalogVideos, setCatalogVideos] = useState<HydratedTravelVideo[]>([])
+  const [isCatalogLoading, setIsCatalogLoading] = useState(true)
+  const [isHydratingCatalog, setIsHydratingCatalog] = useState(true)
   const [launcherError, setLauncherError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
@@ -37,18 +44,70 @@ export default function HomePage() {
     if (savedPreference && preferenceOptions.some((option) => option.id === savedPreference)) {
       setSelectedPreference(savedPreference)
     }
+
+    const baseVideos = getPublishedTravelVideosClient()
+    setCatalogVideos(baseVideos.map(toHydratedTravelVideo))
+    setIsCatalogLoading(false)
+    setIsHydratingCatalog(true)
+
+    let isMounted = true
+    hydrateTravelVideos(baseVideos)
+      .then((nextVideos) => {
+        if (isMounted) {
+          setCatalogVideos(nextVideos)
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setCatalogVideos(baseVideos.map(toHydratedTravelVideo))
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsHydratingCatalog(false)
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
   }, [])
 
   const videos = useMemo(() => {
-    const publishedVideos = getPublishedTravelVideos()
     const filtered =
       selectedPreference === "all"
-        ? publishedVideos
-        : publishedVideos.filter((video) => video.tags?.includes(selectedPreference))
+        ? catalogVideos
+        : catalogVideos.filter((video) => video.tags?.includes(selectedPreference))
 
-    const nextVideos = filtered.length > 0 ? filtered : publishedVideos
+    const nextVideos = filtered.length > 0 ? filtered : catalogVideos
     return [...nextVideos].sort((a, b) => b.views - a.views)
-  }, [selectedPreference])
+  }, [catalogVideos, selectedPreference])
+
+  const creatorCta = useMemo(() => {
+    const email = user?.primaryEmailAddress?.emailAddress ?? null
+    const isApprovedCreator = isCreatorEmail(email)
+
+    return {
+      href: isApprovedCreator ? "/creator/dashboard" : "/creator/apply",
+      label: isApprovedCreator ? "Creator Dashboard" : "Become a creator",
+    }
+  }, [user])
+
+  const homeLoadingMessage = useMemo(() => {
+    if (!isLoaded) {
+      return "Loading your home screen..."
+    }
+
+    if (isCatalogLoading) {
+      return "Loading videos..."
+    }
+
+    if (isHydratingCatalog) {
+      return "Refreshing video titles and details..."
+    }
+
+    return null
+  }, [isCatalogLoading, isHydratingCatalog, isLoaded])
 
   const handleLaunch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -59,6 +118,13 @@ export default function HomePage() {
         youtubeUrl,
         preferredTag: selectedPreference === "all" ? undefined : selectedPreference,
       })
+
+      const baseVideos = getPublishedTravelVideosClient()
+      setCatalogVideos(baseVideos.map(toHydratedTravelVideo))
+      setIsHydratingCatalog(true)
+      hydrateTravelVideos(baseVideos)
+        .then((nextVideos) => setCatalogVideos(nextVideos))
+        .finally(() => setIsHydratingCatalog(false))
 
       startTransition(() => {
         router.push(`/watch/${video.id}`)
@@ -97,16 +163,17 @@ export default function HomePage() {
           </form>
 
           <div className="flex items-center gap-2">
+            <Link href={creatorCta.href} className="hidden md:block">
+              <Button variant="outline" className="rounded-full">
+                {creatorCta.label}
+              </Button>
+            </Link>
+
             {!isLoaded || !isSignedIn ? (
               <>
                 <Link href="/auth/login" className="hidden sm:block">
                   <Button variant="ghost" className="rounded-full">
                     Sign In
-                  </Button>
-                </Link>
-                <Link href="/creator/apply" className="hidden md:block">
-                  <Button variant="outline" className="rounded-full">
-                    Creator
                   </Button>
                 </Link>
               </>
@@ -131,6 +198,16 @@ export default function HomePage() {
       </header>
 
       <main className="mx-auto max-w-screen-2xl px-4 py-6">
+        {homeLoadingMessage && (
+          <div
+            className="mb-4 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"
+            aria-live="polite"
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-red-600" />
+            <span>{homeLoadingMessage}</span>
+          </div>
+        )}
+
         <div className="mb-6 flex flex-wrap gap-2">
           {preferenceOptions.map((option) => {
             const Icon = option.icon
@@ -158,6 +235,27 @@ export default function HomePage() {
         </div>
 
         <div className="grid gap-x-5 gap-y-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+          {isCatalogLoading &&
+            Array.from({ length: homeSkeletonCardCount }, (_, index) => (
+              <div key={`home-skeleton-${index}`} className="space-y-3">
+                <div className="relative overflow-hidden rounded-2xl bg-slate-100">
+                  <Skeleton className="aspect-video w-full rounded-2xl" />
+                  <div className="absolute left-3 top-3">
+                    <Skeleton className="h-6 w-16 rounded-full bg-slate-300/80" />
+                  </div>
+                  <div className="absolute bottom-3 right-3">
+                    <Skeleton className="h-6 w-14 rounded-md bg-slate-300/80" />
+                  </div>
+                </div>
+
+                <div className="space-y-2 px-1">
+                  <Skeleton className="h-4 w-11/12" />
+                  <Skeleton className="h-4 w-3/5" />
+                  <Skeleton className="h-4 w-4/5" />
+                </div>
+              </div>
+            ))}
+
           {videos.map((video) => (
             <Link key={video.id} href={`/watch/${video.id}`} className="group block">
               <div className="space-y-3">
@@ -176,11 +274,22 @@ export default function HomePage() {
                 </div>
 
                 <div className="space-y-1 px-1">
-                  <h2 className="line-clamp-2 text-[15px] font-semibold leading-5 text-slate-950">{video.title}</h2>
-                  <p className="text-sm text-slate-600">{video.creator}</p>
-                  <p className="text-sm text-slate-500">
-                    {formatCompactNumber(video.views)} views • {video.locations[0]}
-                  </p>
+                  {video.isMetadataLoading ? (
+                    <>
+                      <Skeleton className="h-4 w-11/12" />
+                      <Skeleton className="h-4 w-2/5" />
+                      <Skeleton className="h-4 w-3/5" />
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="line-clamp-2 text-[15px] font-semibold leading-5 text-slate-950">{video.title}</h2>
+                      <p className="text-sm text-slate-600">{video.creator}</p>
+                      <p className="text-sm text-slate-500">
+                        {video.hasLiveViewCount ? `${formatCompactNumber(video.views)} views - ` : ""}
+                        {video.locations[0] ?? "Route pending"}
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             </Link>
