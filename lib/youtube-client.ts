@@ -1,6 +1,8 @@
 import type { TravelVideo } from "@/lib/demo-data"
 import type { ResolvedYouTubeMetadata } from "@/lib/youtube"
 
+const metadataFetchTimeoutMs = 8000
+
 export interface HydratedTravelVideo extends TravelVideo {
   hasLiveLikeCount: boolean
   hasLiveViewCount: boolean
@@ -38,15 +40,25 @@ function mergeVideoWithMetadata(video: TravelVideo, metadata: ResolvedYouTubeMet
 }
 
 async function fetchMetadata(videoId: string) {
-  const response = await fetch(`/api/youtube/video/${videoId}`, {
-    cache: "no-store",
-  })
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), metadataFetchTimeoutMs)
 
-  if (!response.ok) {
+  try {
+    const response = await fetch(`/api/youtube/video/${videoId}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      return null
+    }
+
+    return (await response.json()) as ResolvedYouTubeMetadata
+  } catch {
     return null
+  } finally {
+    window.clearTimeout(timeoutId)
   }
-
-  return (await response.json()) as ResolvedYouTubeMetadata
 }
 
 export function toHydratedTravelVideo(video: TravelVideo) {
@@ -61,7 +73,7 @@ export async function hydrateTravelVideo(video: TravelVideo) {
 export async function hydrateTravelVideos(videos: TravelVideo[]) {
   const uniqueVideoIds = [...new Set(videos.map((video) => video.youtubeId))]
   const metadataEntries = await Promise.all(
-    uniqueVideoIds.map(async (videoId) => [videoId, await fetchMetadata(videoId)] as const),
+    uniqueVideoIds.map(async (videoId) => [videoId, await fetchMetadata(videoId).catch(() => null)] as const),
   )
 
   const metadataByVideoId = new Map(metadataEntries)

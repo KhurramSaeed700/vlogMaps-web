@@ -30,3 +30,28 @@ Continue building your app on:
 2. Deploy your chats from the v0 interface
 3. Changes are automatically pushed to this repository
 4. Vercel deploys the latest version from this repository
+
+## Creator Edit Persistence
+
+Creator video map edits are saved locally first and, when configured, mirrored to Neon Postgres through `DATABASE_URL`.
+
+Add this to `.env.local` with your Neon pooled connection string:
+
+```bash
+DATABASE_URL="postgresql://..."
+```
+
+The app creates the `creator_video_states` table automatically on first load/save. Without `DATABASE_URL`, the editor keeps using browser localStorage as a fallback.
+
+## Project Structure
+
+The App Router route files stay in `app/`, while reusable UI is grouped by feature under `components/`:
+
+- `components/home`: entry page and video catalog experience.
+- `components/viewer`: watch page and split video/map viewer.
+- `components/creator`: creator workspace, access guard, and route editor.
+- `components/maps`: Mapbox map surfaces and previews.
+- `components/media`: shared media player primitives.
+- `components/app-shell`: shared layout and brand chrome.
+- `components/auth`: Clerk/auth loading and wrappers.
+- `components/ui`: reusable design-system primitives only.

@@ -1,9 +1,20 @@
 export type RouteCoordinate = [number, number]
+export type RoutePreference = "fastest" | "shortest"
 
 export interface RoutedLeg {
   fromTime: number
   toTime: number
   coordinates: RouteCoordinate[]
+  isStationary?: boolean
+  isFallback?: boolean
+}
+
+interface RoutableKeyframe {
+  time: number
+  lat: number
+  lng: number
+  pointType?: "point" | "stop"
+  via?: RouteCoordinate[]
 }
 
 interface DirectionsResponse {
@@ -16,9 +27,14 @@ interface DirectionsResponse {
 }
 
 const routedLegCache = new Map<string, Promise<RouteCoordinate[] | null>>()
+const defaultRoutePreference: RoutePreference = "fastest"
 
-function createLegCacheKey(start: RouteCoordinate, end: RouteCoordinate) {
-  return `${start[0]},${start[1]}:${end[0]},${end[1]}`
+function createLegCacheKey(start: RouteCoordinate, end: RouteCoordinate, via: RouteCoordinate[] = [], routePreference: RoutePreference = defaultRoutePreference) {
+  return `${routePreference}:${start[0]},${start[1]}:${via.map((coordinate) => coordinate.join(",")).join("|")}:${end[0]},${end[1]}`
+}
+
+function reverseRouteCoordinates(coordinates: RouteCoordinate[] | null) {
+  return coordinates ? ([...coordinates].reverse() as RouteCoordinate[]) : null
 }
 
 function isValidCoordinatePair(value: unknown): value is RouteCoordinate {
@@ -32,16 +48,23 @@ function isValidCoordinatePair(value: unknown): value is RouteCoordinate {
   )
 }
 
-async function fetchDirectionsLeg(start: RouteCoordinate, end: RouteCoordinate) {
+async function fetchDirectionsLeg(start: RouteCoordinate, end: RouteCoordinate, via: RouteCoordinate[] = [], routePreference: RoutePreference = defaultRoutePreference) {
   if (!isValidCoordinatePair(start) || !isValidCoordinatePair(end)) {
     return null
   }
 
-  const key = createLegCacheKey(start, end)
+  const validVia = via.filter(isValidCoordinatePair)
+  const key = createLegCacheKey(start, end, validVia, routePreference)
+  const reverseKey = createLegCacheKey(end, start, [...validVia].reverse(), routePreference)
   const existingRequest = routedLegCache.get(key)
+  const reverseRequest = routedLegCache.get(reverseKey)
 
   if (existingRequest) {
     return existingRequest
+  }
+
+  if (reverseRequest) {
+    return reverseRequest.then(reverseRouteCoordinates)
   }
 
   const request = (async () => {
@@ -49,7 +72,11 @@ async function fetchDirectionsLeg(start: RouteCoordinate, end: RouteCoordinate) 
       start: `${start[0]},${start[1]}`,
       end: `${end[0]},${end[1]}`,
       profile: "driving",
+      routePreference,
     })
+    if (validVia.length > 0) {
+      searchParams.set("waypoints", validVia.map((coordinate) => coordinate.join(",")).join("|"))
+    }
 
     let response: Response
     try {
@@ -85,11 +112,8 @@ async function fetchDirectionsLeg(start: RouteCoordinate, end: RouteCoordinate) 
 }
 
 export async function fetchRoutedLegsForKeyframes(
-  keyframes: Array<{
-    time: number
-    lat: number
-    lng: number
-  }>,
+  keyframes: RoutableKeyframe[],
+  options: { routePreference?: RoutePreference } = {},
 ) {
   if (keyframes.length < 2) {
     return [] as RoutedLeg[]
@@ -99,21 +123,32 @@ export async function fetchRoutedLegsForKeyframes(
   try {
     routedCoordinates = await Promise.all(
       keyframes.slice(0, -1).map((keyframe, index) =>
-        fetchDirectionsLeg([keyframe.lng, keyframe.lat], [keyframes[index + 1].lng, keyframes[index + 1].lat]),
+        fetchDirectionsLeg(
+          [keyframe.lng, keyframe.lat],
+          [keyframes[index + 1].lng, keyframes[index + 1].lat],
+          keyframe.via,
+          options.routePreference,
+        ),
       ),
     )
   } catch {
     routedCoordinates = []
   }
 
-  return keyframes.slice(0, -1).map((keyframe, index) => ({
-    fromTime: keyframe.time,
-    toTime: keyframes[index + 1].time,
-    coordinates:
-      routedCoordinates[index] ??
-      ([
-        [keyframe.lng, keyframe.lat],
-        [keyframes[index + 1].lng, keyframes[index + 1].lat],
-      ] as RouteCoordinate[]),
-  }))
+  return keyframes.slice(0, -1).map((keyframe, index) => {
+    const routedLeg = routedCoordinates[index]
+
+    return {
+      fromTime: keyframe.time,
+      toTime: keyframes[index + 1].time,
+      isFallback: !routedLeg,
+      isStationary: keyframe.pointType === "stop",
+      coordinates:
+        routedLeg ??
+        ([
+          [keyframe.lng, keyframe.lat],
+          [keyframes[index + 1].lng, keyframes[index + 1].lat],
+        ] as RouteCoordinate[]),
+    }
+  })
 }

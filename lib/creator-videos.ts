@@ -1,5 +1,5 @@
 import type { TravelVideo, VideoKeyframe } from "@/lib/demo-data"
-import { creatorProfile, getPublishedTravelVideos, getTravelVideoById } from "@/lib/demo-data"
+import { creatorProfile, getCreatorVideos, getPublishedTravelVideos, getTravelVideoById } from "@/lib/demo-data"
 import { extractYouTubeId, getYouTubeThumbnailUrl, type ResolvedYouTubeMetadata } from "@/lib/youtube"
 
 const creatorVideosStorageKey = "travelmap:creator-videos"
@@ -71,6 +71,30 @@ function hashValue(value: string) {
   return Array.from(value).reduce((total, char) => total + char.charCodeAt(0), 0)
 }
 
+function readStorageItem(key: string) {
+  if (typeof window === "undefined") {
+    return null
+  }
+
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writeStorageItem(key: string, value: string) {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    // Local storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
 function buildInstantKeyframes(youtubeId: string, preferredTag?: string) {
   const preferredTemplate = preferredTag
     ? instantRouteTemplates.find((template) => template.tags.includes(preferredTag))
@@ -98,11 +122,7 @@ export function isInstantWatchVideoId(id: string) {
 }
 
 export function loadLocalCreatorVideos() {
-  if (typeof window === "undefined") {
-    return [] as TravelVideo[]
-  }
-
-  const raw = window.localStorage.getItem(creatorVideosStorageKey)
+  const raw = readStorageItem(creatorVideosStorageKey)
   if (!raw) {
     return [] as TravelVideo[]
   }
@@ -116,19 +136,11 @@ export function loadLocalCreatorVideos() {
 }
 
 export function saveLocalCreatorVideos(videos: TravelVideo[]) {
-  if (typeof window === "undefined") {
-    return
-  }
-
-  window.localStorage.setItem(creatorVideosStorageKey, JSON.stringify(videos))
+  writeStorageItem(creatorVideosStorageKey, JSON.stringify(videos))
 }
 
 export function loadInstantWatchVideos() {
-  if (typeof window === "undefined") {
-    return [] as TravelVideo[]
-  }
-
-  const raw = window.localStorage.getItem(instantVideosStorageKey)
+  const raw = readStorageItem(instantVideosStorageKey)
   if (!raw) {
     return [] as TravelVideo[]
   }
@@ -142,15 +154,19 @@ export function loadInstantWatchVideos() {
 }
 
 export function saveInstantWatchVideos(videos: TravelVideo[]) {
-  if (typeof window === "undefined") {
-    return
-  }
-
-  window.localStorage.setItem(instantVideosStorageKey, JSON.stringify(videos))
+  writeStorageItem(instantVideosStorageKey, JSON.stringify(videos))
 }
 
 export function getAllCreatorVideosClient() {
-  return loadLocalCreatorVideos()
+  const localVideos = loadLocalCreatorVideos()
+  const catalogCreatorVideos = getCreatorVideos().filter(
+    (catalogVideo) =>
+      !localVideos.some(
+        (localVideo) => localVideo.id === catalogVideo.id || localVideo.youtubeId === catalogVideo.youtubeId,
+      ),
+  )
+
+  return [...localVideos, ...catalogCreatorVideos]
 }
 
 export function getPublishedTravelVideosClient() {
@@ -197,6 +213,11 @@ export async function createLocalCreatorVideo({
   const existingVideo = loadLocalCreatorVideos().find((video) => video.youtubeId === youtubeId)
   if (existingVideo) {
     return existingVideo
+  }
+
+  const existingCatalogVideo = getCreatorVideos().find((video) => video.youtubeId === youtubeId)
+  if (existingCatalogVideo) {
+    return existingCatalogVideo
   }
 
   const metadata = await fetchMetadataForCreatorVideo(youtubeId)

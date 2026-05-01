@@ -1,4 +1,6 @@
-import type { VideoKeyframe } from "@/lib/demo-data"
+import type { VideoKeyframe, VideoKeyframePointType } from "@/lib/demo-data"
+
+export type CreatorMapPointType = VideoKeyframePointType
 
 export interface CreatorMapPoint extends VideoKeyframe {
   id: string
@@ -12,13 +14,32 @@ export function sortCreatorPoints(points: CreatorMapPoint[]) {
   return [...points].sort((a, b) => a.time - b.time)
 }
 
+export function getCreatorPointType(point: Pick<VideoKeyframe, "pointType">): CreatorMapPointType {
+  return point.pointType === "stop" ? "stop" : "point"
+}
+
 export function toCreatorMapPoints(videoId: string, keyframes: VideoKeyframe[]) {
   return sortCreatorPoints(
     keyframes.map((keyframe) => ({
       ...keyframe,
+      pointType: getCreatorPointType(keyframe),
       id: createPointId(videoId, keyframe.time, keyframe.lat, keyframe.lng),
     })),
   )
+}
+
+function normalizeCreatorPoint(videoId: string, point: CreatorMapPoint) {
+  const normalizedStopEndTime =
+    point.pointType === "stop" && typeof point.stopEndTime === "number" && point.stopEndTime > point.time
+      ? point.stopEndTime
+      : undefined
+
+  return {
+    ...point,
+    pointType: getCreatorPointType(point),
+    stopEndTime: normalizedStopEndTime,
+    id: point.id || createPointId(videoId, point.time, point.lat, point.lng),
+  }
 }
 
 function getStorageKey(videoId: string) {
@@ -41,7 +62,7 @@ export function loadCreatorPoints(videoId: string, fallback: VideoKeyframe[]) {
       return toCreatorMapPoints(videoId, fallback)
     }
 
-    return sortCreatorPoints(parsed)
+    return sortCreatorPoints(parsed.map((point) => normalizeCreatorPoint(videoId, point)))
   } catch {
     return toCreatorMapPoints(videoId, fallback)
   }
@@ -64,8 +85,14 @@ export function clearCreatorPoints(videoId: string) {
 }
 
 export function upsertCreatorPoint(videoId: string, points: CreatorMapPoint[], point: Omit<CreatorMapPoint, "id"> & { id?: string }) {
+  const pointType = getCreatorPointType(point)
   const nextPoint: CreatorMapPoint = {
     ...point,
+    pointType,
+    stopEndTime:
+      pointType === "stop" && typeof point.stopEndTime === "number" && point.stopEndTime > point.time
+        ? point.stopEndTime
+        : undefined,
     id: point.id || createPointId(videoId, point.time, point.lat, point.lng),
   }
 
@@ -104,13 +131,38 @@ export function getInterpolatedPointAtTime(points: VideoKeyframe[], currentTime:
     return previousPoint
   }
 
-  const segmentDuration = Math.max(nextPoint.time - previousPoint.time, 1)
-  const progress = Math.min(Math.max((currentTime - previousPoint.time) / segmentDuration, 0), 1)
+  const previousStopEndTime =
+    getCreatorPointType(previousPoint) === "stop" &&
+    typeof previousPoint.stopEndTime === "number" &&
+    previousPoint.stopEndTime > previousPoint.time
+      ? Math.min(previousPoint.stopEndTime, nextPoint.time)
+      : null
+
+  if (previousStopEndTime !== null && currentTime < previousStopEndTime) {
+    return {
+      ...previousPoint,
+      time: currentTime,
+      pointType: "stop",
+    }
+  }
+
+  if (getCreatorPointType(previousPoint) === "stop" && previousStopEndTime === null && currentTime < nextPoint.time) {
+    return {
+      ...previousPoint,
+      time: currentTime,
+      pointType: "stop",
+    }
+  }
+
+  const travelStartTime = previousStopEndTime ?? previousPoint.time
+  const segmentDuration = Math.max(nextPoint.time - travelStartTime, 1)
+  const progress = Math.min(Math.max((currentTime - travelStartTime) / segmentDuration, 0), 1)
 
   return {
     time: currentTime,
     lat: previousPoint.lat + (nextPoint.lat - previousPoint.lat) * progress,
     lng: previousPoint.lng + (nextPoint.lng - previousPoint.lng) * progress,
+    pointType: "point",
     location: progress < 0.08 ? previousPoint.location : progress > 0.92 ? nextPoint.location : `Traveling to ${nextPoint.location}`,
     description:
       progress < 0.08

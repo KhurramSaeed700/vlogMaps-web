@@ -5,16 +5,13 @@ import Link from "next/link"
 import {
   ArrowLeft,
   Heart,
-  Layers,
-  MapPin,
-  Play,
   Settings,
   Share2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { MapboxTravelMap } from "@/components/mapbox-travel-map"
-import { YouTubePlayer } from "@/components/youtube-player"
+import { MapboxTravelMap } from "@/components/maps/mapbox-travel-map"
+import { YouTubePlayer } from "@/components/media/youtube-player"
 import { formatDuration, type TravelVideo } from "@/lib/demo-data"
 import { getInterpolatedPointAtTime, loadCreatorPoints, type CreatorMapPoint } from "@/lib/creator-points"
 import type { HydratedTravelVideo } from "@/lib/youtube-client"
@@ -26,22 +23,28 @@ interface WatchExperienceProps {
 export function WatchExperience({ video }: WatchExperienceProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [routePoints, setRoutePoints] = useState<CreatorMapPoint[]>(() => loadCreatorPoints(video.id, video.keyframes))
-  const [isPlaying, setIsPlaying] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(true)
   const [currentTime, setCurrentTime] = useState(0)
+  const [seekRequest, setSeekRequest] = useState<{ id: number; time: number } | null>(null)
   const [duration, setDuration] = useState(video.durationSeconds)
-  const [viewMode, setViewMode] = useState<"split" | "map-focus" | "video-focus">("split")
 
   useEffect(() => {
     setRoutePoints(loadCreatorPoints(video.id, video.keyframes))
+    setCurrentTime(0)
+    setSeekRequest(null)
   }, [video.id, video.keyframes])
 
   const currentLocation = useMemo(() => {
     return getInterpolatedPointAtTime(routePoints, currentTime)
   }, [currentTime, routePoints])
-  const isMapVisible = viewMode !== "video-focus"
 
   const jumpToKeyframe = (time: number) => {
     setCurrentTime(time)
+    setSeekRequest((currentRequest) => ({
+      id: (currentRequest?.id ?? 0) + 1,
+      time,
+    }))
+    setIsPlaying(true)
   }
 
   return (
@@ -70,49 +73,18 @@ export function WatchExperience({ video }: WatchExperienceProps) {
         </div>
       </header>
 
-      <div className="absolute right-4 top-20 z-40 flex flex-col gap-2">
-        <Button
-          variant={viewMode === "split" ? "default" : "secondary"}
-          size="sm"
-          onClick={() => setViewMode("split")}
-          className="text-xs"
-        >
-          <Layers className="mr-1 h-4 w-4" />
-          Split
-        </Button>
-        <Button
-          variant={viewMode === "map-focus" ? "default" : "secondary"}
-          size="sm"
-          onClick={() => setViewMode("map-focus")}
-          className="text-xs"
-        >
-          <MapPin className="mr-1 h-4 w-4" />
-          Map
-        </Button>
-        <Button
-          variant={viewMode === "video-focus" ? "default" : "secondary"}
-          size="sm"
-          onClick={() => setViewMode("video-focus")}
-          className="text-xs"
-        >
-          <Play className="mr-1 h-4 w-4" />
-          Video
-        </Button>
-      </div>
-
       <div className="flex h-full min-h-0 flex-1 pt-20">
-        <div
-          className={`relative bg-black ${
-            viewMode === "split" ? "w-1/2" : viewMode === "video-focus" ? "w-full" : "w-80"
-          } ${viewMode === "map-focus" ? "absolute right-4 top-20 z-30 h-56 rounded-xl shadow-2xl md:w-96" : "h-full min-h-0"}`}
-        >
+        <div className="relative h-full min-h-0 w-1/2 bg-black">
           <div className="relative h-full w-full overflow-hidden bg-gray-950">
             <YouTubePlayer
               videoId={video.youtubeId}
               currentTime={currentTime}
+              seekToTime={seekRequest?.time}
+              seekRequestId={seekRequest?.id}
               isPlaying={isPlaying}
               volume={75}
-              isMuted={false}
+              isMuted
+              autoPlay
               showControls
               allowKeyboard
               onReady={(nextDuration) => setDuration(nextDuration || video.durationSeconds)}
@@ -133,16 +105,14 @@ export function WatchExperience({ video }: WatchExperienceProps) {
           </div>
         </div>
 
-        {isMapVisible ? (
-          <div className={`relative min-h-0 ${viewMode === "split" ? "w-1/2" : "w-full"}`}>
-            <MapboxTravelMap
-              keyframes={routePoints}
-              currentKeyframe={currentLocation}
-              onLocationClick={(keyframe) => jumpToKeyframe(keyframe.time)}
-              className="h-full w-full"
-            />
-          </div>
-        ) : null}
+        <div className="relative min-h-0 w-1/2">
+          <MapboxTravelMap
+            keyframes={routePoints}
+            currentKeyframe={currentLocation}
+            onLocationClick={(keyframe) => jumpToKeyframe(keyframe.time)}
+            className="h-full w-full"
+          />
+        </div>
       </div>
     </div>
   )
