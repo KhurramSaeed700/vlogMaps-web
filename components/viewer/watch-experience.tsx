@@ -53,28 +53,31 @@ export function WatchExperience({ video }: WatchExperienceProps) {
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center">
             <Link href="/">
-              <Button variant="ghost" size="icon" className="text-white hover:bg-white/20">
+              <Button variant="ghost" size="icon" aria-label="Back to home" className="text-white hover:bg-white/20">
                 <ArrowLeft className="h-5 w-5" />
               </Button>
             </Link>
+            <span className="ml-2 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white/70">
+              Watch Page
+            </span>
           </div>
 
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="text-white hover:bg-white/20">
+            <Button variant="ghost" size="icon" aria-label="Like video" className="text-white hover:bg-white/20">
               <Heart className="h-5 w-5" />
             </Button>
-            <Button variant="ghost" size="icon" className="text-white hover:bg-white/20">
+            <Button variant="ghost" size="icon" aria-label="Share video" className="text-white hover:bg-white/20">
               <Share2 className="h-5 w-5" />
             </Button>
-            <Button variant="ghost" size="icon" className="text-white hover:bg-white/20">
+            <Button variant="ghost" size="icon" aria-label="Open playback settings" className="text-white hover:bg-white/20">
               <Settings className="h-5 w-5" />
             </Button>
           </div>
         </div>
       </header>
 
-      <div className="flex h-full min-h-0 flex-1 pt-20">
-        <div className="relative h-full min-h-0 w-1/2 bg-black">
+      <div className="flex h-full min-h-0 flex-1 flex-col pt-20 lg:flex-row">
+        <div className="relative h-1/2 min-h-0 bg-black lg:h-full lg:w-1/2">
           <div className="relative h-full w-full overflow-hidden bg-gray-950">
             <YouTubePlayer
               videoId={video.youtubeId}
@@ -82,11 +85,11 @@ export function WatchExperience({ video }: WatchExperienceProps) {
               seekToTime={seekRequest?.time}
               seekRequestId={seekRequest?.id}
               isPlaying={isPlaying}
-              volume={75}
-              isMuted
+              volume={60}
+              isMuted={false}
               autoPlay
               showControls
-              allowKeyboard
+              allowWatchKeyboardControls
               onReady={(nextDuration) => setDuration(nextDuration || video.durationSeconds)}
               onTimeChange={(time) => setCurrentTime(time)}
               onPlayingChange={setIsPlaying}
@@ -105,7 +108,7 @@ export function WatchExperience({ video }: WatchExperienceProps) {
           </div>
         </div>
 
-        <div className="relative min-h-0 w-1/2">
+        <div className="relative h-1/2 min-h-0 lg:h-full lg:w-1/2">
           <MapboxTravelMap
             keyframes={routePoints}
             currentKeyframe={currentLocation}

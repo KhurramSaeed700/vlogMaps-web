@@ -9,13 +9,11 @@ export interface CreatorLoadingStep {
 
 interface CreatorLoadingStateProps {
   title?: string
-  description?: string
   steps?: CreatorLoadingStep[]
 }
 
 export function CreatorLoadingState({
   title = "Opening creator tools",
-  description,
   steps = [{ label: "Preparing workspace", status: "active" }],
 }: CreatorLoadingStateProps) {
   return (
@@ -27,7 +25,6 @@ export function CreatorLoadingState({
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-slate-950">{title}</p>
-            {description ? <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p> : null}
             <div className="mt-3 space-y-2">
               {steps.map((step, index) => {
                 const status = step.status ?? (index === 0 ? "active" : "pending")

@@ -26,8 +26,25 @@ const editorTimestampRouteWidth = 5
 const editorTripRouteWidth = editorTimestampRouteWidth
 const editorTripRouteOffset = 4
 const editorTripRouteCasingWidth = editorTripRouteWidth + 2
-const editorTravelerTrackingMinZoom = 12
-const editorTravelerTrackingDurationMs = 420
+const editorTravelerTrackingMinZoom = 7.5
+const editorTravelerTrackingMaxZoom = 10.8
+const editorTravelerTrackingCloseMaxZoom = 14.2
+const editorTravelerTrackingWindowSeconds = 20
+const editorTravelerTrackingWindowFill = 0.35
+const editorTravelerTrackingSlowSpeedKmh = 8
+const editorTravelerTrackingFastSpeedKmh = 45
+const editorTravelerTrackingSlowZoomBoost = 0.8
+const editorTravelerTrackingFastZoomDrop = 1.15
+const editorTravelerTrackingClusterRadiusKm = 1.6
+const editorTravelerTrackingClusterOverlapPx = 34
+const editorTravelerTrackingClusterSpanPx = 120
+const editorTravelerTrackingClusterZoomBoost = 1.15
+const editorTravelerTrackingStopZoomDelaySeconds = 3
+const editorTravelerTrackingStopZoomOutLeadSeconds = 3
+const editorTravelerTrackingStopZoomTransitionSeconds = 2
+const editorTravelerTrackingStopZoomBoost = 1.55
+const editorTravelerTrackingLoadingMinMs = 450
+const editorTravelerTrackingLoadingFallbackMs = 6500
 const editorTrailMaxDirectDistanceKm = 30
 const editorTrailMinRouteDetourKm = 5
 const editorTrailDetourRatio = 3
@@ -182,6 +199,7 @@ interface MapboxLocationPickerProps {
   tripRoute?: CreatorTripRoute
   routeShapes?: CreatorRouteShapes
   routeProgressTime?: number | null
+  liveRouteProgressTimeRef?: { readonly current: number | null }
   isRouteShapingDisabled?: boolean
   activeTripEndpoint?: CreatorTripEndpoint | null
   onTripEndpointChange?: (endpoint: CreatorTripEndpoint, value: { lat: number; lng: number; name?: string }) => void
@@ -255,6 +273,16 @@ type RouteShapeTarget =
 interface RouteSnapResult {
   coordinate: RouteCoordinate
   distancePx: number
+}
+
+interface TrackingStopZoomState {
+  legKey: string
+  baseZoom: number
+}
+
+interface TrackingLoadingState {
+  label: string
+  detail: string
 }
 
 async function fetchLocationSuggestions(query: string, bias: LocationSearchBias = {}, signal?: AbortSignal) {
@@ -372,6 +400,64 @@ function haversineDistance(start: RouteCoordinate, end: RouteCoordinate) {
   return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
+}
+
+function interpolateRouteCoordinate(start: RouteCoordinate, end: RouteCoordinate, amount: number): RouteCoordinate {
+  const clampedAmount = clampNumber(amount, 0, 1)
+  return [
+    start[0] + (end[0] - start[0]) * clampedAmount,
+    start[1] + (end[1] - start[1]) * clampedAmount,
+  ]
+}
+
+function easeInOut(value: number) {
+  const clampedValue = clampNumber(value, 0, 1)
+  return clampedValue * clampedValue * (3 - 2 * clampedValue)
+}
+
+function getActiveStationarySegment(segments: TimestampRouteSegment[], routeProgressTime: number) {
+  return segments.find(
+    (segment) => segment.isStationary && routeProgressTime >= segment.fromTime && routeProgressTime <= segment.toTime,
+  ) ?? null
+}
+
+function getStopZoomAmount(segment: TimestampRouteSegment, routeProgressTime: number) {
+  const duration = segment.toTime - segment.fromTime
+  if (duration < 2.5) {
+    return 0
+  }
+
+  const delay = Math.min(editorTravelerTrackingStopZoomDelaySeconds, duration * 0.25)
+  const zoomOutLead = Math.min(editorTravelerTrackingStopZoomOutLeadSeconds, duration * 0.25)
+  const transitionSeconds = Math.min(editorTravelerTrackingStopZoomTransitionSeconds, Math.max(0.75, duration * 0.16))
+  const zoomInStart = segment.fromTime + delay
+  const zoomOutStart = segment.toTime - zoomOutLead
+
+  if (zoomOutStart <= zoomInStart) {
+    const availableDuration = Math.max(segment.toTime - zoomInStart, 0.001)
+    const stopProgress = clampNumber((routeProgressTime - zoomInStart) / availableDuration, 0, 1)
+    return easeInOut(Math.sin(stopProgress * Math.PI))
+  }
+
+  const zoomInEnd = Math.min(zoomInStart + transitionSeconds, zoomOutStart)
+
+  if (routeProgressTime <= zoomInStart) {
+    return 0
+  }
+
+  if (routeProgressTime < zoomInEnd) {
+    return easeInOut((routeProgressTime - zoomInStart) / Math.max(zoomInEnd - zoomInStart, 0.001))
+  }
+
+  if (routeProgressTime >= zoomOutStart) {
+    return 1 - easeInOut((routeProgressTime - zoomOutStart) / Math.max(segment.toTime - zoomOutStart, 0.001))
+  }
+
+  return 1
+}
+
 function getPartialRouteCoordinates(coordinates: RouteCoordinate[], progress: number) {
   if (coordinates.length < 2) {
     return []
@@ -456,6 +542,37 @@ function getRouteProgressCoordinate(segments: TimestampRouteSegment[], routeProg
   )
 
   return partialCoordinates[partialCoordinates.length - 1] ?? matchingSegment.coordinates[0] ?? null
+}
+
+function getRouteProgressWindowCoordinates(
+  segments: TimestampRouteSegment[],
+  routeProgressTime: number,
+  windowSeconds = editorTravelerTrackingWindowSeconds,
+) {
+  const coordinates: RouteCoordinate[] = []
+  const halfWindowSeconds = windowSeconds / 2
+  const startTime = routeProgressTime - halfWindowSeconds
+  const sampleCount = 10
+
+  for (let index = 0; index <= sampleCount; index += 1) {
+    const sampleTime = startTime + (windowSeconds * index) / sampleCount
+    const coordinate = getRouteProgressCoordinate(segments, sampleTime)
+    if (!coordinate) {
+      continue
+    }
+
+    const previousCoordinate = coordinates[coordinates.length - 1]
+    if (!previousCoordinate || haversineDistance(previousCoordinate, coordinate) > 0.001) {
+      coordinates.push(coordinate)
+    }
+  }
+
+  const currentCoordinate = getRouteProgressCoordinate(segments, routeProgressTime)
+  if (currentCoordinate && coordinates.every((coordinate) => haversineDistance(coordinate, currentCoordinate) > 0.001)) {
+    coordinates.push(currentCoordinate)
+  }
+
+  return coordinates
 }
 
 function getRouteBearing(start: RouteCoordinate, end: RouteCoordinate) {
@@ -651,6 +768,7 @@ export function MapboxLocationPicker({
   tripRoute,
   routeShapes,
   routeProgressTime = null,
+  liveRouteProgressTimeRef,
   isRouteShapingDisabled = false,
   activeTripEndpoint = null,
   onTripEndpointChange,
@@ -693,6 +811,22 @@ export function MapboxLocationPicker({
   const isRouteShapeMarkerHoveredRef = useRef(false)
   const isRouteShapeMarkerDraggingRef = useRef(false)
   const isTrackingTravelerRef = useRef(false)
+  const trackingAnimationFrameRef = useRef<number | null>(null)
+  const trackingCameraCenterRef = useRef<RouteCoordinate | null>(null)
+  const trackingCameraZoomRef = useRef<number | null>(null)
+  const trackingFrameTimeRef = useRef<number | null>(null)
+  const trackingSpeedSampleRef = useRef<{ coordinate: RouteCoordinate; time: number } | null>(null)
+  const trackingSpeedKmhRef = useRef(0)
+  const trackingStopZoomRef = useRef<TrackingStopZoomState | null>(null)
+  const trackingLoadingStartedAtRef = useRef<number | null>(null)
+  const trackingLoadingHasCenteredRef = useRef(false)
+  const trackingLoadingFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const trackingLoadingFinishRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const routeProgressSampleRef = useRef<{ time: number | null; previousTime: number | null; receivedAt: number }>({
+    time: liveRouteProgressTimeRef?.current ?? routeProgressTime ?? null,
+    previousTime: null,
+    receivedAt: typeof window === "undefined" ? 0 : window.performance.now(),
+  })
   const onChangeRef = useRef(onChange)
   const onTripEndpointChangeRef = useRef(onTripEndpointChange)
   const onTripRouteShapeChangeRef = useRef(onTripRouteShapeChange)
@@ -725,6 +859,7 @@ export function MapboxLocationPicker({
   const [isSearching, setIsSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [isTrackingTraveler, setIsTrackingTraveler] = useState(false)
+  const [trackingLoadingState, setTrackingLoadingState] = useState<TrackingLoadingState | null>(null)
 
   const persistCurrentMapView = (map: mapboxgl.Map, style: MapStyleOptionId = appliedMapStyleRef.current) => {
     const center = map.getCenter()
@@ -792,13 +927,400 @@ export function MapboxLocationPicker({
     })
   }
 
+  const clearTrackingLoadingFallback = () => {
+    if (trackingLoadingFallbackRef.current) {
+      clearTimeout(trackingLoadingFallbackRef.current)
+      trackingLoadingFallbackRef.current = null
+    }
+  }
+
+  const clearTrackingLoadingFinish = () => {
+    if (trackingLoadingFinishRef.current) {
+      clearTimeout(trackingLoadingFinishRef.current)
+      trackingLoadingFinishRef.current = null
+    }
+  }
+
+  const updateTrackingLoadingState = (nextState: TrackingLoadingState) => {
+    if (trackingLoadingStartedAtRef.current === null) {
+      return
+    }
+
+    setTrackingLoadingState((currentState) =>
+      currentState?.label === nextState.label && currentState.detail === nextState.detail ? currentState : nextState,
+    )
+  }
+
+  const startTrackingLoading = () => {
+    clearTrackingLoadingFallback()
+    clearTrackingLoadingFinish()
+    trackingLoadingStartedAtRef.current = window.performance.now()
+    trackingLoadingHasCenteredRef.current = false
+    setTrackingLoadingState({
+      label: "Preparing traveler tracking",
+      detail: "Reading the current video time and route.",
+    })
+    trackingLoadingFallbackRef.current = setTimeout(() => {
+      trackingLoadingFallbackRef.current = null
+      trackingLoadingStartedAtRef.current = null
+      trackingLoadingHasCenteredRef.current = false
+      setTrackingLoadingState(null)
+    }, editorTravelerTrackingLoadingFallbackMs)
+  }
+
+  const finishTrackingLoading = () => {
+    const startedAt = trackingLoadingStartedAtRef.current
+    if (startedAt === null) {
+      return
+    }
+
+    clearTrackingLoadingFallback()
+    const elapsedMs = window.performance.now() - startedAt
+    const remainingMs = Math.max(editorTravelerTrackingLoadingMinMs - elapsedMs, 0)
+
+    clearTrackingLoadingFinish()
+    trackingLoadingFinishRef.current = setTimeout(() => {
+      if (trackingLoadingStartedAtRef.current !== startedAt) {
+        return
+      }
+
+      trackingLoadingFinishRef.current = null
+      trackingLoadingStartedAtRef.current = null
+      trackingLoadingHasCenteredRef.current = false
+      setTrackingLoadingState(null)
+    }, remainingMs)
+  }
+
+  const cancelTrackingLoading = () => {
+    clearTrackingLoadingFallback()
+    clearTrackingLoadingFinish()
+    trackingLoadingStartedAtRef.current = null
+    trackingLoadingHasCenteredRef.current = false
+    setTrackingLoadingState(null)
+  }
+
+  const stopTravelerTrackingLoop = () => {
+    if (trackingAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(trackingAnimationFrameRef.current)
+      trackingAnimationFrameRef.current = null
+    }
+
+    trackingCameraCenterRef.current = null
+    trackingCameraZoomRef.current = null
+    trackingFrameTimeRef.current = null
+    trackingSpeedSampleRef.current = null
+    trackingSpeedKmhRef.current = 0
+    trackingStopZoomRef.current = null
+  }
+
+  const getRouteProgressSample = (now: number) => {
+    const liveTime = liveRouteProgressTimeRef?.current
+    const nextTime = liveTime !== null && liveTime !== undefined && Number.isFinite(liveTime)
+      ? liveTime
+      : routeProgressTimeRef.current
+    const sample = routeProgressSampleRef.current
+
+    if (nextTime !== sample.time) {
+      const nextSample = {
+        time: nextTime ?? null,
+        previousTime: sample.time,
+        receivedAt: now,
+      }
+      routeProgressSampleRef.current = nextSample
+      return nextSample
+    }
+
+    return sample
+  }
+
+  const getEstimatedRouteProgressTime = (now: number) => {
+    const sample = getRouteProgressSample(now)
+    const time = sample.time
+
+    if (time === null || !Number.isFinite(time)) {
+      return null
+    }
+
+    const previousTime = sample.previousTime
+    const sampleAgeSeconds = (now - sample.receivedAt) / 1000
+    const isContinuousPlayback =
+      previousTime !== null &&
+      Number.isFinite(previousTime) &&
+      time >= previousTime &&
+      time - previousTime <= 0.5 &&
+      sampleAgeSeconds <= 0.35
+
+    return isContinuousPlayback ? time + sampleAgeSeconds : time
+  }
+
+  const updateTrackingSpeed = (coordinate: RouteCoordinate, progressTime: number) => {
+    const previousSample = trackingSpeedSampleRef.current
+    trackingSpeedSampleRef.current = { coordinate, time: progressTime }
+
+    if (!previousSample) {
+      return trackingSpeedKmhRef.current
+    }
+
+    const elapsedSeconds = progressTime - previousSample.time
+    if (elapsedSeconds <= 0) {
+      trackingSpeedKmhRef.current *= 0.95
+      return trackingSpeedKmhRef.current
+    }
+
+    if (elapsedSeconds > 1) {
+      trackingSpeedKmhRef.current = 0
+      return trackingSpeedKmhRef.current
+    }
+
+    const elapsedHours = elapsedSeconds / 3600
+    const instantSpeedKmh = clampNumber(haversineDistance(previousSample.coordinate, coordinate) / elapsedHours, 0, 220)
+    trackingSpeedKmhRef.current = trackingSpeedKmhRef.current * 0.82 + instantSpeedKmh * 0.18
+    return trackingSpeedKmhRef.current
+  }
+
+  const getMotionTrackingZoom = (map: mapboxgl.Map, progressTime: number) => {
+    const coordinates = getRouteProgressWindowCoordinates(timestampRouteSegmentsRef.current, progressTime)
+    if (coordinates.length < 2) {
+      return editorTravelerTrackingMaxZoom
+    }
+
+    const projectedCoordinates = coordinates.map((coordinate) => map.project(coordinate))
+    const minX = Math.min(...projectedCoordinates.map((point) => point.x))
+    const maxX = Math.max(...projectedCoordinates.map((point) => point.x))
+    const minY = Math.min(...projectedCoordinates.map((point) => point.y))
+    const maxY = Math.max(...projectedCoordinates.map((point) => point.y))
+    const currentSpanPx = Math.max(maxX - minX, maxY - minY)
+    const canvas = map.getCanvas()
+    const desiredSpanPx = Math.max(140, Math.min(canvas.clientWidth, canvas.clientHeight) * editorTravelerTrackingWindowFill)
+
+    if (!Number.isFinite(currentSpanPx) || currentSpanPx < 1) {
+      return editorTravelerTrackingMaxZoom
+    }
+
+    return map.getZoom() + Math.log2(desiredSpanPx / currentSpanPx)
+  }
+
+  const getTimestampClusterProgress = (map: mapboxgl.Map, targetCoordinate: RouteCoordinate) => {
+    const nearbyPoints = pointsRef.current.filter((point) => {
+      return haversineDistance([point.lng, point.lat], targetCoordinate) <= editorTravelerTrackingClusterRadiusKm
+    })
+
+    if (nearbyPoints.length < 2) {
+      return 0
+    }
+
+    const projectedPoints = nearbyPoints.map((point) => map.project([point.lng, point.lat]))
+    let minimumDistancePx = Number.POSITIVE_INFINITY
+    let minX = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+
+    for (let index = 0; index < projectedPoints.length; index += 1) {
+      const point = projectedPoints[index]
+      minX = Math.min(minX, point.x)
+      maxX = Math.max(maxX, point.x)
+      minY = Math.min(minY, point.y)
+      maxY = Math.max(maxY, point.y)
+
+      for (let nextIndex = index + 1; nextIndex < projectedPoints.length; nextIndex += 1) {
+        const nextPoint = projectedPoints[nextIndex]
+        minimumDistancePx = Math.min(minimumDistancePx, Math.hypot(point.x - nextPoint.x, point.y - nextPoint.y))
+      }
+    }
+
+    const overlapProgress = 1 - clampNumber(minimumDistancePx / editorTravelerTrackingClusterOverlapPx, 0, 1)
+    const spanPx = Math.max(maxX - minX, maxY - minY)
+    const densityProgress = nearbyPoints.length >= 3
+      ? 1 - clampNumber(spanPx / editorTravelerTrackingClusterSpanPx, 0, 1)
+      : 0
+
+    return easeInOut(Math.max(overlapProgress, densityProgress))
+  }
+
+  const getTravelerTrackingZoom = (map: mapboxgl.Map, progressTime: number) => {
+    const activeStopSegment = getActiveStationarySegment(timestampRouteSegmentsRef.current, progressTime)
+    if (activeStopSegment) {
+      const minZoom = Math.max(map.getMinZoom(), editorTravelerTrackingMinZoom)
+      const maxZoom = Math.min(map.getMaxZoom(), editorTravelerTrackingCloseMaxZoom)
+      const existingStopZoom = trackingStopZoomRef.current
+      const stopZoomState =
+        existingStopZoom?.legKey === activeStopSegment.legKey
+          ? existingStopZoom
+          : {
+              legKey: activeStopSegment.legKey,
+              baseZoom: clampNumber(trackingCameraZoomRef.current ?? map.getZoom(), minZoom, maxZoom),
+            }
+      trackingStopZoomRef.current = stopZoomState
+
+      const stopZoomAmount = getStopZoomAmount(activeStopSegment, progressTime)
+      const closeStopZoom = clampNumber(stopZoomState.baseZoom + editorTravelerTrackingStopZoomBoost, minZoom, maxZoom)
+
+      return stopZoomState.baseZoom + (closeStopZoom - stopZoomState.baseZoom) * stopZoomAmount
+    }
+
+    trackingStopZoomRef.current = null
+    const speedProgress = easeInOut(
+      (trackingSpeedKmhRef.current - editorTravelerTrackingSlowSpeedKmh) /
+        (editorTravelerTrackingFastSpeedKmh - editorTravelerTrackingSlowSpeedKmh),
+    )
+    const targetCoordinate = getRouteProgressCoordinate(timestampRouteSegmentsRef.current, progressTime)
+    const clusterProgress = targetCoordinate ? getTimestampClusterProgress(map, targetCoordinate) : 0
+    const closeZoomProgress = Math.max(clusterProgress, 1 - speedProgress)
+    const maxTrackingZoom = editorTravelerTrackingMaxZoom +
+      (editorTravelerTrackingCloseMaxZoom - editorTravelerTrackingMaxZoom) * closeZoomProgress
+    const speedZoomBias =
+      editorTravelerTrackingSlowZoomBoost * (1 - speedProgress) -
+      editorTravelerTrackingFastZoomDrop * speedProgress
+    const clusterZoomBias = editorTravelerTrackingClusterZoomBoost * clusterProgress * (1 - speedProgress)
+
+    return clampNumber(
+      getMotionTrackingZoom(map, progressTime) + speedZoomBias + clusterZoomBias,
+      Math.max(map.getMinZoom(), editorTravelerTrackingMinZoom),
+      Math.min(map.getMaxZoom(), maxTrackingZoom),
+    )
+  }
+
+  const startTravelerTrackingLoop = () => {
+    if (trackingAnimationFrameRef.current !== null) {
+      return
+    }
+
+    const map = mapInstanceRef.current
+    if (!map) {
+      cancelTrackingLoading()
+      return
+    }
+
+    map.stop()
+    const center = map.getCenter()
+    trackingCameraCenterRef.current = [center.lng, center.lat]
+    trackingCameraZoomRef.current = map.getZoom()
+    trackingFrameTimeRef.current = null
+
+    const animate = (frameTime: number) => {
+      trackingAnimationFrameRef.current = null
+
+      if (!isTrackingTravelerRef.current) {
+        stopTravelerTrackingLoop()
+        return
+      }
+
+      const activeMap = mapInstanceRef.current
+      if (!activeMap || !activeMap.isStyleLoaded()) {
+        updateTrackingLoadingState({
+          label: "Loading map style",
+          detail: "Waiting for Mapbox to finish preparing the current map.",
+        })
+        trackingAnimationFrameRef.current = window.requestAnimationFrame(animate)
+        return
+      }
+
+      const progressTime = getEstimatedRouteProgressTime(frameTime)
+      if (progressTime === null) {
+        updateTrackingLoadingState({
+          label: "Finding traveler",
+          detail: "Waiting for the video timestamp to match the route.",
+        })
+      }
+
+      const targetCoordinate =
+        progressTime === null
+          ? null
+          : getRouteProgressCoordinate(timestampRouteSegmentsRef.current, progressTime)
+      const targetBearing =
+        progressTime === null
+          ? 0
+          : getRouteProgressBearing(timestampRouteSegmentsRef.current, progressTime)
+
+      if (targetCoordinate) {
+        updateTrackingLoadingState({
+          label: "Centering map",
+          detail: "Moving the camera to the traveler's current location.",
+        })
+
+        const previousFrameTime = trackingFrameTimeRef.current ?? frameTime
+        const deltaSeconds = clampNumber((frameTime - previousFrameTime) / 1000, 0.001, 0.08)
+        trackingFrameTimeRef.current = frameTime
+
+        if (!routeProgressMarkerRef.current) {
+          routeProgressMarkerRef.current = new mapboxgl.Marker({
+            element: createRouteProgressMarkerElement(),
+            pitchAlignment: "map",
+            rotation: targetBearing,
+            rotationAlignment: "map",
+          })
+            .setLngLat(targetCoordinate)
+            .addTo(activeMap)
+        } else {
+          routeProgressMarkerRef.current.setLngLat(targetCoordinate)
+          routeProgressMarkerRef.current.setRotation(targetBearing)
+        }
+
+        const currentCenterRef = trackingCameraCenterRef.current
+        const currentMapCenter = activeMap.getCenter()
+        const currentCenter: RouteCoordinate = currentCenterRef ?? [currentMapCenter.lng, currentMapCenter.lat]
+        const targetDistanceKm = haversineDistance(currentCenter, targetCoordinate)
+        const centerSmoothing = clampNumber(
+          1 - Math.exp(-deltaSeconds * (2.7 + Math.min(targetDistanceKm, 18) * 0.32)),
+          0.02,
+          targetDistanceKm > 25 ? 0.45 : 0.24,
+        )
+        const nextCenter = interpolateRouteCoordinate(currentCenter, targetCoordinate, centerSmoothing)
+        updateTrackingSpeed(targetCoordinate, progressTime ?? 0)
+        const targetZoom = clampNumber(
+          getTravelerTrackingZoom(activeMap, progressTime ?? 0),
+          Math.max(activeMap.getMinZoom(), editorTravelerTrackingMinZoom),
+          Math.min(activeMap.getMaxZoom(), editorTravelerTrackingCloseMaxZoom),
+        )
+        const currentZoom = trackingCameraZoomRef.current ?? activeMap.getZoom()
+
+        if (trackingLoadingStartedAtRef.current !== null && !trackingLoadingHasCenteredRef.current) {
+          trackingLoadingHasCenteredRef.current = true
+          trackingCameraCenterRef.current = targetCoordinate
+          trackingCameraZoomRef.current = targetZoom
+          activeMap.jumpTo({
+            center: targetCoordinate,
+            zoom: targetZoom,
+          })
+          finishTrackingLoading()
+          trackingAnimationFrameRef.current = window.requestAnimationFrame(animate)
+          return
+        }
+
+        const zoomSmoothing = clampNumber(1 - Math.exp(-deltaSeconds * 1.5), 0.01, 0.12)
+        const nextZoom = currentZoom + (targetZoom - currentZoom) * zoomSmoothing
+
+        trackingCameraCenterRef.current = nextCenter
+        trackingCameraZoomRef.current = nextZoom
+        activeMap.jumpTo({
+          center: nextCenter,
+          zoom: nextZoom,
+        })
+      } else if (trackingLoadingStartedAtRef.current !== null) {
+        updateTrackingLoadingState({
+          label: "Resolving route",
+          detail: "Building the route position for this moment.",
+        })
+      }
+
+      trackingAnimationFrameRef.current = window.requestAnimationFrame(animate)
+    }
+
+    trackingAnimationFrameRef.current = window.requestAnimationFrame(animate)
+  }
+
   const toggleTravelerTracking = () => {
     const nextIsTracking = !isTrackingTravelerRef.current
     isTrackingTravelerRef.current = nextIsTracking
     setIsTrackingTraveler(nextIsTracking)
 
-    if (nextIsTracking && mapInstanceRef.current) {
-      syncRouteProgress(mapInstanceRef.current, true)
+    if (nextIsTracking) {
+      startTrackingLoading()
+      startTravelerTrackingLoop()
+    } else {
+      cancelTrackingLoading()
+      stopTravelerTrackingLoop()
     }
   }
 
@@ -847,8 +1369,18 @@ export function MapboxLocationPicker({
   }, [routeShapes])
 
   useEffect(() => {
+    const previousTime = routeProgressTimeRef.current ?? null
     routeProgressTimeRef.current = routeProgressTime
-  }, [routeProgressTime])
+    const liveTime = liveRouteProgressTimeRef?.current
+    const nextTime = liveTime !== null && liveTime !== undefined && Number.isFinite(liveTime)
+      ? liveTime
+      : routeProgressTime
+    routeProgressSampleRef.current = {
+      time: nextTime ?? null,
+      previousTime,
+      receivedAt: window.performance.now(),
+    }
+  }, [liveRouteProgressTimeRef, routeProgressTime])
 
   useEffect(() => {
     isRouteShapingDisabledRef.current = isRouteShapingDisabled
@@ -1364,7 +1896,7 @@ export function MapboxLocationPicker({
     map.easeTo({
       center: progressCoordinate,
       zoom: Math.max(map.getZoom(), editorTravelerTrackingMinZoom),
-      duration: editorTravelerTrackingDurationMs,
+      duration: 280,
       essential: true,
     })
   }
@@ -1556,7 +2088,7 @@ export function MapboxLocationPicker({
 
         timestampRouteSegmentsRef.current = routeSegments
         updateRouteLayer(map, routeSegments)
-        syncRouteProgress(map, isTrackingTravelerRef.current)
+        syncRouteProgress(map, false)
       })
     })
   }
@@ -1832,6 +2364,10 @@ export function MapboxLocationPicker({
     }
 
     const handleMapMoveEnd = () => {
+      if (isTrackingTravelerRef.current) {
+        return
+      }
+
       persistCurrentMapView(map)
     }
 
@@ -1890,6 +2426,11 @@ export function MapboxLocationPicker({
 
     return () => {
       persistCurrentMapView(map)
+      clearTrackingLoadingFallback()
+      clearTrackingLoadingFinish()
+      trackingLoadingStartedAtRef.current = null
+      trackingLoadingHasCenteredRef.current = false
+      stopTravelerTrackingLoop()
       clearPointMarkers()
       clearRouteShapeMarkers()
       activeMarkerRef.current?.remove()
@@ -1956,8 +2497,8 @@ export function MapboxLocationPicker({
       previousPointHighlightTimeRef.current = currentTime
     }
 
-    syncRouteProgress(map, isTrackingTraveler)
-  }, [isLoaded, routeProgressTime, isTrackingTraveler])
+    syncRouteProgress(map, false)
+  }, [isLoaded, routeProgressTime])
 
   useEffect(() => {
     const map = mapInstanceRef.current
@@ -2193,6 +2734,21 @@ export function MapboxLocationPicker({
     <div className={`relative overflow-hidden ${className}`}>
       <div ref={mapRef} className="h-full w-full" />
 
+      {trackingLoadingState && (
+        <div
+          className="absolute inset-0 z-30 flex items-center justify-center bg-white/35 text-slate-950 backdrop-blur-[3px]"
+          aria-live="polite"
+        >
+          <div className="flex flex-col items-center gap-3 text-center drop-shadow-[0_2px_10px_rgba(255,255,255,0.9)]">
+            <Loader2 className="h-8 w-8 animate-spin text-slate-950" />
+            <div>
+              <p className="text-xl font-semibold">Loading map...</p>
+              <p className="mt-1 text-sm font-medium text-slate-700">{trackingLoadingState.label}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <form
         onSubmit={searchLocations}
         className="absolute left-3 right-3 top-3 z-20 sm:left-4 sm:right-auto sm:w-[22rem]"
@@ -2268,7 +2824,7 @@ export function MapboxLocationPicker({
         )}
       </form>
 
-      <div className="absolute right-3 top-16 z-10 flex flex-wrap justify-end gap-1 rounded-xl border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md sm:right-4 sm:top-4">
+      <div className="absolute right-3 top-16 z-40 flex flex-wrap justify-end gap-1 rounded-xl border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md sm:right-4 sm:top-4">
         <Button
           type="button"
           size="icon"

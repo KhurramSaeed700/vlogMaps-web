@@ -28,13 +28,97 @@ interface DirectionsResponse {
 
 const routedLegCache = new Map<string, Promise<RouteCoordinate[] | null>>()
 const defaultRoutePreference: RoutePreference = "fastest"
+const routedLegStoragePrefix = "vlogmaps:routed-leg:v2:"
+const routedLegStorageTtlMs = 1000 * 60 * 60 * 24 * 30
+const maxConcurrentDirectionsRequests = 4
+let activeDirectionsRequests = 0
+const pendingDirectionsRequests: Array<() => void> = []
 
-function createLegCacheKey(start: RouteCoordinate, end: RouteCoordinate, via: RouteCoordinate[] = [], routePreference: RoutePreference = defaultRoutePreference) {
-  return `${routePreference}:${start[0]},${start[1]}:${via.map((coordinate) => coordinate.join(",")).join("|")}:${end[0]},${end[1]}`
+function formatRouteCoordinateValue(value: number) {
+  return Number.isFinite(value) ? value.toFixed(6) : String(value)
+}
+
+function formatRouteCoordinate(coordinate: RouteCoordinate) {
+  return `${formatRouteCoordinateValue(coordinate[0])},${formatRouteCoordinateValue(coordinate[1])}`
+}
+
+function createLegCacheKey(
+  start: RouteCoordinate,
+  end: RouteCoordinate,
+  via: RouteCoordinate[] = [],
+  routePreference: RoutePreference = defaultRoutePreference,
+) {
+  return `${routePreference}:${formatRouteCoordinate(start)}:${via.map(formatRouteCoordinate).join("|")}:${formatRouteCoordinate(end)}`
 }
 
 function reverseRouteCoordinates(coordinates: RouteCoordinate[] | null) {
   return coordinates ? ([...coordinates].reverse() as RouteCoordinate[]) : null
+}
+
+function readStoredLegCoordinates(key: string) {
+  if (typeof window === "undefined") {
+    return null
+  }
+
+  try {
+    const raw = window.localStorage.getItem(`${routedLegStoragePrefix}${key}`)
+    if (!raw) {
+      return null
+    }
+
+    const parsed = JSON.parse(raw) as { expiresAt?: number; coordinates?: unknown }
+    if (!parsed.expiresAt || parsed.expiresAt < Date.now()) {
+      window.localStorage.removeItem(`${routedLegStoragePrefix}${key}`)
+      return null
+    }
+
+    const coordinates = Array.isArray(parsed.coordinates)
+      ? parsed.coordinates.filter(isValidCoordinatePair)
+      : []
+
+    return coordinates.length >= 2 ? coordinates : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredLegCoordinates(key: string, coordinates: RouteCoordinate[]) {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      `${routedLegStoragePrefix}${key}`,
+      JSON.stringify({
+        expiresAt: Date.now() + routedLegStorageTtlMs,
+        coordinates,
+      }),
+    )
+  } catch {
+    // Storage may be unavailable or full; in-memory caching still prevents duplicate in-flight requests.
+  }
+}
+
+function scheduleDirectionsRequest<T>(task: () => Promise<T>) {
+  return new Promise<T>((resolve, reject) => {
+    const run = () => {
+      activeDirectionsRequests += 1
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          activeDirectionsRequests -= 1
+          pendingDirectionsRequests.shift()?.()
+        })
+    }
+
+    if (activeDirectionsRequests < maxConcurrentDirectionsRequests) {
+      run()
+      return
+    }
+
+    pendingDirectionsRequests.push(run)
+  })
 }
 
 function isValidCoordinatePair(value: unknown): value is RouteCoordinate {
@@ -67,22 +151,38 @@ async function fetchDirectionsLeg(start: RouteCoordinate, end: RouteCoordinate, 
     return reverseRequest.then(reverseRouteCoordinates)
   }
 
+  const storedLeg = readStoredLegCoordinates(key)
+  if (storedLeg) {
+    const cachedRequest = Promise.resolve(storedLeg)
+    routedLegCache.set(key, cachedRequest)
+    return cachedRequest
+  }
+
+  const storedReverseLeg = readStoredLegCoordinates(reverseKey)
+  if (storedReverseLeg) {
+    const cachedRequest = Promise.resolve(reverseRouteCoordinates(storedReverseLeg))
+    routedLegCache.set(key, cachedRequest)
+    return cachedRequest
+  }
+
   const request = (async () => {
     const searchParams = new URLSearchParams({
-      start: `${start[0]},${start[1]}`,
-      end: `${end[0]},${end[1]}`,
+      start: formatRouteCoordinate(start),
+      end: formatRouteCoordinate(end),
       profile: "driving",
       routePreference,
     })
     if (validVia.length > 0) {
-      searchParams.set("waypoints", validVia.map((coordinate) => coordinate.join(",")).join("|"))
+      searchParams.set("waypoints", validVia.map(formatRouteCoordinate).join("|"))
     }
 
     let response: Response
     try {
-      response = await fetch(`/api/mapbox/directions?${searchParams.toString()}`, {
-        cache: "no-store",
-      })
+      response = await scheduleDirectionsRequest(() =>
+        fetch(`/api/mapbox/directions?${searchParams.toString()}`, {
+          cache: "force-cache",
+        }),
+      )
     } catch {
       return null
     }
@@ -106,6 +206,9 @@ async function fetchDirectionsLeg(start: RouteCoordinate, end: RouteCoordinate, 
   const resolvedCoordinates = await request
   if (!resolvedCoordinates) {
     routedLegCache.delete(key)
+  } else {
+    writeStoredLegCoordinates(key, resolvedCoordinates)
+    writeStoredLegCoordinates(reverseKey, [...resolvedCoordinates].reverse() as RouteCoordinate[])
   }
 
   return resolvedCoordinates

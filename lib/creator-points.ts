@@ -115,7 +115,10 @@ export function getInterpolatedPointAtTime(points: VideoKeyframe[], currentTime:
   }
 
   if (sortedPoints.length === 1 || currentTime <= sortedPoints[0].time) {
-    return sortedPoints[0]
+    return {
+      ...sortedPoints[0],
+      time: currentTime,
+    }
   }
 
   const previousPoint =

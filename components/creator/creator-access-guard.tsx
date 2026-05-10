@@ -12,14 +12,12 @@ import { demoCreatorEmails, isCreatorEmail } from "@/lib/creator-access"
 interface CreatorAccessGuardProps {
   children: ReactNode
   loadingTitle?: string
-  loadingDescription?: string
   pendingLabel?: string | null
 }
 
 export function CreatorAccessGuard({
   children,
   loadingTitle = "Opening creator tools",
-  loadingDescription,
   pendingLabel = null,
 }: CreatorAccessGuardProps) {
   const { isLoaded, user } = useUser()
@@ -41,7 +39,7 @@ export function CreatorAccessGuard({
 
   if (!isLoaded) {
     return (
-      <CreatorLoadingState title={loadingTitle} description={loadingDescription} steps={loadingSteps} />
+      <CreatorLoadingState title={loadingTitle} steps={loadingSteps} />
     )
   }
 
@@ -79,7 +77,7 @@ export function CreatorAccessGuard({
   }
 
   if (pendingLabel) {
-    return <CreatorLoadingState title={loadingTitle} description={loadingDescription} steps={loadingSteps} />
+    return <CreatorLoadingState title={loadingTitle} steps={loadingSteps} />
   }
 
   return <>{children}</>

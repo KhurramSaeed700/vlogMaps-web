@@ -13,6 +13,7 @@ interface YouTubePlayerProps {
   autoPlay?: boolean
   showControls?: boolean
   allowKeyboard?: boolean
+  allowWatchKeyboardControls?: boolean
   onReady?: (duration: number) => void
   onTimeChange?: (time: number) => void
   onPlayingChange?: (isPlaying: boolean) => void
@@ -22,6 +23,7 @@ interface YTPlayerInstance {
   destroy: () => void
   getCurrentTime: () => number
   getDuration: () => number
+  isMuted?: () => boolean
   mute: () => void
   pauseVideo: () => void
   playVideo: () => void
@@ -125,6 +127,18 @@ function clampVideoTime(time: number, duration: number) {
   return Math.min(Math.max(time, 0), upperBound)
 }
 
+function getWatchShortcutDigit(event: globalThis.KeyboardEvent) {
+  if (/^[0-9]$/.test(event.key)) {
+    return Number(event.key)
+  }
+
+  if (/^Digit[0-9]$/.test(event.code) || /^Numpad[0-9]$/.test(event.code)) {
+    return Number(event.code.at(-1))
+  }
+
+  return null
+}
+
 export function YouTubePlayer({
   videoId,
   currentTime: _currentTime,
@@ -136,6 +150,7 @@ export function YouTubePlayer({
   autoPlay = false,
   showControls = false,
   allowKeyboard = false,
+  allowWatchKeyboardControls = false,
   onReady,
   onTimeChange,
   onPlayingChange,
@@ -160,7 +175,7 @@ export function YouTubePlayer({
   const seekPollTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
-    if (!allowKeyboard) {
+    if (!allowKeyboard && !allowWatchKeyboardControls) {
       return
     }
 
@@ -223,7 +238,7 @@ export function YouTubePlayer({
       observer.disconnect()
       window.removeEventListener("blur", handleWindowBlur)
     }
-  }, [allowKeyboard])
+  }, [allowKeyboard, allowWatchKeyboardControls])
 
   useEffect(() => {
     onReadyRef.current = onReady
@@ -276,11 +291,11 @@ export function YouTubePlayer({
     activeSeekHoldKeyRef.current = null
   }
 
-  const showSeekFeedback = (direction: SeekFeedback["direction"]) => {
+  const showSeekFeedback = (direction: SeekFeedback["direction"], seconds = 10) => {
     clearSeekFeedbackTimeout()
     setSeekFeedback({
       direction,
-      label: direction === "backward" ? "-10s" : "+10s",
+      label: `${direction === "backward" ? "-" : "+"}${seconds}s`,
     })
     seekFeedbackTimeoutRef.current = window.setTimeout(() => {
       seekFeedbackTimeoutRef.current = null
@@ -362,7 +377,7 @@ export function YouTubePlayer({
     waitForPendingSeek(player)
   }
 
-  const seekByKeyboardOffset = (keyCode: "KeyJ" | "KeyL") => {
+  const seekBySeconds = (offsetSeconds: number) => {
     const player = playerRef.current
     if (!player) {
       return
@@ -370,18 +385,175 @@ export function YouTubePlayer({
 
     const pendingSeek = pendingSeekRef.current
     const currentTime = pendingSeek?.targetTime ?? player.getCurrentTime()
-    const seekOffset = keyCode === "KeyJ" ? -10 : 10
-    beginPendingSeek(player, clampVideoTime(currentTime + seekOffset, player.getDuration()))
-    showSeekFeedback(keyCode === "KeyJ" ? "backward" : "forward")
+    beginPendingSeek(player, clampVideoTime(currentTime + offsetSeconds, player.getDuration()))
+    showSeekFeedback(offsetSeconds < 0 ? "backward" : "forward", Math.abs(offsetSeconds))
+  }
+
+  const seekByKeyboardOffset = (keyCode: "KeyJ" | "KeyL") => {
+    seekBySeconds(keyCode === "KeyJ" ? -10 : 10)
+  }
+
+  const togglePlaybackFromKeyboard = () => {
+    const nextIsPlaying = !isPlayingRef.current
+    onPlayingChangeRef.current?.(nextIsPlaying)
+
+    const player = playerRef.current
+    if (!player || pendingSeekRef.current) {
+      return
+    }
+
+    if (nextIsPlaying) {
+      player.playVideo()
+      return
+    }
+
+    player.pauseVideo()
+  }
+
+  const adjustVolumeFromKeyboard = (offset: number) => {
+    const player = playerRef.current
+    if (!player) {
+      return
+    }
+
+    const nextVolume = Math.min(Math.max(volumeRef.current + offset, 0), 100)
+    volumeRef.current = nextVolume
+    player.setVolume(nextVolume)
+
+    if (nextVolume > 0) {
+      player.unMute()
+      isMutedRef.current = false
+      return
+    }
+
+    player.mute()
+    isMutedRef.current = true
+  }
+
+  const toggleMuteFromKeyboard = () => {
+    const player = playerRef.current
+    if (!player) {
+      return
+    }
+
+    const nextIsMuted = player.isMuted ? !player.isMuted() : !isMutedRef.current
+    isMutedRef.current = nextIsMuted
+
+    if (nextIsMuted) {
+      player.mute()
+      return
+    }
+
+    if (volumeRef.current <= 0) {
+      volumeRef.current = 50
+      player.setVolume(volumeRef.current)
+    }
+
+    player.unMute()
+  }
+
+  const toggleFullscreenFromKeyboard = () => {
+    const element = wrapperRef.current
+    if (!element || typeof document === "undefined") {
+      return
+    }
+
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.()
+      return
+    }
+
+    element.requestFullscreen?.()
+  }
+
+  const seekToDurationPercentage = (percentage: number) => {
+    const player = playerRef.current
+    if (!player) {
+      return
+    }
+
+    const duration = player.getDuration()
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return
+    }
+
+    beginPendingSeek(player, clampVideoTime(duration * percentage, duration))
   }
 
   useEffect(() => {
-    if (!allowKeyboard) {
+    if (!allowKeyboard && !allowWatchKeyboardControls) {
       return
     }
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      const watchShortcutDigit = getWatchShortcutDigit(event)
       if (
+        allowWatchKeyboardControls &&
+        (
+          ["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "KeyF", "KeyM"].includes(event.code) ||
+          watchShortcutDigit !== null
+        ) &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !shouldIgnorePlayerShortcut(event.target)
+      ) {
+        event.preventDefault()
+
+        if (event.repeat && event.code === "Space") {
+          return
+        }
+
+        if (watchShortcutDigit !== null) {
+          if (!event.repeat) {
+            seekToDurationPercentage(watchShortcutDigit / 10)
+          }
+          return
+        }
+
+        if (event.code === "Space") {
+          togglePlaybackFromKeyboard()
+          return
+        }
+
+        if (event.code === "ArrowLeft") {
+          seekBySeconds(-5)
+          return
+        }
+
+        if (event.code === "ArrowRight") {
+          seekBySeconds(5)
+          return
+        }
+
+        if (event.code === "ArrowUp") {
+          adjustVolumeFromKeyboard(5)
+          return
+        }
+
+        if (event.code === "ArrowDown") {
+          adjustVolumeFromKeyboard(-5)
+          return
+        }
+
+        if (event.code === "KeyF") {
+          if (!event.repeat) {
+            toggleFullscreenFromKeyboard()
+          }
+          return
+        }
+
+        if (event.code === "KeyM") {
+          if (!event.repeat) {
+            toggleMuteFromKeyboard()
+          }
+          return
+        }
+      }
+
+      if (
+        !allowKeyboard ||
         !["KeyJ", "KeyK", "KeyL"].includes(event.code) ||
         event.shiftKey ||
         event.altKey ||
@@ -415,20 +587,7 @@ export function YouTubePlayer({
         return
       }
 
-      const nextIsPlaying = !isPlayingRef.current
-      onPlayingChangeRef.current?.(nextIsPlaying)
-
-      const player = playerRef.current
-      if (!player || pendingSeekRef.current) {
-        return
-      }
-
-      if (nextIsPlaying) {
-        player.playVideo()
-        return
-      }
-
-      player.pauseVideo()
+      togglePlaybackFromKeyboard()
     }
 
     const handleKeyUp = (event: globalThis.KeyboardEvent) => {
@@ -446,7 +605,7 @@ export function YouTubePlayer({
       window.removeEventListener("blur", clearSeekHoldTimers)
       clearSeekHoldTimers()
     }
-  }, [allowKeyboard])
+  }, [allowKeyboard, allowWatchKeyboardControls])
 
   useEffect(() => {
     let isMounted = true
@@ -460,7 +619,7 @@ export function YouTubePlayer({
         videoId,
         playerVars: {
           controls: showControls ? 1 : 0,
-          disablekb: allowKeyboard ? 0 : 1,
+          disablekb: allowKeyboard || allowWatchKeyboardControls ? 0 : 1,
           autoplay: autoPlay ? 1 : 0,
           mute: isMuted ? 1 : 0,
           playsinline: 1,
@@ -544,7 +703,7 @@ export function YouTubePlayer({
       playerRef.current?.destroy()
       playerRef.current = null
     }
-  }, [allowKeyboard, autoPlay, showControls, videoId])
+  }, [allowKeyboard, allowWatchKeyboardControls, autoPlay, showControls, videoId])
 
   useEffect(() => {
     const player = playerRef.current

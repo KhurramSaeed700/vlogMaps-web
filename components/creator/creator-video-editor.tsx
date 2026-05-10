@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import Link from "next/link"
 import * as Dialog from "@radix-ui/react-dialog"
@@ -64,8 +64,19 @@ interface MapEditSnapshot {
   isAwaitingMapPlacement: boolean
 }
 
+interface EditorShortcutState {
+  draftPoint: DraftPoint | null
+  isAwaitingMapPlacement: boolean
+  isRecordingStop: boolean
+  addTimestampPoint: (pointType: CreatorMapPointType) => void
+  cancelPointEdit: () => void
+  setStopEndTime: () => void
+  startStopRecording: () => void
+}
+
 const resumeAutoplayDelaySeconds = 2.5
 const resumeCountdownTickSeconds = 0.1
+const editorTimeRenderStepSeconds = 0.25
 const editorShortcutGroups = [
   { keys: "Q", action: "Add point" },
   { keys: "W", action: "Add stop or finish stop" },
@@ -114,6 +125,12 @@ function getDraftDescription(pointType: CreatorMapPointType) {
     : "Route point captured from the creator editor."
 }
 
+function getDisplayTimestampName(point: CreatorMapPoint) {
+  const name = point.location.trim()
+  const pointType = point.pointType === "stop" ? "stop" : "point"
+  return name && name !== getDraftLocation(pointType, point.time) ? name : ""
+}
+
 function shouldIgnorePlaybackShortcut(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
     return false
@@ -134,6 +151,9 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   const remoteSaveQueueRef = useRef<Promise<void>>(Promise.resolve())
   const remoteLoadRequestRef = useRef(0)
   const editorScrollRef = useRef<HTMLElement | null>(null)
+  const currentTimeRef = useRef(0)
+  const renderedCurrentTimeRef = useRef(0)
+  const editorShortcutStateRef = useRef<EditorShortcutState | null>(null)
   const [points, setPoints] = useState<CreatorMapPoint[]>(() => loadCreatorPoints(video.id, video.keyframes))
   const [tripRoute, setTripRoute] = useState<CreatorTripRoute>(() => loadCreatorTripRoute(video.id))
   const [routeShapes, setRouteShapes] = useState<CreatorRouteShapes>(() => loadCreatorRouteShapes(video.id))
@@ -151,6 +171,25 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   const [showScrollTop, setShowScrollTop] = useState(false)
   const [isRecordingStop, setIsRecordingStop] = useState(false)
 
+  const commitCurrentTime = useCallback((time: number, force = false) => {
+    if (!Number.isFinite(time)) {
+      return
+    }
+
+    currentTimeRef.current = time
+    if (force || Math.abs(time - renderedCurrentTimeRef.current) >= editorTimeRenderStepSeconds) {
+      renderedCurrentTimeRef.current = time
+      setCurrentTime(time)
+    }
+  }, [])
+
+  const handleVideoTimeChange = useCallback(
+    (time: number) => {
+      commitCurrentTime(time)
+    },
+    [commitCurrentTime],
+  )
+
   useEffect(() => {
     const nextPoints = loadCreatorPoints(video.id, video.keyframes)
     setPoints(nextPoints)
@@ -162,12 +201,12 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     setIsRecordingStop(false)
     setUndoStack([])
     setRedoStack([])
-    setCurrentTime(0)
+    commitCurrentTime(0, true)
     setSeekRequest(null)
     setIsPlaying(false)
     setResumeCountdown(null)
     setIsTripRouteDialogOpen(false)
-  }, [video.id, video.keyframes])
+  }, [commitCurrentTime, video.id, video.keyframes])
 
   useEffect(() => {
     if (!headerActionsTargetId) {
@@ -252,7 +291,8 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     }
 
     const handleScroll = () => {
-      setShowScrollTop(scrollContainer.scrollTop > 360)
+      const nextShowScrollTop = scrollContainer.scrollTop > 360
+      setShowScrollTop((current) => (current === nextShowScrollTop ? current : nextShowScrollTop))
     }
 
     handleScroll()
@@ -261,16 +301,39 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   }, [])
 
   const sortedPoints = useMemo(() => sortCreatorPoints(points), [points])
-  const displayedPoints = useMemo(() => [...sortedPoints].reverse(), [sortedPoints])
-  const latestPointStopCandidate = useMemo(
-    () =>
-      [...sortedPoints]
-        .reverse()
-        .find((point) => point.pointType !== "stop" && currentTime > point.time + 0.5) ?? null,
-    [currentTime, sortedPoints],
+  const pointNumberById = useMemo(
+    () => new Map(sortedPoints.map((point, index) => [point.id, index + 1])),
+    [sortedPoints],
   )
+  const displayedPoints = useMemo(
+    () => sortedPoints.map((point, index) => ({ point, pointNumber: index + 1 })),
+    [sortedPoints],
+  )
+  const activeTimelinePointId = useMemo(() => {
+    let activePointId: string | null = null
+
+    for (const point of sortedPoints) {
+      if (currentTime + 0.001 < point.time) {
+        break
+      }
+
+      activePointId = point.id
+    }
+
+    return activePointId
+  }, [currentTime, sortedPoints])
+  const latestPointStopCandidate = useMemo(() => {
+    for (let index = sortedPoints.length - 1; index >= 0; index -= 1) {
+      const point = sortedPoints[index]
+      if (point.pointType !== "stop" && currentTime > point.time + 0.5) {
+        return point
+      }
+    }
+
+    return null
+  }, [currentTime, sortedPoints])
   const latestPointStopCandidateNumber = latestPointStopCandidate
-    ? sortedPoints.findIndex((point) => point.id === latestPointStopCandidate.id) + 1
+    ? pointNumberById.get(latestPointStopCandidate.id) ?? null
     : null
 
   const queueRemoteStateSave = (videoId: string, state: CreatorVideoState) => {
@@ -484,16 +547,17 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   }
 
   const addTimestampPoint = (pointType: CreatorMapPointType) => {
+    const timestamp = currentTimeRef.current
     setResumeCountdown(null)
     setIsPlaying(false)
     setIsRecordingStop(false)
     setDraftPoint({
       id: undefined,
-      time: currentTime,
+      time: timestamp,
       stopEndTime: undefined,
       lat: null,
       lng: null,
-      location: getDraftLocation(pointType, currentTime),
+      location: getDraftLocation(pointType, timestamp),
       description: getDraftDescription(pointType),
       pointType,
     })
@@ -549,7 +613,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     setIsRecordingStop(false)
   }
 
-  const saveDraftPointTimeFromVideo = () => {
+  const saveDraftPointEdits = () => {
     if (!draftPoint?.id || draftPoint.lat === null || draftPoint.lng === null) {
       return
     }
@@ -557,8 +621,40 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     recordMapEditSnapshot()
     const nextDraft: DraftPoint = {
       ...draftPoint,
-      time: currentTime,
-      location: draftPoint.location.trim() || getDraftLocation(draftPoint.pointType, currentTime),
+      location: draftPoint.location.trim() || getDraftLocation(draftPoint.pointType, draftPoint.time),
+      description: draftPoint.description.trim() || getDraftDescription(draftPoint.pointType),
+    }
+    const nextPoints = upsertCreatorPoint(video.id, points, {
+      ...nextDraft,
+      lat: draftPoint.lat,
+      lng: draftPoint.lng,
+      location: nextDraft.location,
+      description: nextDraft.description,
+      pointType: nextDraft.pointType,
+      stopEndTime:
+        nextDraft.pointType === "stop" && typeof nextDraft.stopEndTime === "number" && nextDraft.stopEndTime > nextDraft.time
+          ? nextDraft.stopEndTime
+          : undefined,
+    })
+
+    persistPoints(nextPoints)
+    setDraftPoint(null)
+    setIsAwaitingMapPlacement(false)
+    setIsPlaying(false)
+    setResumeCountdown(null)
+  }
+
+  const saveDraftPointTimeFromVideo = () => {
+    if (!draftPoint?.id || draftPoint.lat === null || draftPoint.lng === null) {
+      return
+    }
+
+    const timestamp = currentTimeRef.current
+    recordMapEditSnapshot()
+    const nextDraft: DraftPoint = {
+      ...draftPoint,
+      time: timestamp,
+      location: draftPoint.location.trim() || getDraftLocation(draftPoint.pointType, timestamp),
       description: draftPoint.description.trim() || getDraftDescription(draftPoint.pointType),
     }
     const nextPoints = upsertCreatorPoint(video.id, points, {
@@ -610,7 +706,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
 
   const playFromMapTimestamp = (point: CreatorMapPoint) => {
     setResumeCountdown(null)
-    setCurrentTime(point.time)
+    commitCurrentTime(point.time, true)
     setSeekRequest((currentRequest) => ({
       id: (currentRequest?.id ?? 0) + 1,
       time: point.time,
@@ -632,15 +728,16 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   }
 
   const startStopRecording = () => {
+    const timestamp = currentTimeRef.current
     setResumeCountdown(null)
     setIsPlaying(false)
     setDraftPoint({
       id: undefined,
-      time: currentTime,
+      time: timestamp,
       stopEndTime: undefined,
       lat: null,
       lng: null,
-      location: getDraftLocation("stop", currentTime),
+      location: getDraftLocation("stop", timestamp),
       description: getDraftDescription("stop"),
       pointType: "stop",
     })
@@ -649,12 +746,13 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   }
 
   const setStopEndTime = () => {
-    if (!draftPoint || draftPoint.pointType !== "stop" || draftPoint.lat === null || draftPoint.lng === null || currentTime <= draftPoint.time) {
+    const timestamp = currentTimeRef.current
+    if (!draftPoint || draftPoint.pointType !== "stop" || draftPoint.lat === null || draftPoint.lng === null || timestamp <= draftPoint.time) {
       return
     }
 
     recordMapEditSnapshot()
-    const stopEndTime = Math.max(currentTime, draftPoint.time + 0.5)
+    const stopEndTime = Math.max(timestamp, draftPoint.time + 0.5)
     const nextDraft: DraftPoint = {
       ...draftPoint,
       stopEndTime,
@@ -680,12 +778,13 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   }
 
   const convertLatestPointToStop = () => {
-    if (!latestPointStopCandidate || currentTime <= latestPointStopCandidate.time) {
+    const timestamp = currentTimeRef.current
+    if (!latestPointStopCandidate || timestamp <= latestPointStopCandidate.time) {
       return
     }
 
     recordMapEditSnapshot()
-    const stopEndTime = Math.max(currentTime, latestPointStopCandidate.time + 0.5)
+    const stopEndTime = Math.max(timestamp, latestPointStopCandidate.time + 0.5)
     const nextPoints = upsertCreatorPoint(video.id, points, {
       ...latestPointStopCandidate,
       pointType: "stop",
@@ -702,18 +801,35 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   }
 
   useEffect(() => {
+    editorShortcutStateRef.current = {
+      draftPoint,
+      isAwaitingMapPlacement,
+      isRecordingStop,
+      addTimestampPoint,
+      cancelPointEdit,
+      setStopEndTime,
+      startStopRecording,
+    }
+  })
+
+  useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      const shortcutState = editorShortcutStateRef.current
+      if (!shortcutState) {
+        return
+      }
+
       if (
         event.code === "Escape" &&
         !event.repeat &&
-        draftPoint &&
-        !draftPoint.id &&
-        isAwaitingMapPlacement &&
-        draftPoint.lat === null &&
-        draftPoint.lng === null
+        shortcutState.draftPoint &&
+        !shortcutState.draftPoint.id &&
+        shortcutState.isAwaitingMapPlacement &&
+        shortcutState.draftPoint.lat === null &&
+        shortcutState.draftPoint.lng === null
       ) {
         event.preventDefault()
-        cancelPointEdit()
+        shortcutState.cancelPointEdit()
         return
       }
 
@@ -734,27 +850,26 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
 
       if (event.code === "KeyQ") {
         event.preventDefault()
-        addTimestampPoint("point")
+        shortcutState.addTimestampPoint("point")
         return
       }
 
       if (event.code === "KeyW") {
         event.preventDefault()
-        if (isRecordingStop) {
-          setStopEndTime()
+        if (shortcutState.isRecordingStop) {
+          shortcutState.setStopEndTime()
           return
         }
 
-        startStopRecording()
+        shortcutState.startStopRecording()
       }
     }
 
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  })
+  }, [])
 
-  const activePointIndex = draftPoint?.id ? sortedPoints.findIndex((point) => point.id === draftPoint.id) : -1
-  const activePointNumber = activePointIndex >= 0 ? activePointIndex + 1 : null
+  const activePointNumber = draftPoint?.id ? pointNumberById.get(draftPoint.id) ?? null : null
   const formatTripLocation = (location: CreatorTripLocation | null) => {
     if (!location) {
       return "Choose place"
@@ -767,23 +882,113 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })
   }
 
+  const renderTimestampEditPanel = () => {
+    if (!draftPoint?.id) {
+      return null
+    }
+
+    return (
+      <div
+        className={`mx-2 mb-3 space-y-2 rounded-md border px-3 py-2 text-sm ${
+          draftPoint.pointType === "stop"
+            ? "border-teal-200 bg-teal-50 text-teal-950"
+            : "border-orange-200 bg-orange-50 text-orange-950"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-medium">Editing timestamp {activePointNumber ? `#${activePointNumber}` : ""}</span>
+          <span>{formatDuration(draftPoint.time)}</span>
+        </div>
+        <p className="text-xs opacity-80">
+          Click the map to update this timestamp location. Current video time: {formatDuration(currentTime)}.
+        </p>
+        <label className="block space-y-1">
+          <span className="text-xs font-semibold opacity-80">Timestamp name</span>
+          <Input
+            value={draftPoint.location}
+            onChange={(event) =>
+              setDraftPoint((currentDraft) =>
+                currentDraft ? { ...currentDraft, location: event.target.value } : currentDraft,
+              )
+            }
+            placeholder={draftPoint.pointType === "stop" ? "Stop name" : "Point name"}
+            className="h-8 border-white/70 bg-white text-slate-950 shadow-none"
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={draftPoint.pointType === "point" ? "default" : "outline"}
+            className={
+              draftPoint.pointType === "point"
+                ? "h-8 bg-orange-600 text-white hover:bg-orange-700"
+                : "h-8 border-orange-200 bg-white text-orange-700 hover:bg-orange-50"
+            }
+            onClick={() => updateDraftPointType("point")}
+          >
+            <MapPin className="mr-2 h-4 w-4" />
+            Point
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={draftPoint.pointType === "stop" ? "default" : "outline"}
+            className={
+              draftPoint.pointType === "stop"
+                ? "h-8 bg-teal-700 text-white hover:bg-teal-800"
+                : "h-8 border-teal-200 bg-white text-teal-700 hover:bg-teal-50"
+            }
+            onClick={() => updateDraftPointType("stop")}
+          >
+            <Pause className="mr-2 h-4 w-4" />
+            Stop
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className={`h-8 text-white ${
+              draftPoint.pointType === "stop" ? "bg-teal-700 hover:bg-teal-800" : "bg-orange-600 hover:bg-orange-700"
+            }`}
+            onClick={saveDraftPointEdits}
+          >
+            Save
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8 bg-white" onClick={saveDraftPointTimeFromVideo}>
+            Set to current time
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8 bg-white" onClick={cancelPointEdit}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <Popover.Root>
         {headerActionsElement
           ? createPortal(
-              <Popover.Trigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
-                  aria-label="Show keyboard shortcuts"
-                  title="Show keyboard shortcuts"
-                >
-                  <Keyboard className="h-4 w-4" />
-                </Button>
-              </Popover.Trigger>,
+              <>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Edit Page
+                </span>
+                <Popover.Trigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                    aria-label="Show keyboard shortcuts"
+                    title="Show keyboard shortcuts"
+                  >
+                    <Keyboard className="h-4 w-4" />
+                  </Button>
+                </Popover.Trigger>
+              </>,
               headerActionsElement,
             )
           : null}
@@ -836,7 +1041,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
               const resolvedDuration = nextDuration || video.durationSeconds
               updateLocalCreatorVideo(video.id, { durationSeconds: resolvedDuration })
             }}
-            onTimeChange={setCurrentTime}
+            onTimeChange={handleVideoTimeChange}
             onPlayingChange={setIsPlaying}
           />
           {resumeCountdown !== null && (
@@ -1007,90 +1212,27 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                 </div>
               )}
 
-              {draftPoint?.id && (
-                <div
-                  className={`space-y-2 rounded-md border px-3 py-2 text-sm ${
-                    draftPoint.pointType === "stop"
-                      ? "border-teal-200 bg-teal-50 text-teal-950"
-                      : "border-orange-200 bg-orange-50 text-orange-950"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium">Editing timestamp {activePointNumber ? `#${activePointNumber}` : ""}</span>
-                    <span>{formatDuration(draftPoint.time)}</span>
-                  </div>
-                  <p className="text-xs opacity-80">
-                    Click the map to update this timestamp location. Current video time: {formatDuration(currentTime)}.
-                  </p>
-                  <Input
-                    value={draftPoint.location}
-                    onChange={(event) =>
-                      setDraftPoint((currentDraft) =>
-                        currentDraft ? { ...currentDraft, location: event.target.value } : currentDraft,
-                      )
-                    }
-                    placeholder={draftPoint.pointType === "stop" ? "Stop name" : "Point name"}
-                    className="h-8 border-white/70 bg-white text-slate-950 shadow-none"
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={draftPoint.pointType === "point" ? "default" : "outline"}
-                      className={
-                        draftPoint.pointType === "point"
-                          ? "h-8 bg-orange-600 text-white hover:bg-orange-700"
-                          : "h-8 border-orange-200 bg-white text-orange-700 hover:bg-orange-50"
-                      }
-                      onClick={() => updateDraftPointType("point")}
-                    >
-                      <MapPin className="mr-2 h-4 w-4" />
-                      Point
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={draftPoint.pointType === "stop" ? "default" : "outline"}
-                      className={
-                        draftPoint.pointType === "stop"
-                          ? "h-8 bg-teal-700 text-white hover:bg-teal-800"
-                          : "h-8 border-teal-200 bg-white text-teal-700 hover:bg-teal-50"
-                      }
-                      onClick={() => updateDraftPointType("stop")}
-                    >
-                      <Pause className="mr-2 h-4 w-4" />
-                      Stop
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      size="sm"
-                      className={`h-8 text-white ${
-                        draftPoint.pointType === "stop"
-                          ? "bg-teal-700 hover:bg-teal-800"
-                          : "bg-orange-600 hover:bg-orange-700"
-                      }`}
-                      onClick={saveDraftPointTimeFromVideo}
-                    >
-                      Set to current time
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-8 bg-white" onClick={cancelPointEdit}>
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              )}
-
               {sortedPoints.length === 0 ? (
                 <p className="py-4 text-sm text-slate-500">No points yet.</p>
               ) : (
                 <div className="divide-y divide-slate-200 overflow-x-hidden">
-                  {displayedPoints.map((point) => {
+                  {displayedPoints.map(({ point, pointNumber }) => {
                     const isSelected = draftPoint?.id === point.id
-                    const pointNumber = sortedPoints.findIndex((savedPoint) => savedPoint.id === point.id) + 1
+                    const isCurrentTimestamp = activeTimelinePointId === point.id
+                    const timestampName = getDisplayTimestampName(point)
+                    const rowClassName = [
+                      "min-w-0 border-l-4 transition-colors",
+                      isCurrentTimestamp
+                        ? "border-blue-500 bg-blue-50"
+                        : isSelected
+                          ? point.pointType === "stop"
+                            ? "border-teal-600 bg-teal-50"
+                            : "border-orange-500 bg-orange-50"
+                          : "border-transparent",
+                    ].join(" ")
 
                     return (
-                      <div key={point.id} className={isSelected ? `min-w-0 ${point.pointType === "stop" ? "bg-teal-50" : "bg-orange-50"}` : "min-w-0"}>
+                      <div key={point.id} className={rowClassName}>
                         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem_2rem] items-center gap-2 px-2 py-2.5">
                           <button
                             type="button"
@@ -1104,13 +1246,18 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                             >
                               {pointNumber}
                             </span>
-                            <span className="whitespace-nowrap rounded-md px-1.5 py-1 text-sm font-semibold text-slate-950 transition-colors group-hover:bg-blue-100 group-hover:text-blue-800 group-focus-visible:bg-blue-100 group-focus-visible:text-blue-800">
+                            <span
+                              className={`whitespace-nowrap rounded-md px-1.5 py-1 text-sm font-semibold transition-colors group-hover:bg-blue-100 group-hover:text-blue-800 group-focus-visible:bg-blue-100 group-focus-visible:text-blue-800 ${
+                                isCurrentTimestamp ? "bg-blue-600 text-white" : "text-slate-950"
+                              }`}
+                            >
                               {point.pointType === "stop" && typeof point.stopEndTime === "number"
                                 ? `${formatDuration(point.time)}-${formatDuration(point.stopEndTime)}`
                                 : formatDuration(point.time)}
                             </span>
                             <p className="truncate text-xs text-slate-500">
                               {point.pointType === "stop" ? "Stop - " : ""}
+                              {timestampName ? `${timestampName} - ` : ""}
                               {point.lat.toFixed(5)}, {point.lng.toFixed(5)}
                             </p>
                           </button>
@@ -1135,6 +1282,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
+                        {isSelected ? renderTimestampEditPanel() : null}
                       </div>
                     )
                   })}
@@ -1167,6 +1315,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
           tripRoute={tripRoute}
           routeShapes={routeShapes}
           routeProgressTime={currentTime}
+          liveRouteProgressTimeRef={currentTimeRef}
           isRouteShapingDisabled={isAwaitingMapPlacement}
           activeTripEndpoint={activeTripEndpoint}
           onTripEndpointChange={updateTripEndpoint}
