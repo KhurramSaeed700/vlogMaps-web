@@ -40,6 +40,8 @@ export function getYouTubeThumbnailUrl(videoId: string) {
   return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
 }
 
+const youtubeMetadataFetchTimeoutMs = 8000
+
 export interface ResolvedYouTubeMetadata {
   title: string
   description: string | null
@@ -70,6 +72,39 @@ interface YouTubeDataApiVideo {
   statistics?: {
     likeCount?: string
     viewCount?: string
+  }
+}
+
+interface YouTubeFetchInit extends RequestInit {
+  next?: {
+    revalidate?: number
+  }
+}
+
+async function fetchYouTubeJson<T>(url: string | URL) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), youtubeMetadataFetchTimeoutMs)
+
+  try {
+    const response = await fetch(url.toString(), {
+      headers: {
+        Accept: "application/json",
+      },
+      next: {
+        revalidate: 3600,
+      },
+      signal: controller.signal,
+    } as YouTubeFetchInit)
+
+    if (!response.ok) {
+      return null
+    }
+
+    return (await response.json()) as T
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
@@ -105,27 +140,14 @@ function pickBestThumbnail(thumbnails?: Record<string, YouTubeThumbnailVariant>)
 
 async function fetchOEmbedMetadata(videoId: string): Promise<ResolvedYouTubeMetadata | null> {
   const url = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}`
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-    },
-    next: {
-      revalidate: 3600,
-    },
-  })
-
-  if (!response.ok) {
-    return null
-  }
-
-  const payload = (await response.json()) as {
+  const payload = await fetchYouTubeJson<{
     author_name?: string
     author_url?: string
     thumbnail_url?: string
     title?: string
-  }
+  }>(url)
 
-  if (!payload.title || !payload.author_name) {
+  if (!payload?.title || !payload.author_name) {
     return null
   }
 
@@ -148,23 +170,10 @@ async function fetchYouTubeDataApiMetadata(videoId: string, apiKey: string): Pro
   url.searchParams.set("id", videoId)
   url.searchParams.set("key", apiKey)
 
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-    },
-    next: {
-      revalidate: 3600,
-    },
-  })
-
-  if (!response.ok) {
-    return null
-  }
-
-  const payload = (await response.json()) as {
+  const payload = await fetchYouTubeJson<{
     items?: YouTubeDataApiVideo[]
-  }
-  const item = payload.items?.[0]
+  }>(url)
+  const item = payload?.items?.[0]
 
   if (!item?.snippet?.title || !item.snippet.channelTitle) {
     return null
@@ -189,11 +198,11 @@ export async function fetchResolvedYouTubeMetadata(videoId: string) {
   const apiKey = process.env.YOUTUBE_DATA_API_KEY
 
   if (apiKey) {
-    const apiMetadata = await fetchYouTubeDataApiMetadata(videoId, apiKey)
+    const apiMetadata = await fetchYouTubeDataApiMetadata(videoId, apiKey).catch(() => null)
     if (apiMetadata) {
       return apiMetadata
     }
   }
 
-  return fetchOEmbedMetadata(videoId)
+  return fetchOEmbedMetadata(videoId).catch(() => null)
 }

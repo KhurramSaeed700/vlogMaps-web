@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
+import Image from "next/image"
 import { RedirectToSignIn, UserButton, useUser } from "@clerk/nextjs"
 import { BarChart3, Edit, Eye, Heart, MapPin, Plus, Settings, Trash2, TrendingUp, Youtube } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -71,7 +72,7 @@ function CreatorDashboardContent() {
             </div>
 
             <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon">
+              <Button variant="ghost" size="icon" aria-label="Open creator settings">
                 <Settings className="h-5 w-5" />
               </Button>
               <UserButton afterSignOutUrl="/" />
@@ -86,7 +87,7 @@ function CreatorDashboardContent() {
           <p className="text-gray-600">Manage your travel videos, map keyframes, and creator profile from one place.</p>
         </div>
 
-        <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-5">
+        <div className="mb-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-5">
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -156,7 +157,7 @@ function CreatorDashboardContent() {
           </TabsList>
 
           <TabsContent value="videos" className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">My Videos</h2>
                 <p className="text-gray-600">Manage your travel videos and interactive maps</p>
@@ -195,13 +196,19 @@ function CreatorDashboardContent() {
 
                   return (
                     <Card key={video.id} className="overflow-hidden">
-                      <div className="flex">
-                        <div className="w-48 flex-shrink-0">
-                          <img src={video.thumbnail || "/placeholder.svg"} alt={video.title} className="h-32 w-full object-cover" />
+                      <div className="flex flex-col sm:flex-row">
+                        <div className="relative h-40 w-full flex-shrink-0 bg-gray-100 sm:h-32 sm:w-48">
+                          <Image
+                            src={video.thumbnail || "/placeholder.svg"}
+                            alt={video.title}
+                            fill
+                            sizes="(min-width: 640px) 12rem, 100vw"
+                            className="object-cover"
+                          />
                         </div>
 
                         <CardContent className="flex-1 p-6">
-                          <div className="mb-4 flex items-start justify-between">
+                          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                             <div className="flex-1">
                               <div className="mb-2 flex items-center gap-2">
                                 <h3 className="text-lg font-semibold">{video.title}</h3>
@@ -212,7 +219,7 @@ function CreatorDashboardContent() {
                               </p>
                             </div>
 
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <Link href={`/creator/video/${video.id}/edit`}>
                                 <Button variant="outline" size="sm">
                                   <Edit className="mr-1 h-4 w-4" />
@@ -231,6 +238,7 @@ function CreatorDashboardContent() {
                                 className="text-red-600 hover:text-red-700"
                                 onClick={() => handleDeleteVideo(video.id, video.title)}
                                 disabled={!canDeleteVideo || deletingVideoId === video.id}
+                                aria-label={`Delete ${video.title}`}
                                 title={canDeleteVideo ? "Delete video" : "Featured creator videos cannot be deleted locally"}
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -238,7 +246,7 @@ function CreatorDashboardContent() {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-4 gap-4 text-sm">
+                          <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
                             <div>
                               <p className="text-gray-500">Keyframes</p>
                               <p className="font-medium">{loadCreatorPoints(video.id, video.keyframes).length}</p>

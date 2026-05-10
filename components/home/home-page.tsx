@@ -14,16 +14,46 @@ import { PreferenceFilter } from "@/components/home/preference-filter"
 import { HomeVideoGrid } from "@/components/home/video-grid"
 import { isCreatorEmail } from "@/lib/creator-access"
 import { createInstantWatchVideo, getPublishedTravelVideosClient } from "@/lib/creator-videos"
+import type { TravelVideo } from "@/lib/demo-data"
 import { hydrateTravelVideos, toHydratedTravelVideo, type HydratedTravelVideo } from "@/lib/youtube-client"
 
-export default function HomePage() {
+const catalogHydrationTimeoutMs = 9000
+
+interface HomePageProps {
+  initialVideos?: TravelVideo[]
+}
+
+function toResolvedFallbackVideos(videos: TravelVideo[]) {
+  return videos.map((video) => ({ ...toHydratedTravelVideo(video), isMetadataLoading: false }))
+}
+
+async function hydrateTravelVideosWithTimeout(videos: TravelVideo[]) {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+  try {
+    return await Promise.race([
+      hydrateTravelVideos(videos),
+      new Promise<HydratedTravelVideo[]>((resolve) => {
+        timeoutId = setTimeout(() => resolve(toResolvedFallbackVideos(videos)), catalogHydrationTimeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+    }
+  }
+}
+
+export default function HomePage({ initialVideos = [] }: HomePageProps) {
   const router = useRouter()
   const { isLoaded, isSignedIn, user } = useUser()
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [selectedPreference, setSelectedPreference] = useState<PreferenceId>("all")
-  const [catalogVideos, setCatalogVideos] = useState<HydratedTravelVideo[]>([])
-  const [isCatalogLoading, setIsCatalogLoading] = useState(true)
-  const [isHydratingCatalog, setIsHydratingCatalog] = useState(true)
+  const [catalogVideos, setCatalogVideos] = useState<HydratedTravelVideo[]>(() =>
+    toResolvedFallbackVideos(initialVideos),
+  )
+  const [isCatalogLoading, setIsCatalogLoading] = useState(false)
+  const [isHydratingCatalog, setIsHydratingCatalog] = useState(() => initialVideos.length > 0)
   const [launcherError, setLauncherError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
@@ -40,14 +70,13 @@ export default function HomePage() {
       baseVideos = []
     }
 
-    const fallbackVideos = baseVideos.map(toHydratedTravelVideo)
-    const resolvedFallbackVideos = fallbackVideos.map((video) => ({ ...video, isMetadataLoading: false }))
-    setCatalogVideos(fallbackVideos)
+    const resolvedFallbackVideos = toResolvedFallbackVideos(baseVideos)
+    setCatalogVideos(resolvedFallbackVideos)
     setIsCatalogLoading(false)
     setIsHydratingCatalog(baseVideos.length > 0)
 
     let isMounted = true
-    hydrateTravelVideos(baseVideos)
+    hydrateTravelVideosWithTimeout(baseVideos)
       .then((nextVideos) => {
         if (isMounted) {
           setCatalogVideos(nextVideos)
@@ -94,12 +123,12 @@ export default function HomePage() {
       return "Loading videos..."
     }
 
-    if (isHydratingCatalog) {
+    if (isHydratingCatalog && videos.length === 0) {
       return "Refreshing video titles and details..."
     }
 
     return null
-  }, [isCatalogLoading, isHydratingCatalog])
+  }, [isCatalogLoading, isHydratingCatalog, videos.length])
 
   const handleLaunch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -112,15 +141,11 @@ export default function HomePage() {
       })
 
       const baseVideos = getPublishedTravelVideosClient()
-      setCatalogVideos(baseVideos.map(toHydratedTravelVideo))
+      setCatalogVideos(toResolvedFallbackVideos(baseVideos))
       setIsHydratingCatalog(true)
-      hydrateTravelVideos(baseVideos)
+      hydrateTravelVideosWithTimeout(baseVideos)
         .then((nextVideos) => setCatalogVideos(nextVideos))
-        .catch(() =>
-          setCatalogVideos(
-            baseVideos.map((baseVideo) => ({ ...toHydratedTravelVideo(baseVideo), isMetadataLoading: false })),
-          ),
-        )
+        .catch(() => setCatalogVideos(toResolvedFallbackVideos(baseVideos)))
         .finally(() => setIsHydratingCatalog(false))
 
       startTransition(() => {

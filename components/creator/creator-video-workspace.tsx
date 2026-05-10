@@ -1,24 +1,60 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import Image from "next/image"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Clock3, ExternalLink, PlayCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { createLocalCreatorVideo, getAllCreatorVideosClient } from "@/lib/creator-videos"
+import { createLocalCreatorVideo, getAllCreatorVideosClient, updateLocalCreatorVideo } from "@/lib/creator-videos"
 import { formatDuration, type TravelVideo } from "@/lib/demo-data"
+import { resolveYouTubeDuration } from "@/lib/youtube-duration-client"
 
 export function CreatorVideoWorkspace() {
   const router = useRouter()
+  const isMountedRef = useRef(false)
+  const resolvingDurationsRef = useRef(new Set<string>())
   const [videos, setVideos] = useState<TravelVideo[]>([])
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [message, setMessage] = useState("")
   const [isCreating, setIsCreating] = useState(false)
 
   useEffect(() => {
+    isMountedRef.current = true
     setVideos(getAllCreatorVideosClient())
+
+    return () => {
+      isMountedRef.current = false
+    }
   }, [])
+
+  useEffect(() => {
+    const videosMissingDuration = videos.filter(
+      (video) => video.youtubeId && video.durationSeconds <= 0 && !resolvingDurationsRef.current.has(video.id),
+    )
+
+    videosMissingDuration.forEach((video) => {
+      resolvingDurationsRef.current.add(video.id)
+      resolveYouTubeDuration(video.youtubeId)
+        .then((duration) => {
+          if (!isMountedRef.current || !duration) {
+            return
+          }
+
+          updateLocalCreatorVideo(video.id, { durationSeconds: duration })
+          setVideos((currentVideos) =>
+            currentVideos.map((currentVideo) =>
+              currentVideo.id === video.id ? { ...currentVideo, durationSeconds: duration } : currentVideo,
+            ),
+          )
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          resolvingDurationsRef.current.delete(video.id)
+        })
+    })
+  }, [videos])
 
   const orderedVideos = useMemo(
     () => [...videos].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
@@ -82,15 +118,27 @@ export function CreatorVideoWorkspace() {
         <div className="divide-y divide-slate-200 border-y border-slate-200">
           {orderedVideos.map((video) => (
             <div key={video.id} className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2">
-                  <h2 className="truncate font-medium text-slate-950">{video.title}</h2>
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="relative aspect-video w-24 flex-none overflow-hidden rounded-md bg-slate-100 sm:w-32">
+                  <Image
+                    src={video.thumbnail || "/placeholder.svg"}
+                    alt={video.title}
+                    fill
+                    sizes="(min-width: 640px) 8rem, 6rem"
+                    className="object-cover"
+                  />
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                  <span className="inline-flex items-center gap-1">
-                    <Clock3 className="h-3.5 w-3.5" />
-                    {formatDuration(video.durationSeconds)}
-                  </span>
+
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <h2 className="truncate font-medium text-slate-950">{video.title}</h2>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                    <span className="inline-flex items-center gap-1">
+                      <Clock3 className="h-3.5 w-3.5" />
+                      {formatDuration(video.durationSeconds)}
+                    </span>
+                  </div>
                 </div>
               </div>
 

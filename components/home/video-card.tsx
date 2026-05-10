@@ -1,4 +1,5 @@
 import Link from "next/link"
+import Image from "next/image"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatCompactNumber, formatDuration } from "@/lib/demo-data"
@@ -12,11 +13,13 @@ export function HomeVideoCard({ video }: HomeVideoCardProps) {
   return (
     <Link href={`/watch/${video.id}`} className="group block">
       <div className="space-y-3">
-        <div className="relative overflow-hidden rounded-2xl bg-slate-100">
-          <img
+        <div className="relative aspect-video overflow-hidden rounded-2xl bg-slate-100">
+          <Image
             src={video.thumbnail || "/placeholder.svg"}
             alt={video.title}
-            className="aspect-video w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+            fill
+            sizes="(min-width: 1536px) 20vw, (min-width: 1280px) 25vw, (min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
+            className="object-cover transition duration-300 group-hover:scale-[1.02]"
           />
           <div className="absolute left-3 top-3">
             <Badge className="border-0 bg-black/75 text-white">Live map</Badge>

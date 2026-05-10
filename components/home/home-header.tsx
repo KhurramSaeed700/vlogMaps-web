@@ -32,10 +32,10 @@ export function HomeHeader({
 }: HomeHeaderProps) {
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex max-w-screen-2xl items-center gap-4 px-4 py-3">
+      <div className="mx-auto flex max-w-screen-2xl flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-4">
         <TravelMapLogo textClassName="text-lg" />
 
-        <form onSubmit={onSubmit} className="mx-auto flex w-full max-w-2xl items-center">
+        <form onSubmit={onSubmit} className="order-3 flex w-full items-center sm:order-none sm:mx-auto sm:max-w-2xl">
           <Input
             value={youtubeUrl}
             onChange={(event) => onYoutubeUrlChange(event.target.value)}
@@ -46,13 +46,14 @@ export function HomeHeader({
             type="submit"
             size="icon"
             disabled={isPending}
+            aria-label="Launch YouTube video"
             className="h-11 w-14 rounded-l-none rounded-r-full border border-l-0 border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200"
           >
             <Search className="h-4 w-4" />
           </Button>
         </form>
 
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2">
           <Link href={creatorCta.href} className="hidden md:block">
             <Button variant="outline" className="rounded-full">
               {creatorCta.label}
