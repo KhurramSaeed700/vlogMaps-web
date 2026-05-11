@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { RedirectToSignIn, UserButton, useUser } from "@clerk/nextjs"
-import { BarChart3, Edit, Eye, Heart, MapPin, Plus, Settings, Trash2, TrendingUp, Youtube } from "lucide-react"
+import { BarChart3, Edit, Eye, Heart, MapPin, Plus, Settings, Trash2, TrendingUp, UploadCloud, Youtube } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -14,30 +14,117 @@ import { CreatorAccessGuard } from "@/components/creator/creator-access-guard"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
 import { creatorProfile, formatCompactNumber, formatDuration, type TravelVideo } from "@/lib/demo-data"
 import { clearCreatorPoints, loadCreatorPoints } from "@/lib/creator-points"
-import { deleteLocalCreatorVideo, getAllCreatorVideosClient, isLocalCreatorVideoId } from "@/lib/creator-videos"
+import {
+  buildCreatorVideoStateSnapshot,
+  deleteLocalCreatorVideo,
+  getAllCreatorVideosClient,
+  isLocalCreatorVideoId,
+  mergeTravelVideos,
+  withSyncedVideoState,
+} from "@/lib/creator-videos"
+import {
+  deleteCreatorVideoFromCloud,
+  fetchCreatorCloudVideos,
+  uploadCreatorVideoToCloud,
+} from "@/lib/creator-videos-cloud-client"
 
 function CreatorDashboardContent() {
   const { user } = useUser()
   const [searchQuery, setSearchQuery] = useState("")
   const [allCreatorVideos, setAllCreatorVideos] = useState<TravelVideo[]>([])
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
+  const [syncingVideoId, setSyncingVideoId] = useState<string | null>(null)
+  const [cloudVideoIds, setCloudVideoIds] = useState<Set<string>>(() => new Set())
+  const [cloudConfigured, setCloudConfigured] = useState<boolean | null>(null)
+  const [syncMessage, setSyncMessage] = useState("")
 
   useEffect(() => {
-    setAllCreatorVideos(getAllCreatorVideosClient())
+    const localVideos = getAllCreatorVideosClient()
+    setAllCreatorVideos(localVideos)
+
+    let isMounted = true
+    fetchCreatorCloudVideos()
+      .then((response) => {
+        if (!isMounted) {
+          return
+        }
+
+        setCloudConfigured(response.configured)
+        setCloudVideoIds(new Set(response.videos.map((video) => video.id)))
+        setAllCreatorVideos(mergeTravelVideos(localVideos, response.videos))
+      })
+      .catch(() => {
+        if (isMounted) {
+          setCloudConfigured(false)
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
   }, [])
 
-  const handleDeleteVideo = (videoId: string, videoTitle: string) => {
+  const handleUploadVideo = async (video: TravelVideo) => {
+    if (syncingVideoId) {
+      return
+    }
+
+    setSyncingVideoId(video.id)
+    setSyncMessage("")
+
+    try {
+      const state = buildCreatorVideoStateSnapshot(video)
+      const uploadVideo = withSyncedVideoState(video, state, "published")
+      const response = await uploadCreatorVideoToCloud(uploadVideo, state, { publish: true })
+
+      if (!response.configured) {
+        setCloudConfigured(false)
+        setSyncMessage("Cloud database is not configured yet. Add DATABASE_URL in Vercel, then upload again.")
+        return
+      }
+
+      if (!response.saved || !response.video) {
+        setSyncMessage("Could not upload this edited video. Please try again.")
+        return
+      }
+
+      const savedVideo = response.video
+      setCloudConfigured(true)
+      setCloudVideoIds((currentIds) => new Set(currentIds).add(savedVideo.id))
+      setAllCreatorVideos((currentVideos) => mergeTravelVideos(currentVideos, [savedVideo]))
+      setSyncMessage(`Uploaded "${savedVideo.title}" to the cloud.`)
+    } finally {
+      setSyncingVideoId(null)
+    }
+  }
+
+  const handleDeleteVideo = async (videoId: string, videoTitle: string) => {
     const shouldDelete = window.confirm(`Delete "${videoTitle}" and all of its saved timestamp points?`)
     if (!shouldDelete) {
       return
     }
 
     setDeletingVideoId(videoId)
+    setSyncMessage("")
 
-    const deleted = deleteLocalCreatorVideo(videoId)
-    if (deleted) {
+    const deletedLocalVideo = deleteLocalCreatorVideo(videoId)
+    const shouldDeleteCloudVideo = cloudVideoIds.has(videoId)
+    const cloudDeleteResponse = shouldDeleteCloudVideo ? await deleteCreatorVideoFromCloud(videoId) : null
+    const deletedCloudVideo = Boolean(cloudDeleteResponse?.deleted)
+
+    if (deletedLocalVideo || deletedCloudVideo) {
       clearCreatorPoints(videoId)
       setAllCreatorVideos((currentVideos) => currentVideos.filter((video) => video.id !== videoId))
+      setCloudVideoIds((currentIds) => {
+        const nextIds = new Set(currentIds)
+        nextIds.delete(videoId)
+        return nextIds
+      })
+    }
+
+    if (shouldDeleteCloudVideo && cloudDeleteResponse && !cloudDeleteResponse.configured) {
+      setCloudConfigured(false)
+      setSyncMessage("Cloud database is not configured, so only the local copy was removed.")
     }
 
     setDeletingVideoId(null)
@@ -170,6 +257,12 @@ function CreatorDashboardContent() {
               </Link>
             </div>
 
+            {(syncMessage || cloudConfigured === false) && (
+              <div className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                {syncMessage || "Cloud database is not configured yet. Add DATABASE_URL in Vercel to sync creator videos."}
+              </div>
+            )}
+
             <div className="flex items-center gap-4">
               <div className="relative flex-1 max-w-md">
                 <Input
@@ -192,7 +285,9 @@ function CreatorDashboardContent() {
                 </Card>
               ) : (
                 creatorVideos.map((video) => {
-                  const canDeleteVideo = isLocalCreatorVideoId(video.id)
+                  const isCloudVideo = cloudVideoIds.has(video.id)
+                  const canDeleteVideo = isLocalCreatorVideoId(video.id) || isCloudVideo
+                  const isSyncingThisVideo = syncingVideoId === video.id
 
                   return (
                     <Card key={video.id} className="overflow-hidden">
@@ -220,6 +315,15 @@ function CreatorDashboardContent() {
                             </div>
 
                             <div className="flex flex-wrap items-center gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleUploadVideo(video)}
+                                disabled={Boolean(syncingVideoId) && !isSyncingThisVideo}
+                              >
+                                <UploadCloud className="mr-1 h-4 w-4" />
+                                {isSyncingThisVideo ? "Uploading..." : isCloudVideo ? "Upload Changes" : "Upload Edited Video"}
+                              </Button>
                               <Link href={`/creator/video/${video.id}/edit`}>
                                 <Button variant="outline" size="sm">
                                   <Edit className="mr-1 h-4 w-4" />
@@ -239,7 +343,7 @@ function CreatorDashboardContent() {
                                 onClick={() => handleDeleteVideo(video.id, video.title)}
                                 disabled={!canDeleteVideo || deletingVideoId === video.id}
                                 aria-label={`Delete ${video.title}`}
-                                title={canDeleteVideo ? "Delete video" : "Featured creator videos cannot be deleted locally"}
+                                title={canDeleteVideo ? "Delete video" : "Upload this video before deleting its cloud copy"}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>

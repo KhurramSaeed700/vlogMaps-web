@@ -1,4 +1,8 @@
 import type { TravelVideo, VideoKeyframe } from "@/lib/demo-data"
+import { loadCreatorPoints } from "@/lib/creator-points"
+import { loadCreatorRouteShapes } from "@/lib/creator-route-shapes"
+import { loadCreatorTripRoute } from "@/lib/creator-trip-route"
+import type { CreatorVideoState } from "@/lib/creator-video-state"
 import { creatorProfile, getCreatorVideos, getPublishedTravelVideos, getTravelVideoById } from "@/lib/demo-data"
 import { extractYouTubeId, getYouTubeThumbnailUrl, type ResolvedYouTubeMetadata } from "@/lib/youtube"
 
@@ -119,6 +123,49 @@ export function isLocalCreatorVideoId(id: string) {
 
 export function isInstantWatchVideoId(id: string) {
   return id.startsWith("instant-")
+}
+
+export function mergeTravelVideos(...groups: TravelVideo[][]) {
+  const orderedIds: string[] = []
+  const videosById = new Map<string, TravelVideo>()
+
+  for (const group of groups) {
+    for (const video of group) {
+      if (!videosById.has(video.id)) {
+        orderedIds.push(video.id)
+      }
+
+      videosById.set(video.id, video)
+    }
+  }
+
+  return orderedIds.flatMap((id) => {
+    const video = videosById.get(id)
+    return video ? [video] : []
+  })
+}
+
+export function toVideoKeyframes(points: Array<VideoKeyframe & { id?: string }>) {
+  return points.map(({ id: _id, ...point }) => point)
+}
+
+export function buildCreatorVideoStateSnapshot(video: TravelVideo): CreatorVideoState {
+  return {
+    points: loadCreatorPoints(video.id, video.keyframes),
+    tripRoute: loadCreatorTripRoute(video.id),
+    routeShapes: loadCreatorRouteShapes(video.id),
+  }
+}
+
+export function withSyncedVideoState(video: TravelVideo, state: CreatorVideoState, status: TravelVideo["status"] = video.status) {
+  const keyframes = toVideoKeyframes(state.points)
+
+  return {
+    ...video,
+    status,
+    keyframes,
+    locations: keyframes.map((point) => point.location),
+  }
 }
 
 export function loadLocalCreatorVideos() {

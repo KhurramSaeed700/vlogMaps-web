@@ -7,7 +7,15 @@ import { useRouter } from "next/navigation"
 import { Clock3, ExternalLink, PlayCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { createLocalCreatorVideo, getAllCreatorVideosClient, updateLocalCreatorVideo } from "@/lib/creator-videos"
+import { uploadCreatorVideoToCloud, fetchCreatorCloudVideos } from "@/lib/creator-videos-cloud-client"
+import {
+  buildCreatorVideoStateSnapshot,
+  createLocalCreatorVideo,
+  getAllCreatorVideosClient,
+  mergeTravelVideos,
+  updateLocalCreatorVideo,
+  withSyncedVideoState,
+} from "@/lib/creator-videos"
 import { formatDuration, type TravelVideo } from "@/lib/demo-data"
 import { resolveYouTubeDuration } from "@/lib/youtube-duration-client"
 
@@ -22,7 +30,16 @@ export function CreatorVideoWorkspace() {
 
   useEffect(() => {
     isMountedRef.current = true
-    setVideos(getAllCreatorVideosClient())
+    const localVideos = getAllCreatorVideosClient()
+    setVideos(localVideos)
+
+    fetchCreatorCloudVideos()
+      .then((response) => {
+        if (isMountedRef.current) {
+          setVideos(mergeTravelVideos(localVideos, response.videos))
+        }
+      })
+      .catch(() => undefined)
 
     return () => {
       isMountedRef.current = false
@@ -68,9 +85,13 @@ export function CreatorVideoWorkspace() {
 
     try {
       setIsCreating(true)
-      setMessage("Opening video...")
+      setMessage("Opening and syncing video...")
       const video = await createLocalCreatorVideo({ youtubeUrl })
-      setVideos(getAllCreatorVideosClient())
+      const state = buildCreatorVideoStateSnapshot(video)
+      const uploadVideo = withSyncedVideoState(video, state, video.status)
+      await uploadCreatorVideoToCloud(uploadVideo, state).catch(() => null)
+      const cloudVideos = await fetchCreatorCloudVideos().catch(() => ({ videos: [] }))
+      setVideos(mergeTravelVideos(getAllCreatorVideosClient(), cloudVideos.videos))
       router.push(`/creator/video/${video.id}/edit`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to create a creator video from that URL.")

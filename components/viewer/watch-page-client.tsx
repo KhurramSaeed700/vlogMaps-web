@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { WatchExperience } from "@/components/viewer/watch-experience"
 import { Card, CardContent } from "@/components/ui/card"
+import { fetchCloudVideoById } from "@/lib/creator-videos-cloud-client"
 import { getTravelVideoByIdClient } from "@/lib/creator-videos"
 import { hydrateTravelVideo, toHydratedTravelVideo, type HydratedTravelVideo } from "@/lib/youtube-client"
 
@@ -11,19 +12,31 @@ export function WatchPageClient({ id }: { id: string }) {
 
   useEffect(() => {
     const baseVideo = getTravelVideoByIdClient(id)
-    if (!baseVideo) {
-      setVideo(null)
-      return
+    let isMounted = true
+    setVideo(baseVideo ? toHydratedTravelVideo(baseVideo) : undefined)
+
+    const resolveVideo = async () => {
+      const cloudResponse = await fetchCloudVideoById(id).catch(() => ({ video: null }))
+      const resolvedVideo = cloudResponse.video ?? baseVideo
+
+      if (!resolvedVideo) {
+        if (isMounted) {
+          setVideo(null)
+        }
+        return
+      }
+
+      if (isMounted) {
+        setVideo(toHydratedTravelVideo(resolvedVideo))
+      }
+
+      const hydratedVideo = await hydrateTravelVideo(resolvedVideo)
+      if (isMounted) {
+        setVideo(hydratedVideo)
+      }
     }
 
-    setVideo(toHydratedTravelVideo(baseVideo))
-
-    let isMounted = true
-    hydrateTravelVideo(baseVideo).then((nextVideo) => {
-      if (isMounted) {
-        setVideo(nextVideo)
-      }
-    })
+    resolveVideo()
 
     return () => {
       isMounted = false

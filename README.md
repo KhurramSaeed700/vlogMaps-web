@@ -31,9 +31,9 @@ Continue building your app on:
 3. Changes are automatically pushed to this repository
 4. Vercel deploys the latest version from this repository
 
-## Creator Edit Persistence
+## Creator Cloud Persistence
 
-Creator video map edits are saved locally first and, when configured, mirrored to Neon Postgres through `DATABASE_URL`.
+Creator video records and map edits are saved locally first and, when configured, mirrored to Neon Postgres through `DATABASE_URL`.
 
 Add this to `.env.local` with your Neon pooled connection string:
 
@@ -41,7 +41,7 @@ Add this to `.env.local` with your Neon pooled connection string:
 DATABASE_URL="postgresql://..."
 ```
 
-The app creates the `creator_video_states` table automatically on first load/save. Without `DATABASE_URL`, the editor keeps using browser localStorage as a fallback.
+The app creates `creator_videos` and `creator_video_states` automatically on first load/save. Without `DATABASE_URL`, the creator tools keep using browser localStorage as a fallback.
 
 ## Project Structure
 
