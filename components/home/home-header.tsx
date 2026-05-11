@@ -62,7 +62,6 @@ export function HomeHeader({
 
           {isLoaded && isSignedIn ? (
             <UserButton
-              afterSignOutUrl="/"
               appearance={{
                 elements: {
                   avatarBox: "h-9 w-9",

@@ -75,7 +75,7 @@ function CreatorDashboardContent() {
               <Button variant="ghost" size="icon" aria-label="Open creator settings">
                 <Settings className="h-5 w-5" />
               </Button>
-              <UserButton afterSignOutUrl="/" />
+              <UserButton />
             </div>
           </div>
         </div>
