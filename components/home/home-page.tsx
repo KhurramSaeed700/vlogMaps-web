@@ -13,7 +13,8 @@ import {
 import { PreferenceFilter } from "@/components/home/preference-filter"
 import { HomeVideoGrid } from "@/components/home/video-grid"
 import { isCreatorEmail } from "@/lib/creator-access"
-import { createInstantWatchVideo, getPublishedTravelVideosClient } from "@/lib/creator-videos"
+import { fetchPublishedCloudVideos } from "@/lib/creator-videos-cloud-client"
+import { createInstantWatchVideo, getPublishedTravelVideosClient, mergeTravelVideos } from "@/lib/creator-videos"
 import type { TravelVideo } from "@/lib/demo-data"
 import { hydrateTravelVideos, toHydratedTravelVideo, type HydratedTravelVideo } from "@/lib/youtube-client"
 
@@ -63,23 +64,34 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
       setSelectedPreference(savedPreference)
     }
 
-    let baseVideos: ReturnType<typeof getPublishedTravelVideosClient>
+    let localVideos: ReturnType<typeof getPublishedTravelVideosClient>
     try {
-      baseVideos = getPublishedTravelVideosClient()
+      localVideos = getPublishedTravelVideosClient()
     } catch {
-      baseVideos = []
+      localVideos = []
     }
 
-    const resolvedFallbackVideos = toResolvedFallbackVideos(baseVideos)
+    const resolvedFallbackVideos = toResolvedFallbackVideos(mergeTravelVideos(initialVideos, localVideos))
     setCatalogVideos(resolvedFallbackVideos)
     setIsCatalogLoading(false)
-    setIsHydratingCatalog(baseVideos.length > 0)
+    setIsHydratingCatalog(resolvedFallbackVideos.length > 0)
 
     let isMounted = true
-    hydrateTravelVideosWithTimeout(baseVideos)
+    fetchPublishedCloudVideos()
+      .then((response) => {
+        if (!isMounted) {
+          return []
+        }
+
+        const baseVideos = mergeTravelVideos(initialVideos, localVideos, response.videos)
+        const nextFallbackVideos = toResolvedFallbackVideos(baseVideos)
+        setCatalogVideos(nextFallbackVideos)
+        setIsHydratingCatalog(baseVideos.length > 0)
+        return hydrateTravelVideosWithTimeout(baseVideos)
+      })
       .then((nextVideos) => {
         if (isMounted) {
-          setCatalogVideos(nextVideos)
+          setCatalogVideos(nextVideos.length > 0 ? nextVideos : resolvedFallbackVideos)
         }
       })
       .catch(() => {
@@ -140,7 +152,7 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
         preferredTag: selectedPreference === "all" ? undefined : selectedPreference,
       })
 
-      const baseVideos = getPublishedTravelVideosClient()
+      const baseVideos = mergeTravelVideos(catalogVideos, getPublishedTravelVideosClient())
       setCatalogVideos(toResolvedFallbackVideos(baseVideos))
       setIsHydratingCatalog(true)
       hydrateTravelVideosWithTimeout(baseVideos)

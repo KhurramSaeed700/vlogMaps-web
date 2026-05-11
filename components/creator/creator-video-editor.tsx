@@ -5,7 +5,7 @@ import { createPortal } from "react-dom"
 import Link from "next/link"
 import * as Dialog from "@radix-ui/react-dialog"
 import * as Popover from "@radix-ui/react-popover"
-import { ArrowLeftRight, ArrowUp, Keyboard, MapPin, Pause, Pencil, Trash2, X } from "lucide-react"
+import { ArrowLeftRight, ArrowUp, Keyboard, MapPin, Pause, Pencil, Trash2, UploadCloud, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -35,7 +35,8 @@ import {
   type CreatorMapPointType,
   upsertCreatorPoint,
 } from "@/lib/creator-points"
-import { syncVideoRouteMetadata, updateLocalCreatorVideo } from "@/lib/creator-videos"
+import { syncVideoRouteMetadata, updateLocalCreatorVideo, withSyncedVideoState } from "@/lib/creator-videos"
+import { uploadCreatorVideoToCloud } from "@/lib/creator-videos-cloud-client"
 import { loadCreatorVideoState, saveCreatorVideoState } from "@/lib/creator-video-state-client"
 import type { CreatorVideoState } from "@/lib/creator-video-state"
 
@@ -170,6 +171,8 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   const [headerActionsElement, setHeaderActionsElement] = useState<HTMLElement | null>(null)
   const [showScrollTop, setShowScrollTop] = useState(false)
   const [isRecordingStop, setIsRecordingStop] = useState(false)
+  const [isUploadingVideo, setIsUploadingVideo] = useState(false)
+  const [uploadMessage, setUploadMessage] = useState("")
 
   const commitCurrentTime = useCallback((time: number, force = false) => {
     if (!Number.isFinite(time)) {
@@ -206,6 +209,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     setIsPlaying(false)
     setResumeCountdown(null)
     setIsTripRouteDialogOpen(false)
+    setUploadMessage("")
   }, [commitCurrentTime, video.id, video.keyframes])
 
   useEffect(() => {
@@ -882,6 +886,36 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })
   }
 
+  const uploadEditedVideo = async () => {
+    if (isUploadingVideo) {
+      return
+    }
+
+    setIsUploadingVideo(true)
+    setUploadMessage("")
+
+    const state = {
+      points: sortedPoints,
+      tripRoute,
+      routeShapes,
+    }
+
+    try {
+      const response = await uploadCreatorVideoToCloud(withSyncedVideoState(video, state, "published"), state, {
+        publish: true,
+      })
+
+      if (!response.configured) {
+        setUploadMessage("Cloud database is not configured yet. Add DATABASE_URL in Vercel, then upload again.")
+        return
+      }
+
+      setUploadMessage(response.saved ? "Uploaded to cloud." : "Upload failed. Please try again.")
+    } finally {
+      setIsUploadingVideo(false)
+    }
+  }
+
   const renderTimestampEditPanel = () => {
     if (!draftPoint?.id) {
       return null
@@ -976,6 +1010,17 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   Edit Page
                 </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={uploadEditedVideo}
+                  disabled={isUploadingVideo}
+                >
+                  <UploadCloud className="mr-1 h-4 w-4" />
+                  {isUploadingVideo ? "Uploading..." : "Upload"}
+                </Button>
                 <Popover.Trigger asChild>
                   <Button
                     type="button"
@@ -1055,6 +1100,12 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
             </div>
           )}
         </div>
+
+        {uploadMessage && (
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600" aria-live="polite">
+            {uploadMessage}
+          </div>
+        )}
 
         <div className="flex flex-col">
           <div className="p-3 lg:p-4">

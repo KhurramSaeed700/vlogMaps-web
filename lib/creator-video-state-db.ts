@@ -1,6 +1,7 @@
 import "server-only"
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless"
+import type { NeonQueryFunction } from "@neondatabase/serverless"
 import type { CreatorVideoState } from "@/lib/creator-video-state"
+import { getSqlClient, isDatabaseConfigured } from "@/lib/database"
 
 interface CreatorVideoStateRow {
   points: unknown
@@ -9,31 +10,13 @@ interface CreatorVideoStateRow {
   updated_at: Date | string | null
 }
 
-let sqlClient: NeonQueryFunction<false, false> | null = null
 let didEnsureSchema = false
 
-function getDatabaseUrl() {
-  return process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL || process.env.NEON_DATABASE_URL || null
-}
-
-function getSqlClient() {
-  const databaseUrl = getDatabaseUrl()
-  if (!databaseUrl) {
-    return null
-  }
-
-  if (!sqlClient) {
-    sqlClient = neon(databaseUrl)
-  }
-
-  return sqlClient
-}
-
 export function isCreatorVideoStateDbConfigured() {
-  return Boolean(getDatabaseUrl())
+  return isDatabaseConfigured()
 }
 
-async function ensureCreatorVideoStateSchema(sql: NeonQueryFunction<false, false>) {
+export async function ensureCreatorVideoStateSchema(sql: NeonQueryFunction<false, false>) {
   if (didEnsureSchema) {
     return
   }

@@ -6,6 +6,7 @@ import { ContentPageShell } from "@/components/app-shell/content-page-shell"
 import { CreatorAccessGuard } from "@/components/creator/creator-access-guard"
 import { CreatorVideoEditor } from "@/components/creator/creator-video-editor"
 import { isCreatorEmail } from "@/lib/creator-access"
+import { fetchCloudVideoById } from "@/lib/creator-videos-cloud-client"
 import { getTravelVideoByIdClient } from "@/lib/creator-videos"
 import type { TravelVideo } from "@/lib/demo-data"
 
@@ -19,7 +20,25 @@ export function CreatorVideoEditorPage({ id }: { id: string }) {
   const shouldUseEditorLayout = isVideoReady && isUserLoaded && isCreatorEmail(email)
 
   useEffect(() => {
-    setVideo(getTravelVideoByIdClient(id) ?? null)
+    const localVideo = getTravelVideoByIdClient(id)
+    let isMounted = true
+    setVideo(localVideo ?? undefined)
+
+    fetchCloudVideoById(id)
+      .then((response) => {
+        if (isMounted) {
+          setVideo(response.video ?? localVideo ?? null)
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setVideo(localVideo ?? null)
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
   }, [id])
 
   return (
