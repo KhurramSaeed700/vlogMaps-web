@@ -12,7 +12,6 @@ import {
   CheckCircle,
   FileText,
   Globe,
-  MapPin,
   Shield,
   Upload,
   User,
@@ -25,6 +24,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
+import { isCreatorEmail } from "@/lib/creator-access"
 
 const applicationDraftStorageKey = "travelmap:creator-application:v2"
 
@@ -301,15 +302,14 @@ function CreatorApplicationContent() {
     <div className="min-h-screen bg-slate-50">
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-4 py-4">
-          <Link href="/" className="flex items-center gap-3">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <div className="flex items-center gap-2">
-              <MapPin className="h-7 w-7 text-red-600" />
-              <span className="text-xl font-semibold text-slate-950">TravelMap</span>
-            </div>
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link href="/">
+              <Button variant="ghost" size="icon">
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+            </Link>
+            <TravelMapLogo />
+          </div>
           <Badge variant="secondary" className="bg-slate-100 text-slate-700">
             Creator Verification
           </Badge>
@@ -355,7 +355,7 @@ function CreatorApplicationContent() {
               </div>
 
               <div className="flex gap-3">
-                <Button onClick={() => router.push("/dashboard")}>Back to Dashboard</Button>
+                <Button onClick={() => router.push("/")}>Back to Home</Button>
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -883,7 +883,16 @@ function CreatorApplicationContent() {
 }
 
 export default function CreatorApplicationPage() {
-  const { isLoaded, isSignedIn } = useUser()
+  const router = useRouter()
+  const { isLoaded, isSignedIn, user } = useUser()
+  const email = user?.primaryEmailAddress?.emailAddress ?? null
+  const isApprovedCreator = isCreatorEmail(email)
+
+  useEffect(() => {
+    if (isLoaded && isSignedIn && isApprovedCreator) {
+      router.replace("/creator/dashboard")
+    }
+  }, [isApprovedCreator, isLoaded, isSignedIn, router])
 
   if (!isLoaded) {
     return <div className="p-8 text-sm text-slate-500">Loading creator application...</div>
@@ -891,6 +900,10 @@ export default function CreatorApplicationPage() {
 
   if (!isSignedIn) {
     return <RedirectToSignIn />
+  }
+
+  if (isApprovedCreator) {
+    return <div className="p-8 text-sm text-slate-500">Opening creator dashboard...</div>
   }
 
   return <CreatorApplicationContent />

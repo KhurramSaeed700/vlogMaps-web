@@ -1,0 +1,195 @@
+"use client"
+
+import { useEffect, useMemo, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
+import { useUser } from "@clerk/nextjs"
+import { Loader2 } from "lucide-react"
+import { HomeHeader } from "@/components/home/home-header"
+import {
+  getSavedPreference,
+  saveSelectedPreference,
+  type PreferenceId,
+} from "@/components/home/home-preferences"
+import { PreferenceFilter } from "@/components/home/preference-filter"
+import { HomeVideoGrid } from "@/components/home/video-grid"
+import { isCreatorEmail } from "@/lib/creator-access"
+import { createInstantWatchVideo, getPublishedTravelVideosClient } from "@/lib/creator-videos"
+import type { TravelVideo } from "@/lib/demo-data"
+import { hydrateTravelVideos, toHydratedTravelVideo, type HydratedTravelVideo } from "@/lib/youtube-client"
+
+const catalogHydrationTimeoutMs = 9000
+
+interface HomePageProps {
+  initialVideos?: TravelVideo[]
+}
+
+function toResolvedFallbackVideos(videos: TravelVideo[]) {
+  return videos.map((video) => ({ ...toHydratedTravelVideo(video), isMetadataLoading: false }))
+}
+
+async function hydrateTravelVideosWithTimeout(videos: TravelVideo[]) {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+  try {
+    return await Promise.race([
+      hydrateTravelVideos(videos),
+      new Promise<HydratedTravelVideo[]>((resolve) => {
+        timeoutId = setTimeout(() => resolve(toResolvedFallbackVideos(videos)), catalogHydrationTimeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+    }
+  }
+}
+
+export default function HomePage({ initialVideos = [] }: HomePageProps) {
+  const router = useRouter()
+  const { isLoaded, isSignedIn, user } = useUser()
+  const [youtubeUrl, setYoutubeUrl] = useState("")
+  const [selectedPreference, setSelectedPreference] = useState<PreferenceId>("all")
+  const [catalogVideos, setCatalogVideos] = useState<HydratedTravelVideo[]>(() =>
+    toResolvedFallbackVideos(initialVideos),
+  )
+  const [isCatalogLoading, setIsCatalogLoading] = useState(false)
+  const [isHydratingCatalog, setIsHydratingCatalog] = useState(() => initialVideos.length > 0)
+  const [launcherError, setLauncherError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
+
+  useEffect(() => {
+    const savedPreference = getSavedPreference()
+    if (savedPreference) {
+      setSelectedPreference(savedPreference)
+    }
+
+    let baseVideos: ReturnType<typeof getPublishedTravelVideosClient>
+    try {
+      baseVideos = getPublishedTravelVideosClient()
+    } catch {
+      baseVideos = []
+    }
+
+    const resolvedFallbackVideos = toResolvedFallbackVideos(baseVideos)
+    setCatalogVideos(resolvedFallbackVideos)
+    setIsCatalogLoading(false)
+    setIsHydratingCatalog(baseVideos.length > 0)
+
+    let isMounted = true
+    hydrateTravelVideosWithTimeout(baseVideos)
+      .then((nextVideos) => {
+        if (isMounted) {
+          setCatalogVideos(nextVideos)
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setCatalogVideos(resolvedFallbackVideos)
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsHydratingCatalog(false)
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  const videos = useMemo(() => {
+    const filtered =
+      selectedPreference === "all"
+        ? catalogVideos
+        : catalogVideos.filter((video) => video.tags?.includes(selectedPreference))
+
+    const nextVideos = filtered.length > 0 ? filtered : catalogVideos
+    return [...nextVideos].sort((a, b) => b.views - a.views)
+  }, [catalogVideos, selectedPreference])
+
+  const creatorCta = useMemo(() => {
+    const email = user?.primaryEmailAddress?.emailAddress ?? null
+    const isApprovedCreator = isCreatorEmail(email)
+
+    return {
+      href: isApprovedCreator ? "/creator/dashboard" : "/creator/apply",
+      label: isApprovedCreator ? "Creator Dashboard" : "Become a creator",
+    }
+  }, [user])
+
+  const homeLoadingMessage = useMemo(() => {
+    if (isCatalogLoading) {
+      return "Loading videos..."
+    }
+
+    if (isHydratingCatalog && videos.length === 0) {
+      return "Refreshing video titles and details..."
+    }
+
+    return null
+  }, [isCatalogLoading, isHydratingCatalog, videos.length])
+
+  const handleLaunch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLauncherError(null)
+
+    try {
+      const video = createInstantWatchVideo({
+        youtubeUrl,
+        preferredTag: selectedPreference === "all" ? undefined : selectedPreference,
+      })
+
+      const baseVideos = getPublishedTravelVideosClient()
+      setCatalogVideos(toResolvedFallbackVideos(baseVideos))
+      setIsHydratingCatalog(true)
+      hydrateTravelVideosWithTimeout(baseVideos)
+        .then((nextVideos) => setCatalogVideos(nextVideos))
+        .catch(() => setCatalogVideos(toResolvedFallbackVideos(baseVideos)))
+        .finally(() => setIsHydratingCatalog(false))
+
+      startTransition(() => {
+        router.push(`/watch/${video.id}`)
+      })
+    } catch (error) {
+      setLauncherError(error instanceof Error ? error.message : "Paste a valid YouTube link.")
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-white text-slate-950">
+      <HomeHeader
+        creatorCta={creatorCta}
+        isLoaded={isLoaded}
+        isPending={isPending}
+        isSignedIn={isSignedIn}
+        launcherError={launcherError}
+        youtubeUrl={youtubeUrl}
+        onSubmit={handleLaunch}
+        onYoutubeUrlChange={setYoutubeUrl}
+      />
+
+      <main className="mx-auto max-w-screen-2xl px-4 py-6">
+        {homeLoadingMessage && (
+          <div
+            className="mb-4 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"
+            aria-live="polite"
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-red-600" />
+            <span>{homeLoadingMessage}</span>
+          </div>
+        )}
+
+        <PreferenceFilter
+          selectedPreference={selectedPreference}
+          onPreferenceChange={(preference) => {
+            setSelectedPreference(preference)
+            saveSelectedPreference(preference)
+          }}
+        />
+
+        <HomeVideoGrid isCatalogLoading={isCatalogLoading} videos={videos} />
+      </main>
+    </div>
+  )
+}

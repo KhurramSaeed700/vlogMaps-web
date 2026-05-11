@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { WatchExperience } from "@/components/watch-experience"
+import { WatchExperience } from "@/components/viewer/watch-experience"
 import { Card, CardContent } from "@/components/ui/card"
 import { getTravelVideoByIdClient } from "@/lib/creator-videos"
 import { hydrateTravelVideo, toHydratedTravelVideo, type HydratedTravelVideo } from "@/lib/youtube-client"

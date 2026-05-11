@@ -1,4 +1,4 @@
-import { ContentPageShell } from "@/components/content-page-shell"
+import { ContentPageShell } from "@/components/app-shell/content-page-shell"
 
 export default function PrivacyPage() {
   return (

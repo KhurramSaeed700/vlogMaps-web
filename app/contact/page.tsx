@@ -1,4 +1,4 @@
-import { ContentPageShell } from "@/components/content-page-shell"
+import { ContentPageShell } from "@/components/app-shell/content-page-shell"
 import { Button } from "@/components/ui/button"
 
 export default function ContactPage() {

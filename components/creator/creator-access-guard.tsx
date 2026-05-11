@@ -6,21 +6,40 @@ import { useUser } from "@clerk/nextjs"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { CreatorLoadingState, type CreatorLoadingStep } from "@/components/creator/creator-loading-state"
 import { demoCreatorEmails, isCreatorEmail } from "@/lib/creator-access"
 
 interface CreatorAccessGuardProps {
   children: ReactNode
+  loadingTitle?: string
+  pendingLabel?: string | null
 }
 
-export function CreatorAccessGuard({ children }: CreatorAccessGuardProps) {
+export function CreatorAccessGuard({
+  children,
+  loadingTitle = "Opening creator tools",
+  pendingLabel = null,
+}: CreatorAccessGuardProps) {
   const { isLoaded, user } = useUser()
   const email = user?.primaryEmailAddress?.emailAddress ?? null
+  const loadingSteps: CreatorLoadingStep[] = [
+    {
+      label: "Checking creator access",
+      status: isLoaded ? "complete" : "active",
+    },
+    ...(pendingLabel
+      ? [
+          {
+            label: pendingLabel,
+            status: isLoaded ? "active" : "pending",
+          } satisfies CreatorLoadingStep,
+        ]
+      : []),
+  ]
 
   if (!isLoaded) {
     return (
-      <Card>
-        <CardContent className="p-6 text-sm text-gray-500">Checking creator access...</CardContent>
-      </Card>
+      <CreatorLoadingState title={loadingTitle} steps={loadingSteps} />
     )
   }
 
@@ -55,6 +74,10 @@ export function CreatorAccessGuard({ children }: CreatorAccessGuardProps) {
         </CardContent>
       </Card>
     )
+  }
+
+  if (pendingLabel) {
+    return <CreatorLoadingState title={loadingTitle} steps={loadingSteps} />
   }
 
   return <>{children}</>
