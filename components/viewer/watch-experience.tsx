@@ -4,15 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import {
   ArrowLeft,
-  Heart,
-  Settings,
   Share2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { MapboxTravelMap } from "@/components/maps/mapbox-travel-map"
 import { YouTubePlayer } from "@/components/media/youtube-player"
-import { formatDuration, type TravelVideo } from "@/lib/demo-data"
+import type { TravelVideo } from "@/lib/demo-data"
 import { getInterpolatedPointAtTime, loadCreatorPoints, type CreatorMapPoint } from "@/lib/creator-points"
 import type { HydratedTravelVideo } from "@/lib/youtube-client"
 
@@ -22,11 +19,13 @@ interface WatchExperienceProps {
 
 export function WatchExperience({ video }: WatchExperienceProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
+  const feedbackTimeoutRef = useRef<number | null>(null)
   const [routePoints, setRoutePoints] = useState<CreatorMapPoint[]>(() => loadCreatorPoints(video.id, video.keyframes))
   const [isPlaying, setIsPlaying] = useState(true)
   const [currentTime, setCurrentTime] = useState(0)
   const [seekRequest, setSeekRequest] = useState<{ id: number; time: number } | null>(null)
-  const [duration, setDuration] = useState(video.durationSeconds)
+  const [isSharing, setIsSharing] = useState(false)
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null)
 
   useEffect(() => {
     setRoutePoints(loadCreatorPoints(video.id, video.keyframes))
@@ -34,9 +33,29 @@ export function WatchExperience({ video }: WatchExperienceProps) {
     setSeekRequest(null)
   }, [video.id, video.keyframes])
 
+  useEffect(() => {
+    return () => {
+      if (feedbackTimeoutRef.current !== null) {
+        window.clearTimeout(feedbackTimeoutRef.current)
+      }
+    }
+  }, [])
+
   const currentLocation = useMemo(() => {
     return getInterpolatedPointAtTime(routePoints, currentTime)
   }, [currentTime, routePoints])
+
+  const showFeedback = (message: string) => {
+    if (feedbackTimeoutRef.current !== null) {
+      window.clearTimeout(feedbackTimeoutRef.current)
+    }
+
+    setFeedbackMessage(message)
+    feedbackTimeoutRef.current = window.setTimeout(() => {
+      feedbackTimeoutRef.current = null
+      setFeedbackMessage(null)
+    }, 1800)
+  }
 
   const jumpToKeyframe = (time: number) => {
     setCurrentTime(time)
@@ -47,38 +66,88 @@ export function WatchExperience({ video }: WatchExperienceProps) {
     setIsPlaying(true)
   }
 
+  const shareVideo = async () => {
+    if (isSharing || typeof window === "undefined") {
+      return
+    }
+
+    const shareUrl = window.location.href
+    const shareData = {
+      title: `${video.title} | TravelMap`,
+      text: `Watch ${video.title} on TravelMap.`,
+      url: shareUrl,
+    }
+
+    setIsSharing(true)
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData)
+        showFeedback("Shared")
+        return
+      }
+
+      await navigator.clipboard.writeText(shareUrl)
+      showFeedback("Link copied")
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return
+      }
+
+      showFeedback("Unable to share")
+    } finally {
+      setIsSharing(false)
+    }
+  }
+
   return (
-    <div ref={wrapperRef} className="flex h-screen flex-col overflow-hidden bg-black text-white">
-      <header className="absolute left-0 right-0 top-0 z-50 bg-black/80 p-4 backdrop-blur-sm">
-        <div className="flex items-center justify-between gap-4">
+    <div ref={wrapperRef} className="flex h-[100dvh] flex-col overflow-hidden bg-black text-white">
+      <header className="absolute left-0 right-0 top-0 z-50 bg-black/75 p-2.5 backdrop-blur-sm sm:p-4">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center">
             <Link href="/">
-              <Button variant="ghost" size="icon" aria-label="Back to home" className="text-white hover:bg-white/20">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Back to home"
+                className="h-9 w-9 text-white hover:bg-white/20 sm:h-10 sm:w-10 [&_svg]:size-5"
+              >
                 <ArrowLeft className="h-5 w-5" />
               </Button>
             </Link>
-            <span className="ml-2 rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white/70">
+            <span className="ml-1.5 rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/70 sm:ml-2 sm:px-2.5 sm:py-1 sm:text-[11px]">
               Watch Page
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" aria-label="Like video" className="text-white hover:bg-white/20">
-              <Heart className="h-5 w-5" />
-            </Button>
-            <Button variant="ghost" size="icon" aria-label="Share video" className="text-white hover:bg-white/20">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Share video"
+              title="Share video"
+              disabled={isSharing}
+              className="h-9 w-9 text-white hover:bg-white/20 sm:h-10 sm:w-10 [&_svg]:size-5"
+              onClick={shareVideo}
+            >
               <Share2 className="h-5 w-5" />
-            </Button>
-            <Button variant="ghost" size="icon" aria-label="Open playback settings" className="text-white hover:bg-white/20">
-              <Settings className="h-5 w-5" />
             </Button>
           </div>
         </div>
       </header>
 
-      <div className="flex h-full min-h-0 flex-1 flex-col pt-20 lg:flex-row">
-        <div className="relative h-1/2 min-h-0 bg-black lg:h-full lg:w-1/2">
-          <div className="relative h-full w-full overflow-hidden bg-gray-950">
+      {feedbackMessage && (
+        <div
+          role="status"
+          className="absolute left-1/2 top-14 z-[60] -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-950 shadow-lg sm:top-16"
+        >
+          {feedbackMessage}
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 flex-col pt-14 sm:pt-16 lg:flex-row lg:pt-20">
+        <div className="relative z-10 shrink-0 overflow-hidden bg-black lg:h-full lg:w-1/2 lg:shrink-0">
+          <div className="relative aspect-video w-full overflow-hidden bg-gray-950 lg:h-full lg:aspect-auto">
             <YouTubePlayer
               videoId={video.youtubeId}
               currentTime={currentTime}
@@ -90,25 +159,13 @@ export function WatchExperience({ video }: WatchExperienceProps) {
               autoPlay
               showControls
               allowWatchKeyboardControls
-              onReady={(nextDuration) => setDuration(nextDuration || video.durationSeconds)}
               onTimeChange={(time) => setCurrentTime(time)}
               onPlayingChange={setIsPlaying}
             />
-
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-
-            <div className="pointer-events-none absolute inset-x-4 bottom-4 flex items-end justify-between">
-              <Badge variant="secondary" className="border-0 bg-black/55 text-white shadow-md backdrop-blur-sm">
-                {currentLocation.location}
-              </Badge>
-              <Badge variant="secondary" className="border-0 bg-black/55 text-white shadow-md backdrop-blur-sm">
-                {formatDuration(currentTime)} / {formatDuration(duration)}
-              </Badge>
-            </div>
           </div>
         </div>
 
-        <div className="relative h-1/2 min-h-0 lg:h-full lg:w-1/2">
+        <div className="relative z-0 min-h-0 flex-1 overflow-hidden lg:h-full lg:w-1/2 lg:flex-none">
           <MapboxTravelMap
             keyframes={routePoints}
             currentKeyframe={currentLocation}

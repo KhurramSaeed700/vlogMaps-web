@@ -1,207 +1,124 @@
 import "server-only"
 
-import type { NeonQueryFunction } from "@neondatabase/serverless"
+import type { Prisma, Video, VideoEditorState, VideoKeyframe } from "@prisma/client"
 import type { CreatorVideoState } from "@/lib/creator-video-state"
-import { ensureCreatorVideoStateSchema, saveCreatorVideoStateToDb } from "@/lib/creator-video-state-db"
-import { getSqlClient, isDatabaseConfigured } from "@/lib/database"
-import { travelVideos, type TravelVideo, type VideoKeyframe } from "@/lib/demo-data"
+import { getPrisma } from "@/lib/prisma"
+import { isDatabaseConfigured } from "@/lib/database"
+import type { TravelVideo, VideoKeyframe as TravelVideoKeyframe } from "@/lib/demo-data"
 
-type CreatorVideoStatus = TravelVideo["status"]
-
-interface CreatorVideoRow {
-  id: string
-  owner_user_id: string
-  title: string
-  creator: string
-  creator_channel_url: string
-  youtube_id: string
-  thumbnail: string | null
-  duration_seconds: number | string | null
-  views: number | string | null
-  map_views: number | string | null
-  likes: number | string | null
-  status: string | null
-  created_at: Date | string | null
-  description: string | null
-  locations: unknown
-  keyframes: unknown
-  tags: unknown
-  state_points?: unknown
-  updated_at?: Date | string | null
+type VideoWithRoute = Video & {
+  editorState: VideoEditorState | null
+  keyframes: VideoKeyframe[]
 }
-
-let didEnsureSchema = false
-let didSeedCatalogVideos = false
 
 const catalogOwnerUserId = "catalog"
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-function toNumber(value: unknown, fallback = 0) {
-  const numberValue = typeof value === "string" ? Number(value) : value
-  return typeof numberValue === "number" && Number.isFinite(numberValue) ? numberValue : fallback
+function isUuid(value: string) {
+  return uuidPattern.test(value)
 }
 
-function toIsoString(value: Date | string | null | undefined) {
-  if (!value) {
-    return new Date().toISOString()
+function asStringArray(value: Prisma.JsonValue | null | undefined) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+}
+
+function asCreatorPoints(value: Prisma.JsonValue | null | undefined) {
+  return Array.isArray(value) ? (value as unknown as CreatorVideoState["points"]) : []
+}
+
+function toJsonInput(value: unknown) {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue
+}
+
+function asTripRoute(value: Prisma.JsonValue | null | undefined) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as unknown as CreatorVideoState["tripRoute"])
+    : { start: null, end: null }
+}
+
+function asRouteShapes(value: Prisma.JsonValue | null | undefined) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as unknown as CreatorVideoState["routeShapes"])
+    : { trip: [], timestampLegs: {} }
+}
+
+function keyframeToDbCreate(videoId: string, keyframe: TravelVideoKeyframe): Prisma.VideoKeyframeCreateManyInput {
+  return {
+    videoId,
+    timestampSeconds: Math.max(0, Math.round(keyframe.time)),
+    stopEndTime:
+      keyframe.pointType === "stop" && typeof keyframe.stopEndTime === "number" && keyframe.stopEndTime > keyframe.time
+        ? Math.round(keyframe.stopEndTime)
+        : null,
+    latitude: keyframe.lat,
+    longitude: keyframe.lng,
+    locationName: keyframe.location,
+    description: keyframe.description,
+    pointType: keyframe.pointType === "stop" ? "stop" : "point",
   }
-
-  return new Date(value).toISOString()
 }
 
-function readJson<T>(value: unknown, fallback: T): T {
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(value) as T
-    } catch {
-      return fallback
-    }
-  }
-
-  return (value ?? fallback) as T
-}
-
-function normalizeStatus(value: unknown): CreatorVideoStatus {
-  return value === "published" ? "published" : "draft"
-}
-
-function keyframesFromStatePoints(value: unknown) {
-  const points = readJson<Array<VideoKeyframe & { id?: string }>>(value, [])
-  if (!Array.isArray(points)) {
-    return []
-  }
-
-  return points.map(({ id: _id, ...point }) => point)
-}
-
-function rowToTravelVideo(row: CreatorVideoRow): TravelVideo {
-  const stateKeyframes = keyframesFromStatePoints(row.state_points)
-  const savedKeyframes = readJson<VideoKeyframe[]>(row.keyframes, [])
-  const keyframes = stateKeyframes.length > 0 ? stateKeyframes : savedKeyframes
+function rowKeyframeToTravelKeyframe(keyframe: VideoKeyframe): TravelVideoKeyframe {
+  const pointType = keyframe.pointType === "stop" ? "stop" : "point"
 
   return {
-    id: row.id,
-    title: row.title,
-    creator: row.creator,
-    creatorChannelUrl: row.creator_channel_url,
-    youtubeId: row.youtube_id,
-    thumbnail: row.thumbnail || "",
-    durationSeconds: toNumber(row.duration_seconds),
-    views: toNumber(row.views),
-    mapViews: toNumber(row.map_views),
-    likes: toNumber(row.likes),
-    status: normalizeStatus(row.status),
-    createdAt: toIsoString(row.created_at),
-    description: row.description || "",
-    locations: readJson<string[]>(row.locations, keyframes.map((point) => point.location)),
+    time: keyframe.timestampSeconds,
+    stopEndTime:
+      pointType === "stop" && typeof keyframe.stopEndTime === "number" && keyframe.stopEndTime > keyframe.timestampSeconds
+        ? keyframe.stopEndTime
+        : undefined,
+    lat: Number(keyframe.latitude),
+    lng: Number(keyframe.longitude),
+    location: keyframe.locationName || "Saved location",
+    description: keyframe.description || "",
+    pointType,
+  }
+}
+
+function rowToTravelVideo(video: VideoWithRoute): TravelVideo {
+  const keyframes =
+    video.editorState && asCreatorPoints(video.editorState.points).length > 0
+      ? asCreatorPoints(video.editorState.points).map(({ id: _id, ...point }) => point)
+      : video.keyframes.map(rowKeyframeToTravelKeyframe)
+
+  return {
+    id: video.appId || video.id,
+    title: video.title,
+    creator: video.creatorName || "Creator",
+    creatorChannelUrl: video.creatorChannelUrl || `https://www.youtube.com/watch?v=${video.youtubeId}`,
+    youtubeId: video.youtubeId,
+    thumbnail: video.thumbnailUrl || "",
+    durationSeconds: video.duration || 0,
+    views: video.viewCount || 0,
+    mapViews: video.mapViewCount || 0,
+    likes: video.likeCount || 0,
+    status: video.status === "published" ? "published" : "draft",
+    createdAt: (video.createdAt ?? new Date()).toISOString(),
+    description: video.description || "",
+    locations: asStringArray(video.locations).length > 0 ? asStringArray(video.locations) : keyframes.map((point) => point.location),
     keyframes,
-    tags: readJson<string[]>(row.tags, []),
+    tags: asStringArray(video.tags),
   }
 }
 
-async function ensureCreatorVideosSchema(sql: NeonQueryFunction<false, false>) {
-  if (didEnsureSchema) {
-    return
+function getVideoLookup(videoId: string) {
+  return {
+    OR: [{ appId: videoId }, ...(isUuid(videoId) ? [{ id: videoId }] : [])],
   }
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS creator_videos (
-      id TEXT PRIMARY KEY,
-      owner_user_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      creator TEXT NOT NULL,
-      creator_channel_url TEXT NOT NULL,
-      youtube_id TEXT NOT NULL,
-      thumbnail TEXT,
-      duration_seconds INTEGER NOT NULL DEFAULT 0,
-      views INTEGER NOT NULL DEFAULT 0,
-      map_views INTEGER NOT NULL DEFAULT 0,
-      likes INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
-      description TEXT NOT NULL DEFAULT '',
-      locations JSONB NOT NULL DEFAULT '[]'::jsonb,
-      keyframes JSONB NOT NULL DEFAULT '[]'::jsonb,
-      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `
-
-  await sql`CREATE INDEX IF NOT EXISTS idx_creator_videos_owner_user_id ON creator_videos(owner_user_id)`
-  await sql`CREATE INDEX IF NOT EXISTS idx_creator_videos_status ON creator_videos(status)`
-  await sql`CREATE INDEX IF NOT EXISTS idx_creator_videos_created_at ON creator_videos(created_at DESC)`
-  await ensureCreatorVideoStateSchema(sql)
-
-  didEnsureSchema = true
 }
 
-async function ensureCatalogVideosSeeded(sql: NeonQueryFunction<false, false>) {
-  if (didSeedCatalogVideos) {
+async function replaceVideoKeyframes(tx: Prisma.TransactionClient, videoId: string, keyframes: TravelVideoKeyframe[]) {
+  await tx.videoKeyframe.deleteMany({
+    where: { videoId },
+  })
+
+  if (keyframes.length === 0) {
     return
   }
 
-  await ensureCreatorVideosSchema(sql)
-
-  for (const video of travelVideos) {
-    await sql`
-      INSERT INTO creator_videos (
-        id,
-        owner_user_id,
-        title,
-        creator,
-        creator_channel_url,
-        youtube_id,
-        thumbnail,
-        duration_seconds,
-        views,
-        map_views,
-        likes,
-        status,
-        description,
-        locations,
-        keyframes,
-        tags,
-        created_at
-      )
-      VALUES (
-        ${video.id},
-        ${catalogOwnerUserId},
-        ${video.title},
-        ${video.creator},
-        ${video.creatorChannelUrl},
-        ${video.youtubeId},
-        ${video.thumbnail},
-        ${Math.max(0, Math.round(video.durationSeconds))},
-        ${Math.max(0, Math.round(video.views))},
-        ${Math.max(0, Math.round(video.mapViews))},
-        ${Math.max(0, Math.round(video.likes))},
-        ${video.status},
-        ${video.description},
-        ${JSON.stringify(video.locations)}::jsonb,
-        ${JSON.stringify(video.keyframes)}::jsonb,
-        ${JSON.stringify(video.tags ?? [])}::jsonb,
-        ${video.createdAt}::timestamptz
-      )
-      ON CONFLICT (id)
-      DO UPDATE SET
-        title = EXCLUDED.title,
-        creator = EXCLUDED.creator,
-        creator_channel_url = EXCLUDED.creator_channel_url,
-        youtube_id = EXCLUDED.youtube_id,
-        thumbnail = EXCLUDED.thumbnail,
-        duration_seconds = EXCLUDED.duration_seconds,
-        views = EXCLUDED.views,
-        map_views = EXCLUDED.map_views,
-        likes = EXCLUDED.likes,
-        status = EXCLUDED.status,
-        description = EXCLUDED.description,
-        locations = EXCLUDED.locations,
-        keyframes = EXCLUDED.keyframes,
-        tags = EXCLUDED.tags,
-        updated_at = NOW()
-    `
-  }
-
-  didSeedCatalogVideos = true
+  await tx.videoKeyframe.createMany({
+    data: keyframes.map((keyframe) => keyframeToDbCreate(videoId, keyframe)),
+  })
 }
 
 export function isCreatorVideosDbConfigured() {
@@ -219,248 +136,261 @@ export async function saveCreatorVideoToDb({
   state?: CreatorVideoState | null
   publish?: boolean
 }) {
-  const sql = getSqlClient()
-  if (!sql) {
+  const prisma = getPrisma()
+  if (!prisma) {
     return null
   }
 
-  await ensureCreatorVideosSchema(sql)
-
-  const keyframes = state?.points?.length
-    ? state.points.map(({ id: _id, ...point }) => point)
-    : video.keyframes
+  const keyframes = state?.points?.length ? state.points.map(({ id: _id, ...point }) => point) : video.keyframes
   const status = publish ? "published" : video.status
 
-  const rows = (await sql`
-    INSERT INTO creator_videos (
-      id,
-      owner_user_id,
-      title,
-      creator,
-      creator_channel_url,
-      youtube_id,
-      thumbnail,
-      duration_seconds,
-      views,
-      map_views,
-      likes,
-      status,
-      description,
-      locations,
-      keyframes,
-      tags,
-      created_at
-    )
-    VALUES (
-      ${video.id},
-      ${ownerUserId},
-      ${video.title},
-      ${video.creator},
-      ${video.creatorChannelUrl},
-      ${video.youtubeId},
-      ${video.thumbnail},
-      ${Math.max(0, Math.round(video.durationSeconds))},
-      ${Math.max(0, Math.round(video.views))},
-      ${Math.max(0, Math.round(video.mapViews))},
-      ${Math.max(0, Math.round(video.likes))},
-      ${status},
-      ${video.description},
-      ${JSON.stringify(keyframes.map((point) => point.location))}::jsonb,
-      ${JSON.stringify(keyframes)}::jsonb,
-      ${JSON.stringify(video.tags ?? [])}::jsonb,
-      ${video.createdAt}::timestamptz
-    )
-    ON CONFLICT (id)
-    DO UPDATE SET
-      owner_user_id = EXCLUDED.owner_user_id,
-      title = EXCLUDED.title,
-      creator = EXCLUDED.creator,
-      creator_channel_url = EXCLUDED.creator_channel_url,
-      youtube_id = EXCLUDED.youtube_id,
-      thumbnail = EXCLUDED.thumbnail,
-      duration_seconds = EXCLUDED.duration_seconds,
-      views = EXCLUDED.views,
-      map_views = EXCLUDED.map_views,
-      likes = EXCLUDED.likes,
-      status = EXCLUDED.status,
-      description = EXCLUDED.description,
-      locations = EXCLUDED.locations,
-      keyframes = EXCLUDED.keyframes,
-      tags = EXCLUDED.tags,
-      updated_at = NOW()
-    RETURNING
-      id,
-      owner_user_id,
-      title,
-      creator,
-      creator_channel_url,
-      youtube_id,
-      thumbnail,
-      duration_seconds,
-      views,
-      map_views,
-      likes,
-      status,
-      created_at,
-      description,
-      locations,
-      keyframes,
-      tags,
-      updated_at
-  `) as CreatorVideoRow[]
+  const savedVideo = await prisma.$transaction(async (tx) => {
+    const existingVideo = await tx.video.findFirst({
+      where: getVideoLookup(video.id),
+    })
 
-  if (state) {
-    await saveCreatorVideoStateToDb(video.id, ownerUserId, state)
-  }
+    const saved = existingVideo
+      ? await tx.video.update({
+          where: { id: existingVideo.id },
+          data: {
+            ownerUserId,
+            appId: video.id,
+            title: video.title,
+            youtubeId: video.youtubeId,
+            thumbnailUrl: video.thumbnail,
+            duration: Math.max(0, Math.round(video.durationSeconds)),
+            viewCount: Math.max(0, Math.round(video.views)),
+            mapViewCount: Math.max(0, Math.round(video.mapViews)),
+            likeCount: Math.max(0, Math.round(video.likes)),
+            status,
+            description: video.description,
+            creatorName: video.creator,
+            creatorChannelUrl: video.creatorChannelUrl,
+            locations: keyframes.map((point) => point.location),
+            tags: video.tags ?? [],
+          },
+        })
+      : await tx.video.create({
+          data: {
+            ownerUserId,
+            appId: video.id,
+            title: video.title,
+            youtubeId: video.youtubeId,
+            thumbnailUrl: video.thumbnail,
+            duration: Math.max(0, Math.round(video.durationSeconds)),
+            viewCount: Math.max(0, Math.round(video.views)),
+            mapViewCount: Math.max(0, Math.round(video.mapViews)),
+            likeCount: Math.max(0, Math.round(video.likes)),
+            status,
+            description: video.description,
+            creatorName: video.creator,
+            creatorChannelUrl: video.creatorChannelUrl,
+            locations: keyframes.map((point) => point.location),
+            tags: video.tags ?? [],
+          },
+        })
 
-  return rows[0] ? rowToTravelVideo({ ...rows[0], state_points: state?.points }) : null
+    await replaceVideoKeyframes(tx, saved.id, keyframes)
+
+    if (state) {
+      await tx.videoEditorState.upsert({
+        where: { videoId: saved.id },
+        create: {
+          videoId: saved.id,
+          ownerUserId,
+          points: toJsonInput(state.points),
+          tripRoute: toJsonInput(state.tripRoute),
+          routeShapes: toJsonInput(state.routeShapes),
+        },
+        update: {
+          ownerUserId,
+          points: toJsonInput(state.points),
+          tripRoute: toJsonInput(state.tripRoute),
+          routeShapes: toJsonInput(state.routeShapes),
+          updatedAt: new Date(),
+        },
+      })
+    }
+
+    return tx.video.findUnique({
+      where: { id: saved.id },
+      include: {
+        editorState: true,
+        keyframes: {
+          orderBy: { timestampSeconds: "asc" },
+        },
+      },
+    })
+  })
+
+  return savedVideo ? rowToTravelVideo(savedVideo) : null
 }
 
 export async function listCreatorVideosFromDb(ownerUserId: string) {
-  const sql = getSqlClient()
-  if (!sql) {
+  const prisma = getPrisma()
+  if (!prisma) {
     return []
   }
 
-  await ensureCreatorVideosSchema(sql)
+  const videos = await prisma.video.findMany({
+    where: {
+      ownerUserId,
+      appId: { not: null },
+    },
+    include: {
+      editorState: true,
+      keyframes: {
+        orderBy: { timestampSeconds: "asc" },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  })
 
-  const rows = (await sql`
-    SELECT
-      v.id,
-      v.owner_user_id,
-      v.title,
-      v.creator,
-      v.creator_channel_url,
-      v.youtube_id,
-      v.thumbnail,
-      v.duration_seconds,
-      v.views,
-      v.map_views,
-      v.likes,
-      v.status,
-      v.created_at,
-      v.description,
-      v.locations,
-      v.keyframes,
-      v.tags,
-      v.updated_at,
-      s.points AS state_points
-    FROM creator_videos v
-    LEFT JOIN creator_video_states s
-      ON s.video_id = v.id
-      AND s.owner_user_id = v.owner_user_id
-    WHERE v.owner_user_id = ${ownerUserId}
-    ORDER BY v.created_at DESC
-  `) as CreatorVideoRow[]
-
-  return rows.map(rowToTravelVideo)
+  return videos.map(rowToTravelVideo)
 }
 
 export async function listPublishedCreatorVideosFromDb() {
-  const sql = getSqlClient()
-  if (!sql) {
+  const prisma = getPrisma()
+  if (!prisma) {
     return []
   }
 
-  await ensureCatalogVideosSeeded(sql)
+  try {
+    const videos = await prisma.video.findMany({
+      where: {
+        status: "published",
+        appId: { not: null },
+      },
+      include: {
+        editorState: true,
+        keyframes: {
+          orderBy: { timestampSeconds: "asc" },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    })
 
-  const rows = (await sql`
-    SELECT
-      v.id,
-      v.owner_user_id,
-      v.title,
-      v.creator,
-      v.creator_channel_url,
-      v.youtube_id,
-      v.thumbnail,
-      v.duration_seconds,
-      v.views,
-      v.map_views,
-      v.likes,
-      v.status,
-      v.created_at,
-      v.description,
-      v.locations,
-      v.keyframes,
-      v.tags,
-      v.updated_at,
-      s.points AS state_points
-    FROM creator_videos v
-    LEFT JOIN creator_video_states s
-      ON s.video_id = v.id
-      AND s.owner_user_id = v.owner_user_id
-    WHERE v.status = 'published'
-    ORDER BY v.created_at DESC
-  `) as CreatorVideoRow[]
-
-  return rows.map(rowToTravelVideo)
+    return videos.map(rowToTravelVideo)
+  } catch {
+    return []
+  }
 }
 
 export async function getCreatorVideoFromDb(videoId: string, requesterUserId?: string | null) {
-  const sql = getSqlClient()
-  if (!sql) {
+  const prisma = getPrisma()
+  if (!prisma) {
     return null
   }
 
-  await ensureCatalogVideosSeeded(sql)
+  try {
+    const video = await prisma.video.findFirst({
+      where: {
+        AND: [
+          getVideoLookup(videoId),
+          {
+            OR: [{ status: "published" }, { ownerUserId: requesterUserId ?? "" }, { ownerUserId: catalogOwnerUserId }],
+          },
+        ],
+      },
+      include: {
+        editorState: true,
+        keyframes: {
+          orderBy: { timestampSeconds: "asc" },
+        },
+      },
+    })
 
-  const rows = (await sql`
-    SELECT
-      v.id,
-      v.owner_user_id,
-      v.title,
-      v.creator,
-      v.creator_channel_url,
-      v.youtube_id,
-      v.thumbnail,
-      v.duration_seconds,
-      v.views,
-      v.map_views,
-      v.likes,
-      v.status,
-      v.created_at,
-      v.description,
-      v.locations,
-      v.keyframes,
-      v.tags,
-      v.updated_at,
-      s.points AS state_points
-    FROM creator_videos v
-    LEFT JOIN creator_video_states s
-      ON s.video_id = v.id
-      AND s.owner_user_id = v.owner_user_id
-    WHERE v.id = ${videoId}
-      AND (
-        v.status = 'published'
-        OR v.owner_user_id = ${requesterUserId ?? ""}
-        OR v.owner_user_id = ${catalogOwnerUserId}
-      )
-    LIMIT 1
-  `) as CreatorVideoRow[]
-
-  return rows[0] ? rowToTravelVideo(rows[0]) : null
+    return video ? rowToTravelVideo(video) : null
+  } catch {
+    return null
+  }
 }
 
 export async function deleteCreatorVideoFromDb(videoId: string, ownerUserId: string) {
-  const sql = getSqlClient()
-  if (!sql) {
+  const prisma = getPrisma()
+  if (!prisma) {
     return false
   }
 
-  await ensureCreatorVideosSchema(sql)
+  const video = await prisma.video.findFirst({
+    where: {
+      AND: [getVideoLookup(videoId), { ownerUserId }],
+    },
+  })
 
-  await sql`
-    DELETE FROM creator_video_states
-    WHERE video_id = ${videoId}
-      AND owner_user_id = ${ownerUserId}
-  `
+  if (!video) {
+    return false
+  }
 
-  const rows = (await sql`
-    DELETE FROM creator_videos
-    WHERE id = ${videoId}
-      AND owner_user_id = ${ownerUserId}
-    RETURNING id
-  `) as Array<{ id: string }>
+  await prisma.video.delete({
+    where: { id: video.id },
+  })
 
-  return rows.length > 0
+  return true
+}
+
+export async function getCreatorVideoStateFromDb(videoId: string, ownerUserId: string) {
+  const prisma = getPrisma()
+  if (!prisma) {
+    return null
+  }
+
+  const video = await prisma.video.findFirst({
+    where: {
+      AND: [getVideoLookup(videoId), { OR: [{ ownerUserId }, { ownerUserId: catalogOwnerUserId }] }],
+    },
+    include: {
+      editorState: true,
+    },
+  })
+
+  if (!video?.editorState) {
+    return null
+  }
+
+  return {
+    state: {
+      points: asCreatorPoints(video.editorState.points),
+      tripRoute: asTripRoute(video.editorState.tripRoute),
+      routeShapes: asRouteShapes(video.editorState.routeShapes),
+    },
+    updatedAt: video.editorState.updatedAt.toISOString(),
+  }
+}
+
+export async function saveCreatorVideoStateForVideoId(videoId: string, ownerUserId: string, state: CreatorVideoState) {
+  const prisma = getPrisma()
+  if (!prisma) {
+    return null
+  }
+
+  const video = await prisma.video.findFirst({
+    where: {
+      AND: [getVideoLookup(videoId), { OR: [{ ownerUserId }, { ownerUserId: catalogOwnerUserId }] }],
+    },
+  })
+
+  if (!video) {
+    return null
+  }
+
+  const savedState = await prisma.videoEditorState.upsert({
+    where: { videoId: video.id },
+    create: {
+      videoId: video.id,
+      ownerUserId,
+      points: toJsonInput(state.points),
+      tripRoute: toJsonInput(state.tripRoute),
+      routeShapes: toJsonInput(state.routeShapes),
+    },
+    update: {
+      ownerUserId,
+      points: toJsonInput(state.points),
+      tripRoute: toJsonInput(state.tripRoute),
+      routeShapes: toJsonInput(state.routeShapes),
+      updatedAt: new Date(),
+    },
+  })
+
+  return savedState.updatedAt.toISOString()
 }

@@ -32,6 +32,17 @@ interface PositionedRoutedLeg extends RoutedLeg {
   cumulativeDistances: number[]
 }
 
+interface CameraTarget {
+  center: RouteCoordinate
+  zoom: number
+}
+
+type ReachedKeyframeMarker = {
+  keyframe: Keyframe
+  pointNumber: number
+  markerKey: string
+}
+
 const mapStyleOptions = [
   { id: "satellite", label: "Satellite", style: "mapbox://styles/mapbox/satellite-streets-v12" },
   { id: "streets", label: "Streets", style: "mapbox://styles/mapbox/streets-v12" },
@@ -61,9 +72,20 @@ const dynamicCameraLookBehindSeconds = 4
 const dynamicCameraLookAheadSeconds = 14
 const dynamicCameraSampleCount = 8
 const dynamicCameraViewportPaddingRatio = 0.2
-const dynamicCameraMinZoom = 5
+const dynamicCameraMinZoom = 4.2
 const dynamicCameraMaxZoom = 16.5
 const defaultFollowZoom = 10
+const birdEyeMovementMinDistanceKm = 8
+const birdEyeMovementMaxDurationSeconds = 90
+const birdEyeMovementMinSpeedKmPerSecond = 0.12
+const birdEyeMovementPreframeMinSeconds = 3
+const birdEyeMovementPreframeMaxSeconds = 8
+const birdEyeMovementPaddingRatio = 0.28
+const birdEyeMovementZoomOutOffset = 1.35
+const cameraMovementZoomOutMinDistanceKm = 0.02
+const cameraMovementZoomOutScale = 1.15
+const cameraMovementMaxZoomOutOffset = 4.25
+const cameraMovementOutOfViewMinZoomOutOffset = 2.1
 const markerHighlightDurationMs = 1000
 const pointKeyframeMarkerColor = "#ea580c"
 const stopKeyframeMarkerColor = "#0f766e"
@@ -73,6 +95,13 @@ const keyframeMarkerMaxZoom = 13
 const keyframeMarkerMinSize = 15
 const keyframeMarkerMaxSize = 30
 const playbackJumpSnapThresholdSeconds = 1.25
+const keyframeMarkerViewportPaddingPx = Math.ceil(keyframeMarkerMaxSize / 2) + 6
+const travelerMarkerViewportPadding = {
+  top: 58,
+  right: 28,
+  bottom: 12,
+  left: 28,
+}
 
 function getKeyframeMarkerColor(pointType?: Keyframe["pointType"]) {
   return pointType === "stop" ? stopKeyframeMarkerColor : pointKeyframeMarkerColor
@@ -446,31 +475,169 @@ function buildCameraBounds(coordinates: RouteCoordinate[]) {
   return bounds
 }
 
+function getCameraPadding(map: mapboxgl.Map, paddingRatio: number) {
+  const container = map.getContainer()
+
+  return {
+    top: container.clientHeight * paddingRatio,
+    bottom: container.clientHeight * paddingRatio,
+    left: container.clientWidth * paddingRatio,
+    right: container.clientWidth * paddingRatio,
+  }
+}
+
+function getRouteCoordinateFromMapCenter(center: mapboxgl.LngLatLike | undefined, fallback: RouteCoordinate): RouteCoordinate {
+  if (!center) {
+    return fallback
+  }
+
+  if (Array.isArray(center) && typeof center[0] === "number" && typeof center[1] === "number") {
+    return [center[0], center[1]]
+  }
+
+  if (typeof center === "object" && "lng" in center && "lat" in center) {
+    return [Number(center.lng), Number(center.lat)]
+  }
+
+  if (typeof center === "object" && "lon" in center && "lat" in center) {
+    return [Number(center.lon), Number(center.lat)]
+  }
+
+  return fallback
+}
+
+function getCameraTargetForCoordinates(
+  map: mapboxgl.Map,
+  coordinates: RouteCoordinate[],
+  fallbackCenter: RouteCoordinate,
+  fallbackZoom: number,
+  paddingRatio: number,
+  maxZoom = dynamicCameraMaxZoom,
+): CameraTarget | null {
+  const bounds = buildCameraBounds(coordinates)
+  if (!bounds) {
+    return null
+  }
+
+  const boundsCenter = bounds.getCenter()
+  const fallbackBoundsCenter: RouteCoordinate = [boundsCenter.lng, boundsCenter.lat]
+  const camera = map.cameraForBounds(bounds, {
+    padding: getCameraPadding(map, paddingRatio),
+    maxZoom,
+  })
+
+  const center = getRouteCoordinateFromMapCenter(camera?.center, fallbackBoundsCenter)
+  const zoom = typeof camera?.zoom === "number" ? camera.zoom : fallbackZoom
+
+  return {
+    center: Number.isFinite(center[0]) && Number.isFinite(center[1]) ? center : fallbackCenter,
+    zoom: clampNumber(zoom, dynamicCameraMinZoom, dynamicCameraMaxZoom),
+  }
+}
+
+function isBirdEyeMovementLeg(leg: PositionedRoutedLeg) {
+  if (leg.isStationary || leg.coordinates.length < 2) {
+    return false
+  }
+
+  const durationSeconds = Math.max(leg.toTime - leg.fromTime, 1)
+  const speedKmPerSecond = leg.totalDistance / durationSeconds
+
+  return (
+    leg.totalDistance >= birdEyeMovementMinDistanceKm &&
+    durationSeconds <= birdEyeMovementMaxDurationSeconds &&
+    speedKmPerSecond >= birdEyeMovementMinSpeedKmPerSecond
+  )
+}
+
+function getBirdEyeMovementPreframeSeconds(leg: PositionedRoutedLeg) {
+  const durationSeconds = Math.max(leg.toTime - leg.fromTime, 1)
+
+  return clampNumber(
+    durationSeconds * 0.35,
+    birdEyeMovementPreframeMinSeconds,
+    birdEyeMovementPreframeMaxSeconds,
+  )
+}
+
+function getBirdEyeMovementLegForTime(legs: PositionedRoutedLeg[], currentTime: number) {
+  return legs.find((leg) => {
+    if (!isBirdEyeMovementLeg(leg)) {
+      return false
+    }
+
+    const preframeSeconds = getBirdEyeMovementPreframeSeconds(leg)
+    return currentTime >= leg.fromTime - preframeSeconds && currentTime <= leg.toTime
+  })
+}
+
+function getCameraMovementZoomOutOffset(distanceKm: number) {
+  if (!Number.isFinite(distanceKm) || distanceKm <= cameraMovementZoomOutMinDistanceKm) {
+    return 0
+  }
+
+  return clampNumber(
+    Math.log2(distanceKm - cameraMovementZoomOutMinDistanceKm + 1) * cameraMovementZoomOutScale,
+    0,
+    cameraMovementMaxZoomOutOffset,
+  )
+}
+
 function getDynamicCameraZoom(
   map: mapboxgl.Map,
   legs: PositionedRoutedLeg[],
   currentTime: number,
   fallbackZoom = defaultFollowZoom,
 ) {
-  const bounds = buildCameraBounds(getMotionWindowCoordinates(legs, currentTime))
-  if (!bounds) {
+  const target = getCameraTargetForCoordinates(
+    map,
+    getMotionWindowCoordinates(legs, currentTime),
+    getRouteCoordinateAtTime(legs, currentTime) ?? [map.getCenter().lng, map.getCenter().lat],
+    fallbackZoom,
+    dynamicCameraViewportPaddingRatio,
+  )
+
+  if (!target) {
     return clampNumber(fallbackZoom, dynamicCameraMinZoom, dynamicCameraMaxZoom)
   }
 
-  const container = map.getContainer()
-  const padding = {
-    top: container.clientHeight * dynamicCameraViewportPaddingRatio,
-    bottom: container.clientHeight * dynamicCameraViewportPaddingRatio,
-    left: container.clientWidth * dynamicCameraViewportPaddingRatio,
-    right: container.clientWidth * dynamicCameraViewportPaddingRatio,
-  }
-  const camera = map.cameraForBounds(bounds, {
-    padding,
-    maxZoom: dynamicCameraMaxZoom,
-  })
-  const zoom = typeof camera?.zoom === "number" ? camera.zoom : fallbackZoom
+  return target.zoom
+}
 
-  return clampNumber(zoom, dynamicCameraMinZoom, dynamicCameraMaxZoom)
+function getDynamicCameraTarget(
+  map: mapboxgl.Map,
+  legs: PositionedRoutedLeg[],
+  currentTime: number,
+  currentCoordinate: RouteCoordinate,
+  fallbackZoom = defaultFollowZoom,
+): CameraTarget {
+  const birdEyeLeg = getBirdEyeMovementLegForTime(legs, currentTime)
+  if (birdEyeLeg) {
+    const birdEyeTarget = getCameraTargetForCoordinates(
+      map,
+      birdEyeLeg.coordinates,
+      currentCoordinate,
+      fallbackZoom,
+      birdEyeMovementPaddingRatio,
+      dynamicCameraMaxZoom,
+    )
+
+    if (birdEyeTarget) {
+      return {
+        ...birdEyeTarget,
+        zoom: clampNumber(
+          birdEyeTarget.zoom - birdEyeMovementZoomOutOffset,
+          dynamicCameraMinZoom,
+          dynamicCameraMaxZoom,
+        ),
+      }
+    }
+  }
+
+  return {
+    center: currentCoordinate,
+    zoom: getDynamicCameraZoom(map, legs, currentTime, fallbackZoom),
+  }
 }
 
 function buildRouteFeature(coordinates: RouteCoordinate[]) {
@@ -515,6 +682,42 @@ function getFallbackKeyframe(currentTime = 0): Keyframe {
   }
 }
 
+function isPointWithinMapViewport(
+  map: mapboxgl.Map,
+  coordinate: RouteCoordinate,
+  padding:
+    | number
+    | {
+        top?: number
+        right?: number
+        bottom?: number
+        left?: number
+      } = 0,
+) {
+  if (!hasUsableMapSize(map)) {
+    return false
+  }
+
+  const container = map.getContainer()
+  const point = map.project(coordinate)
+  const resolvedPadding =
+    typeof padding === "number"
+      ? {
+          top: padding,
+          right: padding,
+          bottom: padding,
+          left: padding,
+        }
+      : padding
+
+  return (
+    point.x >= (resolvedPadding.left ?? 0) &&
+    point.x <= container.clientWidth - (resolvedPadding.right ?? 0) &&
+    point.y >= (resolvedPadding.top ?? 0) &&
+    point.y <= container.clientHeight - (resolvedPadding.bottom ?? 0)
+  )
+}
+
 function runWhenStyleReady(map: mapboxgl.Map, callback: () => void) {
   if (map.isStyleLoaded()) {
     callback()
@@ -546,9 +749,11 @@ export function MapboxTravelMap({
   const markerRef = useRef<mapboxgl.Marker | null>(null)
   const keyframeMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map())
   const keyframeMarkerElementsRef = useRef<Map<string, { element: HTMLButtonElement; time: number }>>(new Map())
+  const reachedKeyframeMarkersRef = useRef<ReachedKeyframeMarker[]>([])
   const visibleKeyframeMarkersSignatureRef = useRef("")
   const highlightedKeyframeKeysRef = useRef<Set<string>>(new Set())
   const keyframeHighlightTimeoutsRef = useRef<Map<string, number>>(new Map())
+  const viewportMarkerFrameRef = useRef<number | null>(null)
   const previousHighlightTimeRef = useRef<number | null>(null)
   const onLocationClickRef = useRef(onLocationClick)
   const keyframesRef = useRef<Keyframe[]>([])
@@ -560,6 +765,8 @@ export function MapboxTravelMap({
   const liveRouteCoordinateRef = useRef<RouteCoordinate>([0, 0])
   const targetRouteCoordinateRef = useRef<RouteCoordinate>([0, 0])
   const animatedRouteCoordinateRef = useRef<RouteCoordinate>([0, 0])
+  const targetCameraCenterRef = useRef<RouteCoordinate>([0, 0])
+  const animatedCameraCenterRef = useRef<RouteCoordinate>([0, 0])
   const targetCameraZoomRef = useRef(defaultFollowZoom)
   const animatedCameraZoomRef = useRef(defaultFollowZoom)
   const animationFrameRef = useRef<number | null>(null)
@@ -678,6 +885,8 @@ export function MapboxTravelMap({
     liveRouteCoordinateRef.current = liveRouteCoordinate
     targetRouteCoordinateRef.current = liveRouteCoordinate
     animatedRouteCoordinateRef.current = liveRouteCoordinate
+    targetCameraCenterRef.current = liveRouteCoordinate
+    animatedCameraCenterRef.current = liveRouteCoordinate
     isFollowingRef.current = true
     setIsFollowingTraveler(true)
 
@@ -690,6 +899,7 @@ export function MapboxTravelMap({
     marker.setLngLat(liveRouteCoordinate)
     runWhenStyleReady(map, () => {
       drawRoute(map)
+      syncTravelerMarkerVisibility(map)
     })
   }, [routeSignature])
 
@@ -731,6 +941,7 @@ export function MapboxTravelMap({
 
   const clearKeyframeMarkers = () => {
     Array.from(keyframeMarkersRef.current.keys()).forEach(removeKeyframeMarker)
+    reachedKeyframeMarkersRef.current = []
     visibleKeyframeMarkersSignatureRef.current = ""
   }
 
@@ -750,6 +961,32 @@ export function MapboxTravelMap({
     keyframeMarkerElementsRef.current.forEach(({ element }) => {
       updateKeyframeMarkerElementSize(element, zoom)
     })
+  }
+
+  const getVisibleReachedKeyframeMarkers = (map: mapboxgl.Map, reachedKeyframes: ReachedKeyframeMarker[]) => {
+    return reachedKeyframes.filter(({ keyframe }) =>
+      isPointWithinMapViewport(
+        map,
+        [keyframe.lng, keyframe.lat],
+        keyframeMarkerViewportPaddingPx,
+      ),
+    )
+  }
+
+  const syncTravelerMarkerVisibility = (map: mapboxgl.Map) => {
+    const marker = markerRef.current
+    if (!marker) {
+      return
+    }
+
+    const markerLngLat = marker.getLngLat()
+    const isVisible = isPointWithinMapViewport(
+      map,
+      [markerLngLat.lng, markerLngLat.lat],
+      travelerMarkerViewportPadding,
+    )
+
+    marker.getElement().style.display = isVisible ? "" : "none"
   }
 
   const createKeyframeMarker = (
@@ -776,6 +1013,7 @@ export function MapboxTravelMap({
       font-weight: bold;
       line-height: 1;
       box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      contain: layout paint style;
       transition: width 120ms ease, height 120ms ease, border-width 120ms ease, font-size 120ms ease, background-color 160ms ease, color 160ms ease;
     `
     updateKeyframeMarkerElementSize(el, map.getZoom())
@@ -794,9 +1032,12 @@ export function MapboxTravelMap({
 
   const syncReachedKeyframeMarkers = (
     map: mapboxgl.Map,
-    reachedKeyframes: Array<{ keyframe: Keyframe; pointNumber: number; markerKey: string }>,
+    reachedKeyframes: ReachedKeyframeMarker[],
   ) => {
-    const nextSignature = reachedKeyframes
+    reachedKeyframeMarkersRef.current = reachedKeyframes
+
+    const visibleReachedKeyframes = getVisibleReachedKeyframeMarkers(map, reachedKeyframes)
+    const nextSignature = visibleReachedKeyframes
       .map(({ keyframe, markerKey, pointNumber }) =>
         [
           markerKey,
@@ -813,14 +1054,14 @@ export function MapboxTravelMap({
       return
     }
 
-    const reachedMarkerKeys = new Set(reachedKeyframes.map(({ markerKey }) => markerKey))
+    const visibleMarkerKeys = new Set(visibleReachedKeyframes.map(({ markerKey }) => markerKey))
     Array.from(keyframeMarkersRef.current.keys()).forEach((markerKey) => {
-      if (!reachedMarkerKeys.has(markerKey)) {
+      if (!visibleMarkerKeys.has(markerKey)) {
         removeKeyframeMarker(markerKey)
       }
     })
 
-    reachedKeyframes.forEach(({ keyframe, markerKey, pointNumber }) => {
+    visibleReachedKeyframes.forEach(({ keyframe, markerKey, pointNumber }) => {
       const existingMarker = keyframeMarkersRef.current.get(markerKey)
       if (existingMarker) {
         existingMarker.setLngLat([keyframe.lng, keyframe.lat])
@@ -832,6 +1073,33 @@ export function MapboxTravelMap({
 
     updateKeyframeMarkerSizes(map)
     visibleKeyframeMarkersSignatureRef.current = nextSignature
+  }
+
+  const refreshViewportMarkers = (map: mapboxgl.Map) => {
+    if (!hasUsableMapSize(map)) {
+      return
+    }
+
+    syncReachedKeyframeMarkers(map, reachedKeyframeMarkersRef.current)
+    syncTravelerMarkerVisibility(map)
+  }
+
+  const scheduleViewportMarkerRefresh = (map: mapboxgl.Map) => {
+    if (viewportMarkerFrameRef.current !== null) {
+      return
+    }
+
+    viewportMarkerFrameRef.current = window.requestAnimationFrame(() => {
+      viewportMarkerFrameRef.current = null
+      refreshViewportMarkers(map)
+    })
+  }
+
+  const cancelViewportMarkerRefresh = () => {
+    if (viewportMarkerFrameRef.current !== null) {
+      window.cancelAnimationFrame(viewportMarkerFrameRef.current)
+      viewportMarkerFrameRef.current = null
+    }
   }
 
   const stopMarkerAnimation = () => {
@@ -966,25 +1234,59 @@ export function MapboxTravelMap({
     let snappedZoom = animatedCameraZoomRef.current
     if (isFollowingRef.current && canUpdateCamera(map)) {
       const currentZoom = animatedCameraZoomRef.current
+      const currentCenter = animatedCameraCenterRef.current
+      const targetCenter = targetCameraCenterRef.current
+      const distanceToTargetKm = haversineDistance(currentCenter, targetCenter)
       const targetZoom = targetCameraZoomRef.current
-      const zoomSmoothing = 1 - Math.exp(-deltaMs / 680)
-      const nextZoom = currentZoom + (targetZoom - currentZoom) * zoomSmoothing
-      snappedZoom = Math.abs(nextZoom - targetZoom) < 0.015 ? targetZoom : nextZoom
+      const isDestinationVisible = isPointWithinMapViewport(
+        map,
+        targetRouteCoordinateRef.current,
+        travelerMarkerViewportPadding,
+      )
+      const zoomOutOffset = Math.max(
+        getCameraMovementZoomOutOffset(distanceToTargetKm),
+        isDestinationVisible ? 0 : cameraMovementOutOfViewMinZoomOutOffset,
+      )
+      const movementAwareTargetZoom = clampNumber(
+        targetZoom - zoomOutOffset,
+        dynamicCameraMinZoom,
+        dynamicCameraMaxZoom,
+      )
+      const zoomSmoothing = 1 - Math.exp(
+        -deltaMs / (movementAwareTargetZoom < currentZoom ? 180 : isDestinationVisible ? 1500 : 620),
+      )
+      const nextZoom = currentZoom + (movementAwareTargetZoom - currentZoom) * zoomSmoothing
+      snappedZoom = Math.abs(nextZoom - movementAwareTargetZoom) < 0.015 ? movementAwareTargetZoom : nextZoom
       animatedCameraZoomRef.current = snappedZoom
+      const centerSmoothing = 1 - Math.exp(-deltaMs / 360)
+      const nextCenter: RouteCoordinate = [
+        currentCenter[0] + (targetCenter[0] - currentCenter[0]) * centerSmoothing,
+        currentCenter[1] + (targetCenter[1] - currentCenter[1]) * centerSmoothing,
+      ]
+      const snappedCenter =
+        coordinateDistance(nextCenter, targetCenter) < 0.00001
+          ? targetCenter
+          : nextCenter
+      animatedCameraCenterRef.current = snappedCenter
 
       try {
-        map.jumpTo({ center: snappedCoordinate, zoom: snappedZoom })
+        map.jumpTo({ center: snappedCenter, zoom: snappedZoom })
       } catch {
         // Skip this frame and let the next one retry once the map settles.
       }
     } else if (map) {
+      const center = map.getCenter()
+      animatedCameraCenterRef.current = [center.lng, center.lat]
       animatedCameraZoomRef.current = map.getZoom()
       snappedZoom = animatedCameraZoomRef.current
     }
 
+    syncTravelerMarkerVisibility(map)
+
     const hasReachedCoordinate = Math.abs(snappedTime - targetTime) < 0.08 || coordinateDistance(snappedCoordinate, target) < 0.00001
+    const hasReachedCenter = !isFollowingRef.current || coordinateDistance(animatedCameraCenterRef.current, targetCameraCenterRef.current) < 0.00001
     const hasReachedZoom = !isFollowingRef.current || Math.abs(snappedZoom - targetCameraZoomRef.current) < 0.015
-    if (hasReachedCoordinate && hasReachedZoom) {
+    if (hasReachedCoordinate && hasReachedCenter && hasReachedZoom) {
       stopMarkerAnimation()
       return
     }
@@ -1010,23 +1312,27 @@ export function MapboxTravelMap({
     animatedRouteCoordinateRef.current = nextCoordinate
     markerRef.current?.setLngLat(nextCoordinate)
     drawRoute(map)
+    syncTravelerMarkerVisibility(map)
 
     if (isFollowingRef.current && canUpdateCamera(map)) {
-      targetCameraZoomRef.current = getDynamicCameraZoom(
+      const cameraTarget = getDynamicCameraTarget(
         map,
         positionedLegsRef.current,
         nextTime,
+        nextCoordinate,
         map.getZoom(),
       )
-      animatedCameraZoomRef.current = targetCameraZoomRef.current
+      targetCameraCenterRef.current = cameraTarget.center
+      targetCameraZoomRef.current = cameraTarget.zoom
+      const currentCenter = map.getCenter()
+      animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
+      animatedCameraZoomRef.current = map.getZoom()
 
       try {
+        clearTrackingLoading()
         clearProgrammaticCameraMove()
-        beginProgrammaticCameraMove(map)
-        map.jumpTo({
-          center: nextCoordinate,
-          zoom: targetCameraZoomRef.current,
-        })
+        map.stop()
+        startMarkerAnimation()
         setMapError(null)
       } catch {
         clearProgrammaticCameraMove()
@@ -1156,6 +1462,8 @@ export function MapboxTravelMap({
     markerRef.current = marker
     animatedRouteCoordinateRef.current = liveRouteCoordinateRef.current
     targetRouteCoordinateRef.current = liveRouteCoordinateRef.current
+    targetCameraCenterRef.current = liveRouteCoordinateRef.current
+    animatedCameraCenterRef.current = liveRouteCoordinateRef.current
     targetCameraZoomRef.current = map.getZoom()
     animatedCameraZoomRef.current = map.getZoom()
     hasFocusedCurrentLocationRef.current = false
@@ -1175,8 +1483,13 @@ export function MapboxTravelMap({
       }
     }
 
+    const handleMapMove = () => {
+      scheduleViewportMarkerRefresh(map)
+    }
+
     const handleMapZoom = () => {
       updateKeyframeMarkerSizes(map)
+      scheduleViewportMarkerRefresh(map)
     }
 
     const handleInitialLoad = () => {
@@ -1190,6 +1503,7 @@ export function MapboxTravelMap({
       map.resize()
       drawRoute(map)
       updateKeyframeMarkerSizes(map)
+      refreshViewportMarkers(map)
       isFollowingRef.current = true
       setIsFollowingTraveler(true)
     }
@@ -1205,10 +1519,11 @@ export function MapboxTravelMap({
       drawRoute(map)
       updateKeyframeMarkerSizes(map)
       marker.setLngLat(animatedRouteCoordinateRef.current)
+      refreshViewportMarkers(map)
 
       try {
         beginProgrammaticCameraMove(map)
-        map.jumpTo({ center: animatedRouteCoordinateRef.current, zoom: animatedCameraZoomRef.current })
+        map.jumpTo({ center: animatedCameraCenterRef.current, zoom: animatedCameraZoomRef.current })
       } catch {
         clearProgrammaticCameraMove()
         // Let the next interaction retry after style work finishes.
@@ -1221,10 +1536,12 @@ export function MapboxTravelMap({
     map.on("rotatestart", handleUserCameraInterrupt)
     map.on("pitchstart", handleUserCameraInterrupt)
     map.on("zoomstart", handleUserCameraInterrupt)
+    map.on("move", handleMapMove)
     map.on("zoom", handleMapZoom)
 
     return () => {
       stopMarkerAnimation()
+      cancelViewportMarkerRefresh()
       clearTrackingLoading(false)
       clearProgrammaticCameraMove()
       clearKeyframeMarkers()
@@ -1234,6 +1551,7 @@ export function MapboxTravelMap({
       map.off("rotatestart", handleUserCameraInterrupt)
       map.off("pitchstart", handleUserCameraInterrupt)
       map.off("zoomstart", handleUserCameraInterrupt)
+      map.off("move", handleMapMove)
       map.off("zoom", handleMapZoom)
       map.remove()
       mapInstanceRef.current = null
@@ -1302,31 +1620,33 @@ export function MapboxTravelMap({
 
         map.resize()
         targetRouteCoordinateRef.current = liveRouteCoordinate
-        targetCameraZoomRef.current = getDynamicCameraZoom(
+        const cameraTarget = getDynamicCameraTarget(
           map,
           positionedLegs,
           nextPlaybackTime,
+          liveRouteCoordinate,
           map.getZoom(),
         )
+        targetCameraCenterRef.current = cameraTarget.center
+        targetCameraZoomRef.current = cameraTarget.zoom
 
         if (!hasFocusedCurrentLocationRef.current) {
           targetRouteTimeRef.current = nextPlaybackTime
           animatedRouteTimeRef.current = nextPlaybackTime
           routeRevealTimeRef.current = nextPlaybackTime
           animatedRouteCoordinateRef.current = liveRouteCoordinate
-          animatedCameraZoomRef.current = targetCameraZoomRef.current
+          const currentCenter = map.getCenter()
+          animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
+          animatedCameraZoomRef.current = map.getZoom()
           markerRef.current?.setLngLat(liveRouteCoordinate)
           drawRoute(map)
+          syncTravelerMarkerVisibility(map)
 
           if (isFollowingRef.current && canUpdateCamera(map)) {
             try {
-              beginProgrammaticCameraMove(map, 700)
-              map.easeTo({
-                center: liveRouteCoordinate,
-                zoom: targetCameraZoomRef.current,
-                duration: 700,
-                essential: true,
-              })
+              clearProgrammaticCameraMove()
+              map.stop()
+              startMarkerAnimation()
               setMapError(null)
             } catch {
               clearProgrammaticCameraMove()
@@ -1488,6 +1808,7 @@ export function MapboxTravelMap({
 
       if (isLoaded) {
         drawRoute(map)
+        refreshViewportMarkers(map)
       }
     })
 
@@ -1646,7 +1967,6 @@ export function MapboxTravelMap({
         return
       }
 
-      const travelerCenter = getCurrentTravelerCenter()
       const followTime = Number.isFinite(animatedRouteTimeRef.current)
         ? animatedRouteTimeRef.current
         : safeCurrentKeyframe.time
@@ -1655,25 +1975,23 @@ export function MapboxTravelMap({
       setIsFollowingTraveler(true)
       targetRouteTimeRef.current = safeCurrentKeyframe.time
       targetRouteCoordinateRef.current = liveRouteCoordinate
-      targetCameraZoomRef.current = getDynamicCameraZoom(
+      const cameraTarget = getDynamicCameraTarget(
         map,
         positionedLegsRef.current,
         followTime,
+        getCurrentTravelerCenter(),
         map.getZoom(),
       )
+      targetCameraCenterRef.current = cameraTarget.center
+      targetCameraZoomRef.current = cameraTarget.zoom
+      const currentCenter = map.getCenter()
+      animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
       animatedCameraZoomRef.current = map.getZoom()
 
       try {
         clearProgrammaticCameraMove()
         map.stop()
-        showTrackingLoadingDuringMove(map, 500)
-        beginProgrammaticCameraMove(map, 500)
-        map.easeTo({
-          center: travelerCenter,
-          zoom: targetCameraZoomRef.current,
-          duration: 500,
-          essential: true,
-        })
+        startMarkerAnimation()
         setMapError(null)
       } catch {
         clearTrackingLoading()
@@ -1714,10 +2032,10 @@ export function MapboxTravelMap({
   const googleMapsQuery = searchQuery.trim()
 
   return (
-    <div className={`relative ${className}`}>
+    <div className={`relative isolate overflow-hidden ${className}`}>
       <div
         ref={mapRef}
-        className={`h-full w-full overflow-hidden rounded-lg transition duration-200 ${isMapBusy ? "blur-sm" : ""}`}
+        className={`relative z-0 h-full w-full overflow-hidden rounded-none transition duration-200 lg:rounded-lg ${isMapBusy ? "blur-sm" : ""}`}
       />
 
       {mapError && (
@@ -1733,9 +2051,9 @@ export function MapboxTravelMap({
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-col gap-2 min-[1500px]:flex-row min-[1500px]:items-start min-[1500px]:justify-between">
-        <form onSubmit={searchLocations} className="pointer-events-auto w-[18rem] max-w-full 2xl:w-[22rem]">
-          <div className="flex items-center gap-2 rounded-xl bg-white/95 p-1 shadow-lg backdrop-blur-sm">
+      <div className="pointer-events-none absolute inset-x-2 top-2 z-30 flex flex-col gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 min-[1500px]:flex-row min-[1500px]:items-start min-[1500px]:justify-between">
+        <form onSubmit={searchLocations} className="pointer-events-auto w-full max-w-full sm:w-[18rem] 2xl:w-[22rem]">
+          <div className="flex items-center gap-1.5 rounded-lg bg-white/95 p-1 shadow-lg backdrop-blur-sm sm:gap-2 sm:rounded-xl">
             <Search className="ml-2 h-4 w-4 shrink-0 text-slate-500" />
             <Input
               value={searchQuery}
@@ -1749,7 +2067,7 @@ export function MapboxTravelMap({
               aria-activedescendant={
                 activeSearchIndex >= 0 ? `watch-map-search-suggestion-${activeSearchIndex}` : undefined
               }
-              className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              className="h-8 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:h-9"
             />
             {searchQuery && (
               <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={clearSearch}>
@@ -1760,7 +2078,7 @@ export function MapboxTravelMap({
               type="submit"
               size="sm"
               disabled={isSearching}
-              className="bg-slate-950 text-white hover:bg-slate-800 disabled:bg-slate-800"
+              className="h-8 bg-slate-950 px-3 text-white hover:bg-slate-800 disabled:bg-slate-800 sm:h-9"
             >
               {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : "Go"}
             </Button>
@@ -1770,7 +2088,7 @@ export function MapboxTravelMap({
             <div
               id="watch-map-search-suggestions"
               role="listbox"
-              className="mt-2 overflow-hidden rounded-xl bg-white/95 shadow-lg backdrop-blur-sm"
+              className="mt-1.5 overflow-hidden rounded-lg bg-white/95 shadow-lg backdrop-blur-sm sm:mt-2 sm:rounded-xl"
             >
               {isSearching && searchResults.length === 0 && (
                 <div className="flex items-center gap-2 px-3 py-2 text-sm text-slate-500">
@@ -1811,7 +2129,7 @@ export function MapboxTravelMap({
           )}
         </form>
 
-        <div className="pointer-events-auto flex max-w-full flex-wrap justify-end gap-1 self-end rounded-xl border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md">
+        <div className="pointer-events-auto flex max-w-full flex-wrap justify-end gap-1 self-end rounded-lg border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
           <Button
             type="button"
             size="icon"
@@ -1835,7 +2153,7 @@ export function MapboxTravelMap({
               type="button"
               size="sm"
               variant={mapStyle === option.id ? "default" : "ghost"}
-              className={`rounded-lg ${
+              className={`h-8 rounded-lg px-2 text-xs sm:h-9 sm:px-3 sm:text-sm ${
                 mapStyle === option.id
                   ? "bg-white text-slate-950 hover:bg-white/90"
                   : "text-white/85 hover:bg-white/15 hover:text-white"
