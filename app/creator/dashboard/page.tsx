@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { RedirectToSignIn, UserButton, useUser } from "@clerk/nextjs"
-import { BarChart3, Edit, Eye, Heart, MapPin, Plus, Settings, Trash2, TrendingUp, UploadCloud, Youtube } from "lucide-react"
+import { BarChart3, CheckCircle2, Edit, Eye, MapPin, Plus, Search, Settings, Trash2, TrendingUp, UploadCloud, Youtube } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -37,6 +37,7 @@ function CreatorDashboardContent() {
   const [cloudVideoIds, setCloudVideoIds] = useState<Set<string>>(() => new Set())
   const [cloudConfigured, setCloudConfigured] = useState<boolean | null>(null)
   const [syncMessage, setSyncMessage] = useState("")
+  const [activeTab, setActiveTab] = useState("videos")
 
   useEffect(() => {
     const localVideos = getAllCreatorVideosClient()
@@ -138,285 +139,362 @@ function CreatorDashboardContent() {
   const stats = useMemo(() => {
     const totalViews = allCreatorVideos.reduce((sum, video) => sum + video.views, 0)
     const totalMapViews = allCreatorVideos.reduce((sum, video) => sum + video.mapViews, 0)
-    const totalLikes = allCreatorVideos.reduce((sum, video) => sum + video.likes, 0)
+    const publishedVideos = allCreatorVideos.filter((video) => video.status === "published").length
 
     return {
       totalVideos: allCreatorVideos.length,
+      publishedVideos,
       totalViews,
       totalMapViews,
-      totalLikes,
-      avgEngagement: totalViews === 0 ? 0 : Math.round((totalLikes / totalViews) * 1000) / 10,
+      avgEngagement: totalViews === 0 ? 0 : Math.round((totalMapViews / totalViews) * 1000) / 10,
     }
   }, [allCreatorVideos])
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <TravelMapLogo />
-            </div>
+    <div className="min-h-screen bg-slate-100 text-slate-950">
+      <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur">
+        <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
+          <TravelMapLogo />
 
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon" aria-label="Open creator settings">
-                <Settings className="h-5 w-5" />
-              </Button>
-              <UserButton />
-            </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Open creator settings"
+              className="h-9 w-9 rounded-lg"
+              onClick={() => setActiveTab("settings")}
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+            <UserButton />
           </div>
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-8">
-        <div className="mb-8">
-          <h1 className="mb-2 text-3xl font-bold text-gray-900">Welcome back, {user?.firstName || "Creator"}!</h1>
-          <p className="text-gray-600">Manage your travel videos, map keyframes, and creator profile from one place.</p>
+      <main className="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+              Creator workspace
+            </div>
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
+                Welcome back, {user?.firstName || "Creator"}
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm text-slate-600 sm:text-base">
+                Manage travel videos, map keyframes, publishing, and route performance.
+              </p>
+            </div>
+          </div>
+
+          <Link href="/creator/video/new">
+            <Button className="h-10 rounded-lg bg-slate-950 px-4 text-white hover:bg-slate-800">
+              <Plus className="mr-2 h-4 w-4" />
+              Paste YouTube URL
+            </Button>
+          </Link>
         </div>
 
-        <div className="mb-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-5">
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
+        <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Total Videos</p>
-                  <p className="text-2xl font-bold">{stats.totalVideos}</p>
+                  <p className="text-xs font-semibold uppercase text-slate-500">Videos</p>
+                  <p className="mt-2 text-3xl font-semibold tracking-tight">{stats.totalVideos}</p>
                 </div>
-                <Youtube className="h-8 w-8 text-red-500" />
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-50 text-red-600">
+                  <Youtube className="h-5 w-5" />
+                </span>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
+          <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Total Views</p>
-                  <p className="text-2xl font-bold">{formatCompactNumber(stats.totalViews)}</p>
+                  <p className="text-xs font-semibold uppercase text-slate-500">Published</p>
+                  <p className="mt-2 text-3xl font-semibold tracking-tight">{stats.publishedVideos}</p>
                 </div>
-                <Eye className="h-8 w-8 text-blue-500" />
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                  <CheckCircle2 className="h-5 w-5" />
+                </span>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
+          <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Map Views</p>
-                  <p className="text-2xl font-bold">{formatCompactNumber(stats.totalMapViews)}</p>
+                  <p className="text-xs font-semibold uppercase text-slate-500">Views</p>
+                  <p className="mt-2 text-3xl font-semibold tracking-tight">{formatCompactNumber(stats.totalViews)}</p>
                 </div>
-                <MapPin className="h-8 w-8 text-green-500" />
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+                  <Eye className="h-5 w-5" />
+                </span>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
+          <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Likes</p>
-                  <p className="text-2xl font-bold">{formatCompactNumber(stats.totalLikes)}</p>
+                  <p className="text-xs font-semibold uppercase text-slate-500">Map Views</p>
+                  <p className="mt-2 text-3xl font-semibold tracking-tight">{formatCompactNumber(stats.totalMapViews)}</p>
                 </div>
-                <Heart className="h-8 w-8 text-pink-500" />
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+                  <MapPin className="h-5 w-5" />
+                </span>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
+          <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Engagement</p>
-                  <p className="text-2xl font-bold text-green-600">{stats.avgEngagement}%</p>
+                  <p className="text-xs font-semibold uppercase text-slate-500">Engagement</p>
+                  <p className="mt-2 text-3xl font-semibold tracking-tight text-emerald-700">{stats.avgEngagement}%</p>
                 </div>
-                <TrendingUp className="h-8 w-8 text-green-500" />
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+                  <TrendingUp className="h-5 w-5" />
+                </span>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        <Tabs defaultValue="videos" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="videos">My Videos</TabsTrigger>
-            <TabsTrigger value="analytics">Analytics</TabsTrigger>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
+          <TabsList className="grid h-auto w-full grid-cols-3 rounded-lg border border-slate-200 bg-white p-1 shadow-sm sm:inline-grid sm:w-auto">
+            <TabsTrigger value="videos" className="h-9 rounded-md px-2 text-sm data-[state=active]:bg-slate-950 data-[state=active]:text-white sm:px-4">
+              My Videos
+            </TabsTrigger>
+            <TabsTrigger value="analytics" className="h-9 rounded-md px-2 text-sm data-[state=active]:bg-slate-950 data-[state=active]:text-white sm:px-4">
+              Analytics
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="h-9 rounded-md px-2 text-sm data-[state=active]:bg-slate-950 data-[state=active]:text-white sm:px-4">
+              Settings
+            </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="videos" className="space-y-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">My Videos</h2>
-                <p className="text-gray-600">Manage your travel videos and interactive maps</p>
+          <TabsContent value="videos" className="space-y-5">
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold tracking-tight text-slate-950">Video Library</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Showing {creatorVideos.length} of {allCreatorVideos.length} videos.
+                  </p>
+                </div>
+                <div className="relative w-full lg:max-w-sm">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    placeholder="Search videos"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="h-10 rounded-lg border-slate-200 bg-slate-50 pl-9 shadow-none focus-visible:bg-white"
+                  />
+                </div>
               </div>
-              <Link href="/creator/video/new">
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Paste YouTube URL
-                </Button>
-              </Link>
             </div>
 
             {(syncMessage || cloudConfigured === false) && (
-              <div className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+              <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
                 {syncMessage || "Cloud database is not configured yet. Add DATABASE_URL in Vercel to sync creator videos."}
               </div>
             )}
 
-            <div className="flex items-center gap-4">
-              <div className="relative flex-1 max-w-md">
-                <Input
-                  placeholder="Search your videos..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-4">
+            <div>
               {creatorVideos.length === 0 ? (
-                <Card>
+                <Card className="border-slate-200 bg-white shadow-sm">
                   <CardContent className="p-10 text-center">
-                    <p className="text-base font-medium text-gray-900">No creator videos yet</p>
-                    <p className="mt-2 text-sm text-gray-500">
+                    <p className="text-base font-medium text-slate-950">No creator videos yet</p>
+                    <p className="mt-2 text-sm text-slate-500">
                       Paste a YouTube URL to create your first mapped video.
                     </p>
+                    <Link href="/creator/video/new" className="mt-5 inline-flex">
+                      <Button className="rounded-lg bg-slate-950 text-white hover:bg-slate-800">
+                        <Plus className="mr-2 h-4 w-4" />
+                        Paste YouTube URL
+                      </Button>
+                    </Link>
                   </CardContent>
                 </Card>
               ) : (
-                creatorVideos.map((video) => {
-                  const isCloudVideo = cloudVideoIds.has(video.id)
-                  const canDeleteVideo = isLocalCreatorVideoId(video.id) || isCloudVideo
-                  const isSyncingThisVideo = syncingVideoId === video.id
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {creatorVideos.map((video) => {
+                    const isCloudVideo = cloudVideoIds.has(video.id)
+                    const isLiveVideo = video.status === "published"
+                    const canDeleteVideo = isLocalCreatorVideoId(video.id) || isCloudVideo
+                    const isSyncingThisVideo = syncingVideoId === video.id
+                    const keyframeCount = loadCreatorPoints(video.id, video.keyframes).length
 
-                  return (
-                    <Card key={video.id} className="overflow-hidden">
-                      <div className="flex flex-col sm:flex-row">
-                        <div className="relative h-40 w-full flex-shrink-0 bg-gray-100 sm:h-32 sm:w-48">
+                    return (
+                      <Card
+                        key={video.id}
+                        className="group flex h-full flex-col overflow-hidden border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md"
+                      >
+                        <div className="relative aspect-video w-full overflow-hidden bg-slate-200">
                           <Image
                             src={video.thumbnail || "/placeholder.svg"}
                             alt={video.title}
                             fill
-                            sizes="(min-width: 640px) 12rem, 100vw"
-                            className="object-cover"
+                            sizes="(min-width: 1024px) 31vw, (min-width: 768px) 48vw, 100vw"
+                            className="scale-110 object-cover object-center transition duration-300 group-hover:scale-[1.14]"
                           />
+                          {isLiveVideo && (
+                            <span className="absolute left-3 top-3 inline-flex h-7 items-center gap-1 rounded-md border border-emerald-200 bg-white/95 px-2 text-xs font-medium text-emerald-700 shadow-sm">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              Published
+                            </span>
+                          )}
+                          <div className="absolute right-3 top-3 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
+                            {formatDuration(video.durationSeconds)}
+                          </div>
                         </div>
 
-                        <CardContent className="flex-1 p-6">
-                          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                            <div className="flex-1">
-                              <div className="mb-2 flex items-center gap-2">
-                                <h3 className="text-lg font-semibold">{video.title}</h3>
-                              </div>
-                              <p className="mb-2 text-sm text-gray-600">YouTube ID: {video.youtubeId}</p>
-                              <p className="text-sm text-gray-500">
-                                Created: {new Date(video.createdAt).toLocaleDateString()} - {formatDuration(video.durationSeconds)}
-                              </p>
+                        <CardContent className="flex flex-1 flex-col p-4">
+                          <div className="min-w-0">
+                            <h3 className="line-clamp-2 min-h-11 text-base font-semibold leading-snug text-slate-950">
+                              {video.title}
+                            </h3>
+                            <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                              <span className="truncate rounded-md border border-slate-200 bg-slate-50 px-2 py-1 font-medium text-slate-600">
+                                {video.youtubeId}
+                              </span>
+                              <span className="flex-shrink-0">{new Date(video.createdAt).toLocaleDateString()}</span>
                             </div>
+                          </div>
 
-                            <div className="flex flex-wrap items-center gap-2">
+                          <div className="mt-4 grid grid-cols-3 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm">
+                            <div>
+                              <p className="text-[11px] font-medium text-slate-500">Keyframes</p>
+                              <p className="mt-0.5 font-semibold text-slate-950">{keyframeCount}</p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-medium text-slate-500">Views</p>
+                              <p className="mt-0.5 font-semibold text-slate-950">{formatCompactNumber(video.views)}</p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-medium text-slate-500">Map Views</p>
+                              <p className="mt-0.5 font-semibold text-slate-950">{formatCompactNumber(video.mapViews)}</p>
+                            </div>
+                          </div>
+
+                          <div className="mt-auto flex items-center gap-2 pt-4">
+                            {!isLiveVideo && (
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() => handleUploadVideo(video)}
                                 disabled={Boolean(syncingVideoId) && !isSyncingThisVideo}
+                                className="min-w-0 flex-1 rounded-lg border-slate-200 bg-white px-3"
                               >
-                                <UploadCloud className="mr-1 h-4 w-4" />
-                                {isSyncingThisVideo ? "Uploading..." : isCloudVideo ? "Upload Changes" : "Upload Edited Video"}
+                                <UploadCloud className="mr-1 h-4 w-4 flex-shrink-0" />
+                                <span className="truncate">{isSyncingThisVideo ? "Uploading..." : "Upload"}</span>
                               </Button>
-                              <Link href={`/creator/video/${video.id}/edit`}>
-                                <Button variant="outline" size="sm">
-                                  <Edit className="mr-1 h-4 w-4" />
-                                  Edit
-                                </Button>
-                              </Link>
-                              <Link href={`/watch/${video.id}`}>
-                                <Button variant="outline" size="sm">
-                                  <Eye className="mr-1 h-4 w-4" />
-                                  Preview
-                                </Button>
-                              </Link>
+                            )}
+                            <Link href={`/creator/video/${video.id}/edit`} className="inline-flex">
                               <Button
                                 variant="outline"
-                                size="sm"
-                                className="text-red-600 hover:text-red-700"
-                                onClick={() => handleDeleteVideo(video.id, video.title)}
-                                disabled={!canDeleteVideo || deletingVideoId === video.id}
-                                aria-label={`Delete ${video.title}`}
-                                title={canDeleteVideo ? "Delete video" : "Upload this video before deleting its cloud copy"}
+                                size="icon"
+                                className="h-9 w-9 rounded-lg border-slate-200 bg-white"
+                                aria-label={`Edit ${video.title}`}
+                                title="Edit"
                               >
-                                <Trash2 className="h-4 w-4" />
+                                <Edit className="h-4 w-4" />
                               </Button>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-                            <div>
-                              <p className="text-gray-500">Keyframes</p>
-                              <p className="font-medium">{loadCreatorPoints(video.id, video.keyframes).length}</p>
-                            </div>
-                            <div>
-                              <p className="text-gray-500">Views</p>
-                              <p className="font-medium">{formatCompactNumber(video.views)}</p>
-                            </div>
-                            <div>
-                              <p className="text-gray-500">Map Views</p>
-                              <p className="font-medium">{formatCompactNumber(video.mapViews)}</p>
-                            </div>
-                            <div>
-                              <p className="text-gray-500">Likes</p>
-                              <p className="font-medium">{formatCompactNumber(video.likes)}</p>
-                            </div>
+                            </Link>
+                            <Link href={`/watch/${video.id}`} className="inline-flex">
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="h-9 w-9 rounded-lg border-slate-200 bg-white"
+                                aria-label={`Preview ${video.title}`}
+                                title="Preview"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-9 w-9 rounded-lg border-slate-200 bg-white text-red-600 hover:text-red-700"
+                              onClick={() => handleDeleteVideo(video.id, video.title)}
+                              disabled={!canDeleteVideo || deletingVideoId === video.id}
+                              aria-label={`Delete ${video.title}`}
+                              title={canDeleteVideo ? "Delete video" : "Upload this video before deleting its cloud copy"}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </div>
                         </CardContent>
-                      </div>
-                    </Card>
-                  )
-                })
+                      </Card>
+                    )
+                  })}
+                </div>
               )}
             </div>
           </TabsContent>
 
-          <TabsContent value="analytics" className="space-y-6">
-            <div>
-              <h2 className="mb-2 text-2xl font-bold text-gray-900">Analytics</h2>
-              <p className="text-gray-600">Track video performance and map engagement with route-aware signals.</p>
+          <TabsContent value="analytics" className="space-y-5">
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="text-xl font-semibold tracking-tight text-slate-950">Analytics</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Track video performance and map engagement with route-aware signals.
+              </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Views Over Time</CardTitle>
-                  <CardDescription>Video views compared with map interactions</CardDescription>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <Card className="border-slate-200 bg-white shadow-sm">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-semibold text-slate-950">Views Over Time</CardTitle>
+                  <CardDescription className="text-slate-500">
+                    Video views compared with map interactions
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex h-64 items-center justify-center rounded-lg bg-gray-100">
-                    <BarChart3 className="h-12 w-12 text-gray-400" />
-                    <span className="ml-2 text-gray-500">Connect real analytics next</span>
+                  <div className="flex h-64 flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-center">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm">
+                      <BarChart3 className="h-6 w-6" />
+                    </span>
+                    <p className="mt-3 text-sm font-medium text-slate-700">Analytics events are ready for wiring.</p>
+                    <p className="mt-1 max-w-xs text-xs text-slate-500">
+                      Once view events are recorded, this panel can chart traffic across videos and maps.
+                    </p>
                   </div>
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Top Performing Videos</CardTitle>
-                  <CardDescription>Based on map engagement</CardDescription>
+              <Card className="border-slate-200 bg-white shadow-sm">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-semibold text-slate-950">Top Performing Videos</CardTitle>
+                  <CardDescription className="text-slate-500">Ranked by map engagement</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {allCreatorVideos.length === 0 ? (
-                    <p className="text-sm text-gray-500">Create a video first to see engagement rankings here.</p>
+                    <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+                      Create a video first to see engagement rankings here.
+                    </div>
                   ) : (
-                    <div className="space-y-4">
+                    <div className="space-y-2">
                       {[...allCreatorVideos]
                         .sort((a, b) => b.mapViews - a.mapViews)
                         .map((video, index) => (
-                          <div key={video.id} className="flex items-center gap-3">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600">
+                          <div
+                            key={video.id}
+                            className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3"
+                          >
+                            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-white text-sm font-semibold text-slate-700 shadow-sm">
                               {index + 1}
                             </div>
-                            <div className="flex-1">
-                              <p className="text-sm font-medium">{video.title}</p>
-                              <p className="text-xs text-gray-500">{formatCompactNumber(video.mapViews)} map views</p>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-slate-950">{video.title}</p>
+                              <p className="text-xs text-slate-500">{formatCompactNumber(video.mapViews)} map views</p>
                             </div>
                           </div>
                         ))}
@@ -427,40 +505,63 @@ function CreatorDashboardContent() {
             </div>
           </TabsContent>
 
-          <TabsContent value="settings" className="space-y-6">
-            <div>
-              <h2 className="mb-2 text-2xl font-bold text-gray-900">Creator Settings</h2>
-              <p className="text-gray-600">Manage your creator profile and the information shown with your videos.</p>
+          <TabsContent value="settings" className="space-y-5">
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="text-xl font-semibold tracking-tight text-slate-950">Creator Settings</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Manage the creator profile details shown with your videos.
+              </p>
             </div>
 
-            <div className="grid gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Channel Information</CardTitle>
-                  <CardDescription>Update your verified channel details</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="channelName">Channel Name</Label>
-                      <Input id="channelName" value={creatorProfile.name} readOnly />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="channelUrl">Channel URL</Label>
-                      <Input id="channelUrl" value={creatorProfile.channelUrl} readOnly />
-                    </div>
+            <Card className="border-slate-200 bg-white shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold text-slate-950">Channel Information</CardTitle>
+                <CardDescription className="text-slate-500">Verified channel details</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="channelName" className="text-sm font-medium text-slate-700">
+                      Channel Name
+                    </Label>
+                    <Input
+                      id="channelName"
+                      value={creatorProfile.name}
+                      readOnly
+                      className="h-10 rounded-lg border-slate-200 bg-slate-50 shadow-none"
+                    />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="bio">Channel Description</Label>
-                    <Input id="bio" value={creatorProfile.description} readOnly />
+                    <Label htmlFor="channelUrl" className="text-sm font-medium text-slate-700">
+                      Channel URL
+                    </Label>
+                    <Input
+                      id="channelUrl"
+                      value={creatorProfile.channelUrl}
+                      readOnly
+                      className="h-10 rounded-lg border-slate-200 bg-slate-50 shadow-none"
+                    />
                   </div>
-                  <Button>Update Profile</Button>
-                </CardContent>
-              </Card>
-            </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="bio" className="text-sm font-medium text-slate-700">
+                    Channel Description
+                  </Label>
+                  <Input
+                    id="bio"
+                    value={creatorProfile.description}
+                    readOnly
+                    className="h-10 rounded-lg border-slate-200 bg-slate-50 shadow-none"
+                  />
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  Creator profile edits are currently managed from the approved creator profile.
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
-      </div>
+      </main>
     </div>
   )
 }

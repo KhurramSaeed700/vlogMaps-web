@@ -1,57 +1,127 @@
 # TravelMap
 
-*Automatically synced with your [v0.app](https://v0.app) deployments*
+TravelMap is a travel-video web app where viewers watch YouTube trips alongside a synchronized interactive map. Creators can add timestamped route points, stops, trip routes, and route shapes so a journey can be replayed geographically while the video plays.
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/khurrams-projects/v0-equinemates)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/projects/odkDz9sF7ji)
+## Features
 
-## Overview
+- YouTube video playback with synchronized map movement.
+- Public watch pages for published travel videos.
+- Creator dashboard for managing videos, previews, and publishing status.
+- Creator editor for capturing timestamp points and stops from the video timeline.
+- Mapbox-powered location picking, route previews, and viewer maps.
+- Clerk authentication and creator access checks.
+- Neon Postgres persistence through Prisma for videos, keyframes, users, and editor state.
+- Browser localStorage fallback for creator drafts when cloud persistence is unavailable.
 
-TravelMap is a travel-video experience where viewers watch trips alongside synchronized map keyframes, and creators apply to add interactive journey data to their own videos.
+## Tech Stack
 
-This repository will stay in sync with your deployed chats on [v0.app](https://v0.app).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.app](https://v0.app).
+- Next.js App Router
+- React
+- TypeScript
+- Tailwind CSS
+- Clerk
+- Mapbox
+- YouTube Data API
+- Neon Postgres
+- Prisma Client with the Neon adapter
 
-## Deployment
+## Getting Started
 
-Your project is live at:
-
-**[https://vercel.com/khurrams-projects/v0-equinemates](https://vercel.com/khurrams-projects/v0-equinemates)**
-
-## Build your app
-
-Continue building your app on:
-
-**[https://v0.app/chat/projects/odkDz9sF7ji](https://v0.app/chat/projects/odkDz9sF7ji)**
-
-## How It Works
-
-1. Create and modify your project using [v0.app](https://v0.app)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
-
-## Creator Cloud Persistence
-
-Creator video records and map edits are saved locally first and, when configured, mirrored to Neon Postgres through `DATABASE_URL`.
-
-Add this to `.env.local` with your Neon pooled connection string:
+Install dependencies:
 
 ```bash
-DATABASE_URL="postgresql://..."
+pnpm install
 ```
 
-The app creates `creator_videos` and `creator_video_states` automatically on first load/save. Without `DATABASE_URL`, the creator tools keep using browser localStorage as a fallback.
+Create `.env.local` from `.env.example` and fill in the required values:
+
+```bash
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
+CLERK_SECRET_KEY=
+
+NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN=
+MAPBOX_ACCESS_TOKEN=
+
+YOUTUBE_DATA_API_KEY=
+
+DATABASE_URL=
+```
+
+Generate Prisma Client after installing dependencies or changing the Prisma schema:
+
+```bash
+pnpm db:generate
+```
+
+Start the development server:
+
+```bash
+pnpm dev
+```
+
+The app runs at `http://localhost:3000`.
+
+## Database
+
+The production data model is defined in `prisma/schema.prisma`.
+
+Important tables:
+
+- `users`: app users and Clerk identity mapping.
+- `creator_profiles`: creator channel metadata and verification state.
+- `videos`: app-facing video records, YouTube IDs, status, metrics, tags, and metadata.
+- `video_keyframes`: timestamped map points and stops for each video.
+- `video_editor_states`: editor-only route state such as points JSON, trip route, and route shapes.
+- `video_views`: video and map view tracking.
+- `user_favorites`: saved videos.
+- `creator_applications`: creator application submissions.
+
+Creator video records are stored in `videos`, timestamp points are stored in `video_keyframes`, and editor state is stored in `video_editor_states`. The actual video files are not stored by TravelMap; YouTube hosts and serves the video content.
+
+## Prisma
+
+Useful commands:
+
+```bash
+pnpm db:generate
+pnpm db:pull
+```
+
+Use `db:generate` after schema changes. Use `db:pull` only when intentionally introspecting the current Neon database schema into Prisma.
+
+## Creator Workflow
+
+1. A creator adds or opens a YouTube video in the creator workspace.
+2. The editor loads the video and map tools.
+3. The creator captures timestamped map points and stops while watching.
+4. Draft state is saved locally first and synced to Neon when cloud persistence is configured.
+5. Published videos appear in the public catalog and can be viewed on `/watch/[id]`.
 
 ## Project Structure
 
-The App Router route files stay in `app/`, while reusable UI is grouped by feature under `components/`:
-
-- `components/home`: entry page and video catalog experience.
-- `components/viewer`: watch page and split video/map viewer.
-- `components/creator`: creator workspace, access guard, and route editor.
-- `components/maps`: Mapbox map surfaces and previews.
-- `components/media`: shared media player primitives.
+- `app/`: Next.js App Router pages and API routes.
+- `components/home`: public catalog and home page UI.
+- `components/viewer`: split video/map watch experience.
+- `components/creator`: creator dashboard, workspace, access guard, and route editor.
+- `components/maps`: Mapbox surfaces, previews, and location tools.
+- `components/media`: shared YouTube player components.
 - `components/app-shell`: shared layout and brand chrome.
-- `components/auth`: Clerk/auth loading and wrappers.
-- `components/ui`: reusable design-system primitives only.
+- `components/auth`: Clerk wrappers and auth loading states.
+- `components/ui`: reusable UI primitives.
+- `lib/`: data access, YouTube helpers, creator state helpers, map utilities, and Prisma setup.
+- `prisma/`: Prisma schema and migrations.
+- `scripts/`: database setup and seed SQL helpers.
+
+## Verification
+
+Run the TypeScript check:
+
+```bash
+pnpm exec tsc --noEmit
+```
+
+Build for production:
+
+```bash
+pnpm build
+```

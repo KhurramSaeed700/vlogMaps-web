@@ -1,0 +1,165 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clerkUserId         String?              @unique @map("clerk_user_id")
+  email               String               @unique @db.VarChar(255)
+  firstName           String               @map("first_name") @db.VarChar(100)
+  lastName            String               @map("last_name") @db.VarChar(100)
+  userType            String?              @default("viewer") @map("user_type") @db.VarChar(20)
+  isVerified          Boolean?             @default(false) @map("is_verified")
+  createdAt           DateTime?            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime?            @default(now()) @map("updated_at") @db.Timestamptz(6)
+  creatorApplications CreatorApplication[] @relation("CreatorApplicationUser")
+  reviewedApplications CreatorApplication[] @relation("CreatorApplicationReviewer")
+  creatorProfiles     CreatorProfile[]
+  favorites           UserFavorite[]
+  videoViews          VideoView[]
+  videos              Video[]
+
+  @@map("users")
+}
+
+model CreatorProfile {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                  String?   @map("user_id") @db.Uuid
+  channelName             String    @map("channel_name") @db.VarChar(255)
+  channelUrl              String    @map("channel_url") @db.VarChar(500)
+  subscriberCount         Int?      @map("subscriber_count")
+  monthlyViews            Int?      @map("monthly_views")
+  travelContentPercentage Int?      @map("travel_content_percentage")
+  bio                     String?
+  verificationStatus      String?   @default("pending") @map("verification_status") @db.VarChar(20)
+  verificationDocuments   Json?     @map("verification_documents")
+  createdAt               DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime? @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user                    User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_creator_profiles_user_id")
+  @@map("creator_profiles")
+}
+
+model Video {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creatorId         String?           @map("creator_id") @db.Uuid
+  ownerUserId       String?           @map("owner_user_id")
+  appId             String?           @unique @map("app_id")
+  title             String            @db.VarChar(500)
+  youtubeId         String            @map("youtube_id") @db.VarChar(50)
+  description       String?
+  duration          Int?
+  thumbnailUrl      String?           @map("thumbnail_url") @db.VarChar(500)
+  creatorName       String?           @map("creator_name")
+  creatorChannelUrl String?           @map("creator_channel_url")
+  status            String?           @default("draft") @db.VarChar(20)
+  viewCount         Int?              @default(0) @map("view_count")
+  mapViewCount      Int?              @default(0) @map("map_view_count")
+  likeCount         Int?              @default(0) @map("like_count")
+  locations         Json              @default("[]")
+  tags              Json              @default("[]")
+  createdAt         DateTime?         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime?         @default(now()) @map("updated_at") @db.Timestamptz(6)
+  creator           User?             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  editorState       VideoEditorState?
+  favorites         UserFavorite[]
+  keyframes         VideoKeyframe[]
+  views             VideoView[]
+
+  @@index([creatorId], map: "idx_videos_creator_id")
+  @@index([ownerUserId], map: "idx_videos_owner_user_id")
+  @@index([status], map: "idx_videos_status")
+  @@map("videos")
+}
+
+model VideoKeyframe {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  videoId          String?   @map("video_id") @db.Uuid
+  timestampSeconds Int       @map("timestamp_seconds")
+  stopEndTime      Int?      @map("stop_end_time")
+  latitude         Decimal   @db.Decimal(10, 8)
+  longitude        Decimal   @db.Decimal(11, 8)
+  locationName     String?   @map("location_name") @db.VarChar(255)
+  description      String?
+  pointType        String?   @default("point") @map("point_type") @db.VarChar(20)
+  createdAt        DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime? @default(now()) @map("updated_at") @db.Timestamptz(6)
+  video            Video?    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([timestampSeconds], map: "idx_video_keyframes_timestamp")
+  @@index([videoId], map: "idx_video_keyframes_video_id")
+  @@map("video_keyframes")
+}
+
+model VideoEditorState {
+  videoId     String    @id @map("video_id") @db.Uuid
+  ownerUserId String    @map("owner_user_id")
+  points      Json      @default("[]")
+  tripRoute   Json      @default("{\"start\":null,\"end\":null}") @map("trip_route")
+  routeShapes Json      @default("{\"trip\":[],\"timestampLegs\":{}}") @map("route_shapes")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  video       Video     @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId], map: "idx_video_editor_states_owner_user_id")
+  @@map("video_editor_states")
+}
+
+model UserFavorite {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?   @map("user_id") @db.Uuid
+  videoId   String?   @map("video_id") @db.Uuid
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video?    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, videoId])
+  @@index([userId], map: "idx_user_favorites_user_id")
+  @@map("user_favorites")
+}
+
+model VideoView {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String?   @map("user_id") @db.Uuid
+  videoId       String?   @map("video_id") @db.Uuid
+  viewType      String?   @default("video") @map("view_type") @db.VarChar(20)
+  watchDuration Int?      @map("watch_duration")
+  createdAt     DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  video         Video?    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt], map: "idx_video_views_created_at")
+  @@index([videoId], map: "idx_video_views_video_id")
+  @@map("video_views")
+}
+
+model CreatorApplication {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                  String?   @map("user_id") @db.Uuid
+  fullName                String    @map("full_name") @db.VarChar(255)
+  email                   String    @db.VarChar(255)
+  channelName             String    @map("channel_name") @db.VarChar(255)
+  channelUrl              String    @map("channel_url") @db.VarChar(500)
+  subscriberCount         Int?      @map("subscriber_count")
+  monthlyViews            Int?      @map("monthly_views")
+  travelContentPercentage Int?      @map("travel_content_percentage")
+  bio                     String?
+  sampleVideoUrl          String?   @map("sample_video_url") @db.VarChar(500)
+  verificationDocuments   Json?     @map("verification_documents")
+  status                  String?   @default("pending") @db.VarChar(20)
+  reviewedBy              String?   @map("reviewed_by") @db.Uuid
+  reviewedAt              DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  notes                   String?
+  createdAt               DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime? @default(now()) @map("updated_at") @db.Timestamptz(6)
+  reviewer                User?     @relation("CreatorApplicationReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+  user                    User?     @relation("CreatorApplicationUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status], map: "idx_creator_applications_status")
+  @@map("creator_applications")
+}
