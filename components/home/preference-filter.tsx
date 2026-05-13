@@ -18,11 +18,7 @@ export function PreferenceFilter({ selectedPreference, onPreferenceChange }: Pre
             key={option.id}
             type="button"
             variant={isSelected ? "default" : "outline"}
-            className={
-              isSelected
-                ? "rounded-full bg-slate-950 text-white hover:bg-slate-800"
-                : "rounded-full border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-            }
+            className="rounded-full"
             onClick={() => onPreferenceChange(option.id)}
           >
             <Icon className="mr-2 h-4 w-4" />

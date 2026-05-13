@@ -110,6 +110,21 @@ model VideoEditorState {
   @@map("video_editor_states")
 }
 
+model MapRouteCache {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cacheKey        String   @unique @map("cache_key")
+  profile         String   @db.VarChar(32)
+  routePreference String   @map("route_preference") @db.VarChar(32)
+  requestParams   Json     @map("request_params")
+  payload         Json
+  expiresAt       DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([expiresAt], map: "idx_map_route_cache_expires_at")
+  @@map("map_route_cache")
+}
+
 model UserFavorite {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String?   @map("user_id") @db.Uuid

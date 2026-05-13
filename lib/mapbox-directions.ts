@@ -31,6 +31,7 @@ const defaultRoutePreference: RoutePreference = "fastest"
 const routedLegStoragePrefix = "vlogmaps:routed-leg:v2:"
 const routedLegStorageTtlMs = 1000 * 60 * 60 * 24 * 30
 const maxConcurrentDirectionsRequests = 4
+const maxDirectionsWaypoints = 23
 let activeDirectionsRequests = 0
 const pendingDirectionsRequests: Array<() => void> = []
 
@@ -132,12 +133,27 @@ function isValidCoordinatePair(value: unknown): value is RouteCoordinate {
   )
 }
 
+function sampleRouteWaypoints(waypoints: RouteCoordinate[], maxWaypoints = maxDirectionsWaypoints) {
+  if (waypoints.length <= maxWaypoints) {
+    return waypoints
+  }
+
+  if (maxWaypoints <= 1) {
+    return [waypoints[Math.floor(waypoints.length / 2)]]
+  }
+
+  return Array.from({ length: maxWaypoints }, (_, index) => {
+    const waypointIndex = Math.round((index * (waypoints.length - 1)) / (maxWaypoints - 1))
+    return waypoints[waypointIndex]
+  })
+}
+
 async function fetchDirectionsLeg(start: RouteCoordinate, end: RouteCoordinate, via: RouteCoordinate[] = [], routePreference: RoutePreference = defaultRoutePreference) {
   if (!isValidCoordinatePair(start) || !isValidCoordinatePair(end)) {
     return null
   }
 
-  const validVia = via.filter(isValidCoordinatePair)
+  const validVia = sampleRouteWaypoints(via.filter(isValidCoordinatePair))
   const key = createLegCacheKey(start, end, validVia, routePreference)
   const reverseKey = createLegCacheKey(end, start, [...validVia].reverse(), routePreference)
   const existingRequest = routedLegCache.get(key)

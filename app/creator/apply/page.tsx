@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
+import { ThemeToggle } from "@/components/app-shell/theme-toggle"
 import { isCreatorEmail } from "@/lib/creator-access"
 
 const applicationDraftStorageKey = "travelmap:creator-application:v2"
@@ -299,8 +300,8 @@ function CreatorApplicationContent() {
   const uploadedFileNames = uploadedFiles.map((file) => file.name)
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
+    <div className="min-h-screen bg-background">
+      <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-4 py-4">
           <div className="flex items-center gap-3">
             <Link href="/">
@@ -310,9 +311,10 @@ function CreatorApplicationContent() {
             </Link>
             <TravelMapLogo />
           </div>
-          <Badge variant="secondary" className="bg-slate-100 text-slate-700">
-            Creator Verification
-          </Badge>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <Badge variant="secondary">Creator Verification</Badge>
+          </div>
         </div>
       </header>
 

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
+import { createHash } from "crypto"
 import { mapboxAccessToken } from "@/lib/mapbox"
+import {
+  readDirectionsPayloadFromDb,
+  writeDirectionsPayloadToDb,
+  type CachedDirectionsPayload,
+} from "@/lib/mapbox-route-cache-db"
 
-interface DirectionsPayload {
-  routes?: Array<{
-    distance?: number
-    duration?: number
-  }>
-}
+type DirectionsPayload = CachedDirectionsPayload
 
 const directionsCache = new Map<string, { expiresAt: number; payload: DirectionsPayload }>()
 const directionsCacheTtlMs = 1000 * 60 * 60 * 24
@@ -24,6 +25,24 @@ interface DirectionsFetchInit extends RequestInit {
 
 function getDirectionsCacheKey(request: NextRequest) {
   return request.nextUrl.searchParams.toString()
+}
+
+function createDirectionsCacheKey({
+  start,
+  end,
+  waypoints,
+  profile,
+  routePreference,
+}: {
+  start: string
+  end: string
+  waypoints: string[]
+  profile: string
+  routePreference: string
+}) {
+  return createHash("sha256")
+    .update([profile, routePreference, start, ...waypoints, end].join("|"))
+    .digest("hex")
 }
 
 function readDirectionsCache(key: string) {
@@ -98,12 +117,6 @@ function createDirectionsResponse(payload: DirectionsPayload) {
 }
 
 export async function GET(request: NextRequest) {
-  const cacheKey = getDirectionsCacheKey(request)
-  const cachedPayload = readDirectionsCache(cacheKey)
-  if (cachedPayload) {
-    return createDirectionsResponse(cachedPayload)
-  }
-
   const start = request.nextUrl.searchParams.get("start")
   const end = request.nextUrl.searchParams.get("end")
   const waypoints = request.nextUrl.searchParams.get("waypoints")
@@ -123,6 +136,25 @@ export async function GET(request: NextRequest) {
 
   if (!startCoordinate || !endCoordinate || waypointCoordinates === null) {
     return NextResponse.json({ error: "Invalid start, end, or waypoint coordinates." }, { status: 400 })
+  }
+
+  const cacheKey = createDirectionsCacheKey({
+    start: startCoordinate,
+    end: endCoordinate,
+    waypoints: waypointCoordinates,
+    profile,
+    routePreference,
+  })
+  const legacyCacheKey = getDirectionsCacheKey(request)
+  const cachedPayload = readDirectionsCache(cacheKey) ?? readDirectionsCache(legacyCacheKey)
+  if (cachedPayload) {
+    return createDirectionsResponse(cachedPayload)
+  }
+
+  const dbCachedPayload = await readDirectionsPayloadFromDb(cacheKey)
+  if (dbCachedPayload) {
+    writeDirectionsCache(cacheKey, dbCachedPayload)
+    return createDirectionsResponse(dbCachedPayload)
   }
 
   const coordinates = [startCoordinate, ...waypointCoordinates, endCoordinate].join(";")
@@ -172,6 +204,17 @@ export async function GET(request: NextRequest) {
     }
 
     writeDirectionsCache(cacheKey, payload)
+    await writeDirectionsPayloadToDb(
+      cacheKey,
+      {
+        start: startCoordinate,
+        end: endCoordinate,
+        waypoints: waypointCoordinates,
+        profile,
+        routePreference,
+      },
+      payload,
+    )
     return createDirectionsResponse(payload)
   } catch {
     return NextResponse.json({ error: "Unable to fetch map directions." }, { status: 500 })

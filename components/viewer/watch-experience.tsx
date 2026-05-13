@@ -6,11 +6,13 @@ import {
   ArrowLeft,
   Share2,
 } from "lucide-react"
+import { ThemeToggle } from "@/components/app-shell/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { MapboxTravelMap } from "@/components/maps/mapbox-travel-map"
 import { YouTubePlayer } from "@/components/media/youtube-player"
 import type { TravelVideo } from "@/lib/demo-data"
 import { getInterpolatedPointAtTime, loadCreatorPoints, type CreatorMapPoint } from "@/lib/creator-points"
+import { loadCreatorRouteShapes, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
 import type { HydratedTravelVideo } from "@/lib/youtube-client"
 
 interface WatchExperienceProps {
@@ -21,6 +23,7 @@ export function WatchExperience({ video }: WatchExperienceProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const feedbackTimeoutRef = useRef<number | null>(null)
   const [routePoints, setRoutePoints] = useState<CreatorMapPoint[]>(() => loadCreatorPoints(video.id, video.keyframes))
+  const [routeShapes, setRouteShapes] = useState<CreatorRouteShapes>(() => video.routeShapes ?? loadCreatorRouteShapes(video.id))
   const [isPlaying, setIsPlaying] = useState(true)
   const [currentTime, setCurrentTime] = useState(0)
   const [seekRequest, setSeekRequest] = useState<{ id: number; time: number } | null>(null)
@@ -29,9 +32,10 @@ export function WatchExperience({ video }: WatchExperienceProps) {
 
   useEffect(() => {
     setRoutePoints(loadCreatorPoints(video.id, video.keyframes))
+    setRouteShapes(video.routeShapes ?? loadCreatorRouteShapes(video.id))
     setCurrentTime(0)
     setSeekRequest(null)
-  }, [video.id, video.keyframes])
+  }, [video.id, video.keyframes, video.routeShapes])
 
   useEffect(() => {
     return () => {
@@ -120,6 +124,7 @@ export function WatchExperience({ video }: WatchExperienceProps) {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
+            <ThemeToggle />
             <Button
               type="button"
               variant="ghost"
@@ -168,7 +173,10 @@ export function WatchExperience({ video }: WatchExperienceProps) {
         <div className="relative z-0 min-h-0 flex-1 overflow-hidden lg:h-full lg:w-1/2 lg:flex-none">
           <MapboxTravelMap
             keyframes={routePoints}
+            routeShapes={routeShapes}
             currentKeyframe={currentLocation}
+            isPlaying={isPlaying}
+            followZoomPreferenceKey={video.id}
             onLocationClick={(keyframe) => jumpToKeyframe(keyframe.time)}
             className="h-full w-full"
           />

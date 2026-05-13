@@ -7,7 +7,7 @@ import { Crosshair, ExternalLink, Loader2, Redo2, Search, Undo2, X } from "lucid
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { mapboxAccessToken } from "@/lib/mapbox"
-import type { CreatorMapPoint } from "@/lib/creator-points"
+import { getInterpolatedPointAtTime, type CreatorMapPoint } from "@/lib/creator-points"
 import type { CreatorTripEndpoint, CreatorTripRoute } from "@/lib/creator-trip-route"
 import { getTimestampLegKey, type CreatorRouteShapePoint, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
 import { fetchRoutedLegsForKeyframes, type RouteCoordinate } from "@/lib/mapbox-directions"
@@ -19,9 +19,17 @@ const mapStyleOptions = [
 ] as const
 const editorRouteLayerIds = ["editor-route-hit", "editor-route-trail", "editor-route"] as const
 const editorTripRouteLayerIds = ["editor-trip-route-hit", "editor-trip-route", "editor-trip-route-casing"] as const
+const editorTimestampPointSourceId = "editor-timestamp-points"
+const editorTimestampPointLayerIds = [
+  "editor-timestamp-point-label",
+  "editor-timestamp-point-circle",
+  "editor-timestamp-point-hit",
+] as const
 const markerHighlightDurationMs = 1000
 const pointTimestampMarkerColor = "#ea580c"
 const stopTimestampMarkerColor = "#0f766e"
+const editorTravelerMarkerColor = "#ef4444"
+const editorTravelerMarkerScale = 1.12
 const editorTimestampRouteWidth = 5
 const editorTripRouteWidth = editorTimestampRouteWidth
 const editorTripRouteOffset = 4
@@ -244,6 +252,8 @@ interface TimestampRouteSegment {
   fromTime: number
   toTime: number
   coordinates: RouteCoordinate[]
+  cumulativeDistances: number[]
+  totalDistance: number
   isStationary?: boolean
   isFallback?: boolean
 }
@@ -333,6 +343,18 @@ function removeTripRouteLayer(map: mapboxgl.Map) {
   }
 }
 
+function removeTimestampPointLayer(map: mapboxgl.Map) {
+  editorTimestampPointLayerIds.forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId)
+    }
+  })
+
+  if (map.getSource(editorTimestampPointSourceId)) {
+    map.removeSource(editorTimestampPointSourceId)
+  }
+}
+
 function buildRouteFeatureCollection(
   segments: Array<{
     coordinates: RouteCoordinate[]
@@ -350,6 +372,36 @@ function buildRouteFeatureCollection(
       },
     })),
   }
+}
+
+function buildTimestampPointFeatureCollection(points: CreatorMapPoint[]) {
+  return {
+    type: "FeatureCollection" as const,
+    features: points.map((point, index) => ({
+      type: "Feature" as const,
+      id: point.id,
+      properties: {
+        pointId: point.id,
+        label: String(index + 1),
+        markerColor: getTimestampMarkerColor(point.pointType),
+        pointType: point.pointType,
+        time: point.time,
+      },
+      geometry: {
+        type: "Point" as const,
+        coordinates: [point.lng, point.lat] as RouteCoordinate,
+      },
+    })),
+  }
+}
+
+function orderEditorTimestampPointLayers(map: mapboxgl.Map) {
+  const orderedLayerIds = ["editor-timestamp-point-hit", "editor-timestamp-point-circle", "editor-timestamp-point-label"]
+  orderedLayerIds.forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.moveLayer(layerId)
+    }
+  })
 }
 
 function orderEditorRouteLayers(map: mapboxgl.Map) {
@@ -383,6 +435,8 @@ function orderEditorRouteLayers(map: mapboxgl.Map) {
   if (map.getLayer("editor-route-hit")) {
     map.moveLayer("editor-route-hit")
   }
+
+  orderEditorTimestampPointLayers(map)
 }
 
 function haversineDistance(start: RouteCoordinate, end: RouteCoordinate) {
@@ -417,10 +471,37 @@ function easeInOut(value: number) {
   return clampedValue * clampedValue * (3 - 2 * clampedValue)
 }
 
+function getRouteSegmentAtTime(segments: TimestampRouteSegment[], routeProgressTime: number) {
+  if (segments.length === 0 || !Number.isFinite(routeProgressTime)) {
+    return null
+  }
+
+  let startIndex = 0
+  let endIndex = segments.length - 1
+
+  while (startIndex <= endIndex) {
+    const middleIndex = Math.floor((startIndex + endIndex) / 2)
+    const segment = segments[middleIndex]
+
+    if (routeProgressTime < segment.fromTime) {
+      endIndex = middleIndex - 1
+      continue
+    }
+
+    if (routeProgressTime > segment.toTime) {
+      startIndex = middleIndex + 1
+      continue
+    }
+
+    return segment
+  }
+
+  return null
+}
+
 function getActiveStationarySegment(segments: TimestampRouteSegment[], routeProgressTime: number) {
-  return segments.find(
-    (segment) => segment.isStationary && routeProgressTime >= segment.fromTime && routeProgressTime <= segment.toTime,
-  ) ?? null
+  const segment = getRouteSegmentAtTime(segments, routeProgressTime)
+  return segment?.isStationary ? segment : null
 }
 
 function getStopZoomAmount(segment: TimestampRouteSegment, routeProgressTime: number) {
@@ -458,7 +539,35 @@ function getStopZoomAmount(segment: TimestampRouteSegment, routeProgressTime: nu
   return 1
 }
 
-function getPartialRouteCoordinates(coordinates: RouteCoordinate[], progress: number) {
+function getRouteDistanceIndex(coordinates: RouteCoordinate[]) {
+  const cumulativeDistances = [0]
+  for (let index = 1; index < coordinates.length; index += 1) {
+    cumulativeDistances.push(
+      cumulativeDistances[index - 1] + haversineDistance(coordinates[index - 1], coordinates[index]),
+    )
+  }
+
+  return {
+    cumulativeDistances,
+    totalDistance: cumulativeDistances[cumulativeDistances.length - 1] ?? 0,
+  }
+}
+
+function createTimestampRouteSegment(
+  segment: Omit<TimestampRouteSegment, "cumulativeDistances" | "totalDistance">,
+): TimestampRouteSegment {
+  return {
+    ...segment,
+    ...getRouteDistanceIndex(segment.coordinates),
+  }
+}
+
+function getPartialRouteCoordinates(
+  coordinates: RouteCoordinate[],
+  progress: number,
+  cumulativeDistances = getRouteDistanceIndex(coordinates).cumulativeDistances,
+  totalDistance = cumulativeDistances[cumulativeDistances.length - 1] ?? 0,
+) {
   if (coordinates.length < 2) {
     return []
   }
@@ -472,14 +581,6 @@ function getPartialRouteCoordinates(coordinates: RouteCoordinate[], progress: nu
     return coordinates
   }
 
-  const cumulativeDistances = [0]
-  for (let index = 1; index < coordinates.length; index += 1) {
-    cumulativeDistances.push(
-      cumulativeDistances[index - 1] + haversineDistance(coordinates[index - 1], coordinates[index]),
-    )
-  }
-
-  const totalDistance = cumulativeDistances[cumulativeDistances.length - 1] ?? 0
   if (totalDistance <= 0) {
     return coordinates.slice(0, 2)
   }
@@ -524,7 +625,7 @@ function getRouteProgressCoordinate(segments: TimestampRouteSegment[], routeProg
     return lastSegment.coordinates[lastSegment.coordinates.length - 1] ?? null
   }
 
-  const matchingSegment = segments.find((segment) => routeProgressTime >= segment.fromTime && routeProgressTime <= segment.toTime)
+  const matchingSegment = getRouteSegmentAtTime(segments, routeProgressTime)
   if (!matchingSegment) {
     return null
   }
@@ -539,9 +640,32 @@ function getRouteProgressCoordinate(segments: TimestampRouteSegment[], routeProg
   const partialCoordinates = getPartialRouteCoordinates(
     matchingSegment.coordinates,
     (routeProgressTime - matchingSegment.fromTime) / segmentDuration,
+    matchingSegment.cumulativeDistances,
+    matchingSegment.totalDistance,
   )
 
   return partialCoordinates[partialCoordinates.length - 1] ?? matchingSegment.coordinates[0] ?? null
+}
+
+function getPointProgressCoordinate(points: CreatorMapPoint[], routeProgressTime?: number | null) {
+  if (points.length === 0 || routeProgressTime === null || routeProgressTime === undefined || !Number.isFinite(routeProgressTime)) {
+    return null
+  }
+
+  const point = getInterpolatedPointAtTime(points, routeProgressTime)
+  if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) {
+    return null
+  }
+
+  return [point.lng, point.lat] as RouteCoordinate
+}
+
+function getTravelerProgressCoordinate(
+  segments: TimestampRouteSegment[],
+  points: CreatorMapPoint[],
+  routeProgressTime?: number | null,
+) {
+  return getRouteProgressCoordinate(segments, routeProgressTime) ?? getPointProgressCoordinate(points, routeProgressTime)
 }
 
 function getRouteProgressWindowCoordinates(
@@ -573,41 +697,6 @@ function getRouteProgressWindowCoordinates(
   }
 
   return coordinates
-}
-
-function getRouteBearing(start: RouteCoordinate, end: RouteCoordinate) {
-  const toRadians = (value: number) => (value * Math.PI) / 180
-  const toDegrees = (value: number) => (value * 180) / Math.PI
-  const startLat = toRadians(start[1])
-  const endLat = toRadians(end[1])
-  const deltaLng = toRadians(end[0] - start[0])
-  const y = Math.sin(deltaLng) * Math.cos(endLat)
-  const x = Math.cos(startLat) * Math.sin(endLat) - Math.sin(startLat) * Math.cos(endLat) * Math.cos(deltaLng)
-
-  return (toDegrees(Math.atan2(y, x)) + 360) % 360
-}
-
-function getRouteProgressBearing(segments: TimestampRouteSegment[], routeProgressTime?: number | null) {
-  if (segments.length === 0 || routeProgressTime === null || routeProgressTime === undefined || !Number.isFinite(routeProgressTime)) {
-    return 0
-  }
-
-  const matchingSegment =
-    segments.find((segment) => routeProgressTime >= segment.fromTime && routeProgressTime <= segment.toTime) ??
-    (routeProgressTime < segments[0].fromTime ? segments[0] : segments[segments.length - 1])
-  const coordinates = matchingSegment.coordinates
-
-  if (coordinates.length < 2) {
-    return 0
-  }
-
-  const segmentDuration = Math.max(matchingSegment.toTime - matchingSegment.fromTime, 1)
-  const progress = matchingSegment.isStationary
-    ? 0
-    : Math.min(Math.max((routeProgressTime - matchingSegment.fromTime) / segmentDuration, 0), 1)
-  const targetIndex = Math.min(Math.max(Math.round(progress * (coordinates.length - 1)), 1), coordinates.length - 1)
-
-  return getRouteBearing(coordinates[targetIndex - 1], coordinates[targetIndex])
 }
 
 function getRouteDistanceKm(coordinates: RouteCoordinate[]) {
@@ -663,25 +752,25 @@ function buildTimestampRouteSegments(legs: TimestampRouteSegmentInput[]) {
   return legs.map((leg) => {
     if (shouldRenderLegAsTrail(leg)) {
       return [
-        {
+        createTimestampRouteSegment({
           legKey: leg.legKey,
           fromTime: leg.fromTime,
           toTime: leg.toTime,
           isFallback: true,
           isStationary: leg.isStationary,
           coordinates: [leg.startCoordinate, leg.endCoordinate],
-        },
+        }),
       ] satisfies TimestampRouteSegment[]
     }
 
     return [
-      {
+      createTimestampRouteSegment({
         legKey: leg.legKey,
         fromTime: leg.fromTime,
         toTime: leg.toTime,
         isStationary: leg.isStationary,
         coordinates: leg.coordinates,
-      },
+      }),
     ]
   }).flat()
 }
@@ -745,20 +834,6 @@ function createTimestampMarkerElement(label: string, pointType?: CreatorMapPoint
   return el
 }
 
-function createRouteProgressMarkerElement() {
-  const el = document.createElement("div")
-  el.style.cssText = `
-    width: 12px;
-    height: 12px;
-    border-radius: 9999px;
-    background: #2563eb;
-    border: 2px solid white;
-    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.32);
-    pointer-events: none;
-  `
-  return el
-}
-
 export function MapboxLocationPicker({
   value,
   points,
@@ -796,8 +871,6 @@ export function MapboxLocationPicker({
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<mapboxgl.Map | null>(null)
   const activeMarkerRef = useRef<mapboxgl.Marker | null>(null)
-  const pointMarkersRef = useRef<mapboxgl.Marker[]>([])
-  const pointMarkerElementsRef = useRef<Map<string, { element: HTMLDivElement; time: number }>>(new Map())
   const highlightedPointMarkerKeysRef = useRef<Set<string>>(new Set())
   const pointMarkerHighlightTimeoutsRef = useRef<Map<string, number>>(new Map())
   const previousPointHighlightTimeRef = useRef<number | null>(null)
@@ -884,7 +957,11 @@ export function MapboxLocationPicker({
   }
 
   const getTravelerZoomCenter = (map: mapboxgl.Map): RouteCoordinate => {
-    const progressCoordinate = getRouteProgressCoordinate(timestampRouteSegmentsRef.current, routeProgressTimeRef.current)
+    const progressCoordinate = getTravelerProgressCoordinate(
+      timestampRouteSegmentsRef.current,
+      pointsRef.current,
+      routeProgressTimeRef.current,
+    )
     if (progressCoordinate) {
       return progressCoordinate
     }
@@ -1011,6 +1088,25 @@ export function MapboxLocationPicker({
     trackingSpeedSampleRef.current = null
     trackingSpeedKmhRef.current = 0
     trackingStopZoomRef.current = null
+  }
+
+  const setRouteProgressMarker = (map: mapboxgl.Map, coordinate: RouteCoordinate) => {
+    if (!routeProgressMarkerRef.current) {
+      routeProgressMarkerRef.current = new mapboxgl.Marker({
+        color: editorTravelerMarkerColor,
+        scale: editorTravelerMarkerScale,
+      })
+        .setLngLat(coordinate)
+        .addTo(map)
+
+      const element = routeProgressMarkerRef.current.getElement()
+      element.style.pointerEvents = "none"
+      element.style.zIndex = "5"
+      element.title = "Current traveler location"
+      return
+    }
+
+    routeProgressMarkerRef.current.setLngLat(coordinate)
   }
 
   const getRouteProgressSample = (now: number) => {
@@ -1164,7 +1260,7 @@ export function MapboxLocationPicker({
       (trackingSpeedKmhRef.current - editorTravelerTrackingSlowSpeedKmh) /
         (editorTravelerTrackingFastSpeedKmh - editorTravelerTrackingSlowSpeedKmh),
     )
-    const targetCoordinate = getRouteProgressCoordinate(timestampRouteSegmentsRef.current, progressTime)
+    const targetCoordinate = getTravelerProgressCoordinate(timestampRouteSegmentsRef.current, pointsRef.current, progressTime)
     const clusterProgress = targetCoordinate ? getTimestampClusterProgress(map, targetCoordinate) : 0
     const closeZoomProgress = Math.max(clusterProgress, 1 - speedProgress)
     const maxTrackingZoom = editorTravelerTrackingMaxZoom +
@@ -1227,11 +1323,7 @@ export function MapboxLocationPicker({
       const targetCoordinate =
         progressTime === null
           ? null
-          : getRouteProgressCoordinate(timestampRouteSegmentsRef.current, progressTime)
-      const targetBearing =
-        progressTime === null
-          ? 0
-          : getRouteProgressBearing(timestampRouteSegmentsRef.current, progressTime)
+          : getTravelerProgressCoordinate(timestampRouteSegmentsRef.current, pointsRef.current, progressTime)
 
       if (targetCoordinate) {
         updateTrackingLoadingState({
@@ -1243,19 +1335,7 @@ export function MapboxLocationPicker({
         const deltaSeconds = clampNumber((frameTime - previousFrameTime) / 1000, 0.001, 0.08)
         trackingFrameTimeRef.current = frameTime
 
-        if (!routeProgressMarkerRef.current) {
-          routeProgressMarkerRef.current = new mapboxgl.Marker({
-            element: createRouteProgressMarkerElement(),
-            pitchAlignment: "map",
-            rotation: targetBearing,
-            rotationAlignment: "map",
-          })
-            .setLngLat(targetCoordinate)
-            .addTo(activeMap)
-        } else {
-          routeProgressMarkerRef.current.setLngLat(targetCoordinate)
-          routeProgressMarkerRef.current.setRotation(targetBearing)
-        }
+        setRouteProgressMarker(activeMap, targetCoordinate)
 
         const currentCenterRef = trackingCameraCenterRef.current
         const currentMapCenter = activeMap.getCenter()
@@ -1416,33 +1496,46 @@ export function MapboxLocationPicker({
     return () => document.removeEventListener("keydown", handleKeyDown)
   })
 
-  const clearPointMarkers = () => {
+  const setPointMarkerHighlightState = (map: mapboxgl.Map | null, markerKey: string, highlighted: boolean) => {
+    if (!map?.getSource(editorTimestampPointSourceId)) {
+      return
+    }
+
+    try {
+      map.setFeatureState({ source: editorTimestampPointSourceId, id: markerKey }, { highlighted })
+    } catch {
+      // The source may be temporarily unavailable while Mapbox swaps styles.
+    }
+  }
+
+  const clearPointMarkerHighlights = (map = mapInstanceRef.current) => {
     pointMarkerHighlightTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId))
     pointMarkerHighlightTimeoutsRef.current.clear()
+    highlightedPointMarkerKeysRef.current.forEach((markerKey) => {
+      setPointMarkerHighlightState(map, markerKey, false)
+    })
     highlightedPointMarkerKeysRef.current.clear()
-    pointMarkerElementsRef.current.clear()
-    pointMarkersRef.current.forEach((marker) => marker.remove())
-    pointMarkersRef.current = []
   }
 
-  const resetPointMarkerElement = (element: HTMLElement) => {
-    element.style.backgroundColor = element.dataset.normalBackground ?? pointTimestampMarkerColor
-    element.style.color = "white"
+  const clearPointMarkers = (map = mapInstanceRef.current) => {
+    clearPointMarkerHighlights(map)
+    if (map) {
+      removeTimestampPointLayer(map)
+    }
   }
 
-  const highlightPointMarker = (markerKey: string, element: HTMLElement) => {
+  const highlightPointMarker = (map: mapboxgl.Map, markerKey: string) => {
     const existingTimeout = pointMarkerHighlightTimeoutsRef.current.get(markerKey)
     if (existingTimeout) {
       window.clearTimeout(existingTimeout)
     }
 
-    element.style.backgroundColor = "#facc15"
-    element.style.color = "#0f172a"
+    setPointMarkerHighlightState(map, markerKey, true)
 
     pointMarkerHighlightTimeoutsRef.current.set(
       markerKey,
       window.setTimeout(() => {
-        resetPointMarkerElement(element)
+        setPointMarkerHighlightState(mapInstanceRef.current, markerKey, false)
         pointMarkerHighlightTimeoutsRef.current.delete(markerKey)
       }, markerHighlightDurationMs),
     )
@@ -1766,6 +1859,83 @@ export function MapboxLocationPicker({
     })
   }
 
+  const updateTimestampPointLayer = (map: mapboxgl.Map, currentPoints: CreatorMapPoint[]) => {
+    if (!map.isStyleLoaded()) {
+      removeTimestampPointLayer(map)
+      return
+    }
+
+    if (currentPoints.length === 0) {
+      removeTimestampPointLayer(map)
+      return
+    }
+
+    const pointFeatureCollection = buildTimestampPointFeatureCollection(currentPoints)
+    const existingSource = map.getSource(editorTimestampPointSourceId) as mapboxgl.GeoJSONSource | undefined
+
+    if (existingSource) {
+      existingSource.setData(pointFeatureCollection)
+    } else {
+      map.addSource(editorTimestampPointSourceId, {
+        type: "geojson",
+        data: pointFeatureCollection,
+      })
+    }
+
+    if (!map.getLayer("editor-timestamp-point-hit")) {
+      map.addLayer({
+        id: "editor-timestamp-point-hit",
+        type: "circle",
+        source: editorTimestampPointSourceId,
+        paint: {
+          "circle-radius": 18,
+          "circle-color": "#000000",
+          "circle-opacity": 0.01,
+        },
+      })
+    }
+
+    if (!map.getLayer("editor-timestamp-point-circle")) {
+      map.addLayer({
+        id: "editor-timestamp-point-circle",
+        type: "circle",
+        source: editorTimestampPointSourceId,
+        paint: {
+          "circle-radius": ["case", ["boolean", ["feature-state", "highlighted"], false], 11, 9],
+          "circle-color": [
+            "case",
+            ["boolean", ["feature-state", "highlighted"], false],
+            "#facc15",
+            ["get", "markerColor"],
+          ],
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 2,
+          "circle-opacity": 0.98,
+        },
+      })
+    }
+
+    if (!map.getLayer("editor-timestamp-point-label")) {
+      map.addLayer({
+        id: "editor-timestamp-point-label",
+        type: "symbol",
+        source: editorTimestampPointSourceId,
+        layout: {
+          "text-field": ["get", "label"],
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-size": 9,
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: {
+          "text-color": ["case", ["boolean", ["feature-state", "highlighted"], false], "#0f172a", "#ffffff"],
+        },
+      })
+    }
+
+    orderEditorTimestampPointLayers(map)
+  }
+
   const updateRouteLayer = (map: mapboxgl.Map, segments: TimestampRouteSegment[]) => {
     if (!map.isStyleLoaded()) {
       removeRouteLayer(map)
@@ -1866,8 +2036,11 @@ export function MapboxLocationPicker({
   }
 
   const syncRouteProgress = (map: mapboxgl.Map, shouldCenter = false) => {
-    const progressCoordinate = getRouteProgressCoordinate(timestampRouteSegmentsRef.current, routeProgressTimeRef.current)
-    const progressBearing = getRouteProgressBearing(timestampRouteSegmentsRef.current, routeProgressTimeRef.current)
+    const progressCoordinate = getTravelerProgressCoordinate(
+      timestampRouteSegmentsRef.current,
+      pointsRef.current,
+      routeProgressTimeRef.current,
+    )
 
     if (!progressCoordinate || !map.isStyleLoaded()) {
       routeProgressMarkerRef.current?.remove()
@@ -1875,19 +2048,7 @@ export function MapboxLocationPicker({
       return
     }
 
-    if (!routeProgressMarkerRef.current) {
-      routeProgressMarkerRef.current = new mapboxgl.Marker({
-        element: createRouteProgressMarkerElement(),
-        pitchAlignment: "map",
-        rotation: progressBearing,
-        rotationAlignment: "map",
-      })
-        .setLngLat(progressCoordinate)
-        .addTo(map)
-    } else {
-      routeProgressMarkerRef.current.setLngLat(progressCoordinate)
-      routeProgressMarkerRef.current.setRotation(progressBearing)
-    }
+    setRouteProgressMarker(map, progressCoordinate)
 
     if (!shouldCenter || activeRouteShapeMarkerRef.current || isRouteShapeMarkerDraggingRef.current) {
       return
@@ -1995,23 +2156,11 @@ export function MapboxLocationPicker({
   }
 
   const drawSavedPoints = (map: mapboxgl.Map) => {
-    clearPointMarkers()
+    clearPointMarkerHighlights(map)
     removeRouteLayer(map)
 
     const currentPoints = pointsRef.current
-
-    pointMarkersRef.current = currentPoints.map((point, index) => {
-      const element = createTimestampMarkerElement(String(index + 1), point.pointType)
-      const markerKey = point.id
-      element.title = "Play from this timestamp"
-      element.addEventListener("click", (event) => {
-        event.stopPropagation()
-        onTimestampClickRef.current?.(point)
-      })
-      pointMarkerElementsRef.current.set(markerKey, { element, time: point.time })
-
-      return new mapboxgl.Marker(element).setLngLat([point.lng, point.lat]).addTo(map)
-    })
+    updateTimestampPointLayer(map, currentPoints)
 
     const routeRequestId = routeRequestIdRef.current + 1
     routeRequestIdRef.current = routeRequestId
@@ -2030,8 +2179,7 @@ export function MapboxLocationPicker({
 
     if (routePoints.length < 2) {
       timestampRouteSegmentsRef.current = []
-      routeProgressMarkerRef.current?.remove()
-      routeProgressMarkerRef.current = null
+      syncRouteProgress(map, false)
       return
     }
 
@@ -2048,16 +2196,18 @@ export function MapboxLocationPicker({
         const segments: TimestampRouteSegment[] = []
 
         if (stopEndTime !== null && stopEndTime > currentPoint.time) {
-          segments.push({
-            legKey,
-            fromTime: currentPoint.time,
-            toTime: stopEndTime,
-            isStationary: true,
-            coordinates: [
-              [currentPoint.lng, currentPoint.lat],
-              [currentPoint.lng, currentPoint.lat],
-            ],
-          })
+          segments.push(
+            createTimestampRouteSegment({
+              legKey,
+              fromTime: currentPoint.time,
+              toTime: stopEndTime,
+              isStationary: true,
+              coordinates: [
+                [currentPoint.lng, currentPoint.lat],
+                [currentPoint.lng, currentPoint.lat],
+              ],
+            }),
+          )
         }
 
         const movementStartTime = stopEndTime ?? leg.fromTime
@@ -2313,6 +2463,20 @@ export function MapboxLocationPicker({
     return null
   }
 
+  const getTimestampPointAtEvent = (map: mapboxgl.Map, event: mapboxgl.MapMouseEvent) => {
+    if (!map.getLayer("editor-timestamp-point-hit")) {
+      return null
+    }
+
+    const features = map.queryRenderedFeatures(event.point, { layers: ["editor-timestamp-point-hit"] })
+    const pointId = features[0]?.properties?.pointId
+    if (typeof pointId !== "string") {
+      return null
+    }
+
+    return pointsRef.current.find((point) => point.id === pointId) ?? null
+  }
+
   const getRouteShapeCoordinateFromEvent = (map: mapboxgl.Map, event: mapboxgl.MapMouseEvent, target: RouteShapeTarget): RouteCoordinate => {
     const coordinates =
       target.type === "trip"
@@ -2375,11 +2539,12 @@ export function MapboxLocationPicker({
     map.on("style.load", handleStyleReady)
     map.on("moveend", handleMapMoveEnd)
     map.on("mousemove", (event) => {
-      const routeShapeTarget = getRouteShapeTargetAtPoint(map, event)
+      const timestampPoint = getTimestampPointAtEvent(map, event)
+      const routeShapeTarget = timestampPoint ? null : getRouteShapeTargetAtPoint(map, event)
       if (!routeShapeTarget) {
         clearHoverRouteShapeMarker()
         if (!activeRouteShapeMarkerRef.current) {
-          map.getCanvas().style.cursor = ""
+          map.getCanvas().style.cursor = timestampPoint ? "pointer" : ""
         }
         return
       }
@@ -2394,6 +2559,13 @@ export function MapboxLocationPicker({
       }
     })
     map.on("click", (event) => {
+      const timestampPoint = getTimestampPointAtEvent(map, event)
+      if (timestampPoint) {
+        event.preventDefault()
+        onTimestampClickRef.current?.(timestampPoint)
+        return
+      }
+
       const routeShapeTarget = getRouteShapeTargetAtPoint(map, event)
       if (routeShapeTarget) {
         event.preventDefault()
@@ -2467,10 +2639,13 @@ export function MapboxLocationPicker({
     const previousTime = previousPointHighlightTimeRef.current
 
     if (currentTime !== null && currentTime !== undefined && Number.isFinite(currentTime)) {
-      const reachedMarkers: Array<{ markerKey: string; element: HTMLElement; time: number }> = []
+      const reachedMarkers: Array<{ markerKey: string; time: number }> = []
 
-      pointMarkerElementsRef.current.forEach(({ element, time }, markerKey) => {
+      pointsRef.current.forEach((point) => {
+        const markerKey = point.id
+        const time = point.time
         if (canRearmTimestampHighlight(currentTime, time)) {
+          setPointMarkerHighlightState(map, markerKey, false)
           highlightedPointMarkerKeysRef.current.delete(markerKey)
         }
 
@@ -2479,17 +2654,17 @@ export function MapboxLocationPicker({
         }
 
         if (shouldTriggerTimestampHighlight(previousTime, currentTime, time)) {
-          reachedMarkers.push({ markerKey, element, time })
+          reachedMarkers.push({ markerKey, time })
         }
       })
 
       if (reachedMarkers.length > 0) {
         const closestDistance = Math.min(...reachedMarkers.map(({ time }) => Math.abs(time - currentTime)))
 
-        reachedMarkers.forEach(({ markerKey, element, time }) => {
+        reachedMarkers.forEach(({ markerKey, time }) => {
           if (Math.abs(time - currentTime) <= closestDistance + 0.001) {
             highlightedPointMarkerKeysRef.current.add(markerKey)
-            highlightPointMarker(markerKey, element)
+            highlightPointMarker(map, markerKey)
           }
         })
       }
@@ -2824,64 +2999,67 @@ export function MapboxLocationPicker({
         )}
       </form>
 
-      <div className="absolute right-3 top-16 z-40 flex flex-wrap justify-end gap-1 rounded-xl border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md sm:right-4 sm:top-4">
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="h-8 w-8 rounded-lg text-white hover:bg-white/15 hover:text-white disabled:text-white/35"
-          aria-label="Undo map click"
-          title="Undo"
-          disabled={!canUndo}
-          onClick={onUndo}
-        >
-          <Undo2 className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="h-8 w-8 rounded-lg text-white hover:bg-white/15 hover:text-white disabled:text-white/35"
-          aria-label="Redo map click"
-          title="Redo"
-          disabled={!canRedo}
-          onClick={onRedo}
-        >
-          <Redo2 className="h-4 w-4" />
-        </Button>
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className={`h-8 w-8 rounded-lg hover:text-white ${
-            isTrackingTraveler
-              ? "bg-white text-slate-950 hover:bg-white/90 hover:text-slate-950"
-              : "text-white hover:bg-white/15"
-          }`}
-          aria-pressed={isTrackingTraveler}
-          aria-label={isTrackingTraveler ? "Stop tracking traveler" : "Track traveler"}
-          title={isTrackingTraveler ? "Stop tracking traveler" : "Track traveler"}
-          onClick={toggleTravelerTracking}
-        >
-          <Crosshair className="h-4 w-4" />
-        </Button>
-        <div className="mx-1 h-8 w-px bg-white/20" />
-        {mapStyleOptions.map((option) => (
+      <div className="absolute right-3 top-16 z-40 flex max-w-[calc(100%-1.5rem)] flex-wrap justify-end gap-1 sm:right-4 sm:top-4 sm:gap-2">
+        <div className="flex shrink-0 items-center gap-1 rounded-xl border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md">
           <Button
-            key={option.id}
             type="button"
-            size="sm"
-            variant={mapStyle === option.id ? "default" : "ghost"}
-            className={`rounded-lg ${
-              mapStyle === option.id
-                ? "bg-white text-slate-950 hover:bg-white/90"
-                : "text-white/85 hover:bg-white/15 hover:text-white"
-            }`}
-            onClick={() => changeMapStyle(option.id)}
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 rounded-lg text-white hover:bg-white/15 hover:text-white disabled:text-white/35"
+            aria-label="Undo map click"
+            title="Undo"
+            disabled={!canUndo}
+            onClick={onUndo}
           >
-            {option.label}
+            <Undo2 className="h-4 w-4" />
           </Button>
-        ))}
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 rounded-lg text-white hover:bg-white/15 hover:text-white disabled:text-white/35"
+            aria-label="Redo map click"
+            title="Redo"
+            disabled={!canRedo}
+            onClick={onRedo}
+          >
+            <Redo2 className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className={`h-8 w-8 rounded-lg hover:text-white ${
+              isTrackingTraveler
+                ? "bg-white text-slate-950 hover:bg-white/90 hover:text-slate-950"
+                : "text-white hover:bg-white/15"
+            }`}
+            aria-pressed={isTrackingTraveler}
+            aria-label={isTrackingTraveler ? "Stop tracking traveler" : "Track traveler"}
+            title={isTrackingTraveler ? "Stop tracking traveler" : "Track traveler"}
+            onClick={toggleTravelerTracking}
+          >
+            <Crosshair className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex min-w-0 items-center gap-1 rounded-xl border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md">
+          {mapStyleOptions.map((option) => (
+            <Button
+              key={option.id}
+              type="button"
+              size="sm"
+              variant={mapStyle === option.id ? "default" : "ghost"}
+              className={`rounded-lg ${
+                mapStyle === option.id
+                  ? "bg-white text-slate-950 hover:bg-white/90"
+                  : "text-white/85 hover:bg-white/15 hover:text-white"
+              }`}
+              onClick={() => changeMapStyle(option.id)}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
       </div>
     </div>
   )

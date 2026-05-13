@@ -13,7 +13,7 @@ export function HomeVideoCard({ video }: HomeVideoCardProps) {
   return (
     <Link href={`/watch/${video.id}`} className="group block">
       <div className="space-y-3">
-        <div className="relative aspect-video overflow-hidden rounded-2xl bg-slate-100">
+        <div className="relative aspect-video overflow-hidden rounded-2xl bg-muted">
           <Image
             src={video.thumbnail || "/placeholder.svg"}
             alt={video.title}
@@ -38,9 +38,9 @@ export function HomeVideoCard({ video }: HomeVideoCardProps) {
             </>
           ) : (
             <>
-              <h2 className="line-clamp-2 text-[15px] font-semibold leading-5 text-slate-950">{video.title}</h2>
-              <p className="text-sm text-slate-600">{video.creator}</p>
-              <p className="text-sm text-slate-500">
+              <h2 className="line-clamp-2 text-[15px] font-semibold leading-5 text-foreground">{video.title}</h2>
+              <p className="text-sm text-muted-foreground">{video.creator}</p>
+              <p className="text-sm text-muted-foreground">
                 {video.hasLiveViewCount ? `${formatCompactNumber(video.views)} views - ` : ""}
                 {video.locations[0] ?? "Route pending"}
               </p>
@@ -55,7 +55,7 @@ export function HomeVideoCard({ video }: HomeVideoCardProps) {
 export function HomeVideoSkeletonCard() {
   return (
     <div className="space-y-3">
-      <div className="relative overflow-hidden rounded-2xl bg-slate-100">
+      <div className="relative overflow-hidden rounded-2xl bg-muted">
         <Skeleton className="aspect-video w-full rounded-2xl" />
         <div className="absolute left-3 top-3">
           <Skeleton className="h-6 w-16 rounded-full bg-slate-300/80" />

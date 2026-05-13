@@ -25,7 +25,7 @@ export function TravelMapLogo({
       >
         <MapPin className="h-4 w-4" />
       </span>
-      <span className={cn("text-xl font-semibold tracking-tight text-slate-950", textClassName)}>TravelMap</span>
+      <span className={cn("text-xl font-semibold tracking-tight text-foreground", textClassName)}>TravelMap</span>
     </Link>
   )
 }

@@ -9,7 +9,7 @@ export default function NewCreatorVideoPage() {
       description="Paste a YouTube URL or pick an existing creator video, then jump straight into timestamp and map capture."
       backHref="/creator/dashboard"
       backLabel="Back to Dashboard"
-      pageClassName="min-h-screen bg-white"
+      pageClassName="min-h-screen bg-background"
       mainClassName="container mx-auto max-w-5xl px-4 py-8"
       showIntro={false}
       framedContent={false}

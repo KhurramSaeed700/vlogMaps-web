@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation"
 import { useEffect } from "react"
 import { ClerkLoadState } from "@/components/auth/clerk-load-state"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
+import { ThemeToggle } from "@/components/app-shell/theme-toggle"
 import { isCreatorEmail } from "@/lib/creator-access"
 
 export default function LoginPage() {
@@ -24,11 +25,14 @@ export default function LoginPage() {
   }, [continueHref, isLoaded, isSignedIn, router])
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#f7f9f8] p-4">
+    <div className="relative flex min-h-screen items-center justify-center bg-background p-4">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-4 text-center">
           <TravelMapLogo className="justify-center" />
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Welcome back</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Welcome back</h1>
         </div>
 
         {!isLoaded ? (
@@ -39,7 +43,7 @@ export default function LoginPage() {
           </div>
         ) : (
           <Link href={continueHref} className="block">
-            <Button className="h-11 w-full bg-slate-950 text-white hover:bg-slate-800">Continue</Button>
+            <Button className="h-11 w-full">Continue</Button>
           </Link>
         )}
       </div>
