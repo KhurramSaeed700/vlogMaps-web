@@ -97,6 +97,7 @@ function rowToTravelVideo(video: VideoWithRoute): TravelVideo {
     description: video.description || "",
     locations: asStringArray(video.locations).length > 0 ? asStringArray(video.locations) : keyframes.map((point) => point.location),
     keyframes,
+    routeShapes: video.editorState ? asRouteShapes(video.editorState.routeShapes) : undefined,
     tags: asStringArray(video.tags),
   }
 }

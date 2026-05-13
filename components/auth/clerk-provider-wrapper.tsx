@@ -3,6 +3,7 @@
 import type React from "react"
 import { ClerkProvider } from "@clerk/nextjs"
 import { usePathname } from "next/navigation"
+import { useTheme } from "next-themes"
 
 interface ClerkProviderWrapperProps {
   children: React.ReactNode
@@ -10,9 +11,10 @@ interface ClerkProviderWrapperProps {
 
 export function ClerkProviderWrapper({ children }: ClerkProviderWrapperProps) {
   const pathname = usePathname()
+  const { resolvedTheme } = useTheme()
   const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
-  const needsClerk =
-    pathname === "/" || pathname.startsWith("/auth") || pathname.startsWith("/creator")
+  const isDark = resolvedTheme === "dark"
+  const needsClerk = pathname.startsWith("/auth") || pathname.startsWith("/creator")
 
   if (!needsClerk) {
     return <>{children}</>
@@ -27,9 +29,8 @@ export function ClerkProviderWrapper({ children }: ClerkProviderWrapperProps) {
     publishableKey: string
     appearance?: {
       baseTheme?: undefined
-      variables?: {
-        colorPrimary?: string
-      }
+      variables?: Record<string, string>
+      elements?: Record<string, string>
     }
   }>
 
@@ -39,7 +40,16 @@ export function ClerkProviderWrapper({ children }: ClerkProviderWrapperProps) {
       appearance={{
         baseTheme: undefined,
         variables: {
-          colorPrimary: "#2563eb",
+          colorPrimary: "#dc2626",
+          colorBackground: isDark ? "#09090b" : "#ffffff",
+          colorText: isDark ? "#fafafa" : "#020617",
+          colorTextSecondary: isDark ? "#a1a1aa" : "#64748b",
+          colorInputBackground: isDark ? "#18181b" : "#ffffff",
+          colorInputText: isDark ? "#fafafa" : "#020617",
+        },
+        elements: {
+          cardBox: "border border-border shadow-sm",
+          formButtonPrimary: "bg-red-600 hover:bg-red-700",
         },
       }}
     >

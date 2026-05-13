@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { useUser } from "@clerk/nextjs"
 import { Loader2 } from "lucide-react"
 import { HomeHeader } from "@/components/home/home-header"
 import {
@@ -12,7 +11,6 @@ import {
 } from "@/components/home/home-preferences"
 import { PreferenceFilter } from "@/components/home/preference-filter"
 import { HomeVideoGrid } from "@/components/home/video-grid"
-import { isCreatorEmail } from "@/lib/creator-access"
 import { fetchPublishedCloudVideos } from "@/lib/creator-videos-cloud-client"
 import { createInstantWatchVideo, getPublishedTravelVideosClient, mergeTravelVideos } from "@/lib/creator-videos"
 import type { TravelVideo } from "@/lib/demo-data"
@@ -47,7 +45,6 @@ async function hydrateTravelVideosWithTimeout(videos: TravelVideo[]) {
 
 export default function HomePage({ initialVideos = [] }: HomePageProps) {
   const router = useRouter()
-  const { isLoaded, isSignedIn, user } = useUser()
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [selectedPreference, setSelectedPreference] = useState<PreferenceId>("all")
   const [catalogVideos, setCatalogVideos] = useState<HydratedTravelVideo[]>(() =>
@@ -120,16 +117,6 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
     return [...nextVideos].sort((a, b) => b.views - a.views)
   }, [catalogVideos, selectedPreference])
 
-  const creatorCta = useMemo(() => {
-    const email = user?.primaryEmailAddress?.emailAddress ?? null
-    const isApprovedCreator = isCreatorEmail(email)
-
-    return {
-      href: isApprovedCreator ? "/creator/dashboard" : "/creator/apply",
-      label: isApprovedCreator ? "Creator Dashboard" : "Become a creator",
-    }
-  }, [user])
-
   const homeLoadingMessage = useMemo(() => {
     if (isCatalogLoading) {
       return "Loading videos..."
@@ -169,12 +156,9 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-white text-slate-950">
+    <div className="min-h-screen bg-background text-foreground">
       <HomeHeader
-        creatorCta={creatorCta}
-        isLoaded={isLoaded}
         isPending={isPending}
-        isSignedIn={isSignedIn}
         launcherError={launcherError}
         youtubeUrl={youtubeUrl}
         onSubmit={handleLaunch}
@@ -184,7 +168,7 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
       <main className="mx-auto max-w-screen-2xl px-4 py-6">
         {homeLoadingMessage && (
           <div
-            className="mb-4 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"
+            className="mb-4 flex items-center gap-3 rounded-2xl border border-border bg-muted/60 px-4 py-3 text-sm text-muted-foreground"
             aria-live="polite"
           >
             <Loader2 className="h-4 w-4 animate-spin text-red-600" />

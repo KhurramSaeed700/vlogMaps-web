@@ -153,7 +153,7 @@ export function buildCreatorVideoStateSnapshot(video: TravelVideo): CreatorVideo
   return {
     points: loadCreatorPoints(video.id, video.keyframes),
     tripRoute: loadCreatorTripRoute(video.id),
-    routeShapes: loadCreatorRouteShapes(video.id),
+    routeShapes: video.routeShapes ?? loadCreatorRouteShapes(video.id),
   }
 }
 
@@ -165,6 +165,7 @@ export function withSyncedVideoState(video: TravelVideo, state: CreatorVideoStat
     status,
     keyframes,
     locations: keyframes.map((point) => point.location),
+    routeShapes: state.routeShapes,
   }
 }
 

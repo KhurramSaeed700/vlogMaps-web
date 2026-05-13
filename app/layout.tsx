@@ -1,5 +1,6 @@
 import type React from "react"
 import { Inter } from "next/font/google"
+import { ThemeProvider } from "@/components/app-shell/theme-provider"
 import { ClerkProviderWrapper } from "@/components/auth/clerk-provider-wrapper"
 import "./globals.css"
 
@@ -17,9 +18,11 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
-        <ClerkProviderWrapper>{children}</ClerkProviderWrapper>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${inter.className} bg-background text-foreground`}>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          <ClerkProviderWrapper>{children}</ClerkProviderWrapper>
+        </ThemeProvider>
       </body>
     </html>
   )

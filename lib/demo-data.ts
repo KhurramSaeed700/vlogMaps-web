@@ -1,4 +1,5 @@
 import { getYouTubeThumbnailUrl } from "@/lib/youtube"
+import type { CreatorRouteShapes } from "@/lib/creator-route-shapes"
 
 export type VideoKeyframePointType = "point" | "stop"
 
@@ -28,6 +29,7 @@ export interface TravelVideo {
   description: string
   locations: string[]
   keyframes: VideoKeyframe[]
+  routeShapes?: CreatorRouteShapes
   tags?: string[]
 }
 

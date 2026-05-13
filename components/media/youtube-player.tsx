@@ -677,6 +677,8 @@ export function YouTubePlayer({
             if (event.data === YT.PlayerState.PAUSED) {
               clearProgressInterval()
               clearPauseCommitTimeout()
+              const pausedTime = event.target.getCurrentTime()
+              onTimeChangeRef.current?.(pausedTime)
               pauseCommitTimeoutRef.current = window.setTimeout(() => {
                 pauseCommitTimeoutRef.current = null
                 if (!pendingSeekRef.current) {
