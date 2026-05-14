@@ -14,7 +14,7 @@ export function ClerkProviderWrapper({ children }: ClerkProviderWrapperProps) {
   const { resolvedTheme } = useTheme()
   const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
   const isDark = resolvedTheme === "dark"
-  const needsClerk = pathname.startsWith("/auth") || pathname.startsWith("/creator")
+  const needsClerk = pathname === "/" || pathname.startsWith("/auth") || pathname.startsWith("/creator")
 
   if (!needsClerk) {
     return <>{children}</>

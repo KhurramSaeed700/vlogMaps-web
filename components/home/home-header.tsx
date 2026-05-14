@@ -1,4 +1,7 @@
+"use client"
+
 import type { FormEvent } from "react"
+import { UserButton, useUser } from "@clerk/nextjs"
 import Link from "next/link"
 import { Search } from "lucide-react"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
@@ -21,6 +24,8 @@ export function HomeHeader({
   onSubmit,
   onYoutubeUrlChange,
 }: HomeHeaderProps) {
+  const { isLoaded, isSignedIn } = useUser()
+
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
       <div className="mx-auto flex max-w-screen-2xl flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-4">
@@ -53,11 +58,24 @@ export function HomeHeader({
             </Button>
           </Link>
 
-          <Link href="/auth/login" className="block">
-            <Button variant="ghost" size="sm" className="rounded-full px-3 sm:h-10 sm:px-4">
-              Sign In
-            </Button>
-          </Link>
+          {!isLoaded ? (
+            <div className="h-9 w-[72px] sm:h-10" aria-hidden="true" />
+          ) : isSignedIn ? (
+            <UserButton
+              signInUrl="/auth/login"
+              appearance={{
+                elements: {
+                  avatarBox: "h-9 w-9",
+                },
+              }}
+            />
+          ) : (
+            <Link href="/auth/login" className="block">
+              <Button variant="ghost" size="sm" className="rounded-full px-3 sm:h-10 sm:px-4">
+                Sign In
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
 
