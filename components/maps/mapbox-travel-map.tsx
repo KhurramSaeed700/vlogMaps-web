@@ -127,6 +127,7 @@ const visualPlaybackNormalSmoothingMs = 170
 const visualPlaybackCatchUpSmoothingMs = 85
 const visualPlaybackPausedSmoothingMs = 130
 const visualCatchUpDurationMs = 1100
+const routeDataReconcileCatchUpDurationMs = 420
 const visualHardSeekSnapSeconds = 18
 const visualHardSeekSnapDistanceKm = 18
 const manualTrailMaxDirectDistanceKm = 30
@@ -1364,9 +1365,11 @@ export function MapboxTravelMap({
   const animationFrameRef = useRef<number | null>(null)
   const previousAnimationTimestampRef = useRef<number | null>(null)
   const previousPlaybackTimeRef = useRef<number | null>(null)
+  const latestPlaybackTimeRef = useRef(0)
   const targetPlaybackUpdatedAtRef = useRef(0)
   const visualCatchUpUntilRef = useRef(0)
   const lastAnimatedRouteDrawTimestampRef = useRef(0)
+  const lastRouteDataReconcileSignatureRef = useRef("")
   const hasFocusedCurrentLocationRef = useRef(false)
   const isFollowingRef = useRef(true)
   const isManualCameraOverrideRef = useRef(false)
@@ -1656,10 +1659,12 @@ export function MapboxTravelMap({
   const liveRouteCoordinate =
     getRouteCoordinateAtTime(positionedLegs, safeCurrentKeyframe.time) ??
     ([safeCurrentKeyframe.lng, safeCurrentKeyframe.lat] as RouteCoordinate)
+  const hasResolvedRoutedLegs = routedLegs.length > 0 || safeKeyframes.length < 2
 
   keyframesRef.current = safeKeyframes
   routeCoordinatesRef.current = routeCoordinates
   positionedLegsRef.current = positionedLegs
+  latestPlaybackTimeRef.current = safeCurrentKeyframe.time
   targetRouteTimeRef.current = safeCurrentKeyframe.time
   liveRouteCoordinateRef.current = liveRouteCoordinate
   targetRouteCoordinateRef.current = liveRouteCoordinate
@@ -1671,11 +1676,13 @@ export function MapboxTravelMap({
     previousPlaybackTimeRef.current = null
     previousHighlightTimeRef.current = null
     highlightedKeyframeKeysRef.current.clear()
+    lastRouteDataReconcileSignatureRef.current = ""
     cameraTimelineRef.current = []
     hasFocusedCurrentLocationRef.current = false
     routeRevealTimeRef.current = safeCurrentKeyframe.time
     targetRouteTimeRef.current = safeCurrentKeyframe.time
     animatedRouteTimeRef.current = safeCurrentKeyframe.time
+    latestPlaybackTimeRef.current = safeCurrentKeyframe.time
     targetPlaybackUpdatedAtRef.current = window.performance.now()
     visualCatchUpUntilRef.current = 0
     liveRouteCoordinateRef.current = liveRouteCoordinate
@@ -2170,7 +2177,12 @@ export function MapboxTravelMap({
     animationFrameRef.current = window.requestAnimationFrame(animateMarker)
   }
 
-  const snapTravelerToPlaybackTime = (map: mapboxgl.Map, nextTime: number, nextCoordinate: RouteCoordinate) => {
+  const snapTravelerToPlaybackTime = (
+    map: mapboxgl.Map,
+    nextTime: number,
+    nextCoordinate: RouteCoordinate,
+    options: { forceTravelerSnap?: boolean; catchUpDurationMs?: number } = {},
+  ) => {
     stopMarkerAnimation()
     clearTrackingLoading()
     clearProgrammaticCameraMove()
@@ -2178,13 +2190,15 @@ export function MapboxTravelMap({
     const routeJumpDistanceKm = haversineDistance(previousCoordinate, nextCoordinate)
     const routeJumpSeconds = Math.abs(nextTime - animatedRouteTimeRef.current)
     const shouldHardSnapTraveler =
+      Boolean(options.forceTravelerSnap) ||
       routeJumpSeconds >= visualHardSeekSnapSeconds ||
       routeJumpDistanceKm >= visualHardSeekSnapDistanceKm
 
     targetRouteTimeRef.current = nextTime
     targetRouteCoordinateRef.current = nextCoordinate
     targetPlaybackUpdatedAtRef.current = window.performance.now()
-    visualCatchUpUntilRef.current = targetPlaybackUpdatedAtRef.current + visualCatchUpDurationMs
+    visualCatchUpUntilRef.current =
+      targetPlaybackUpdatedAtRef.current + (options.catchUpDurationMs ?? visualCatchUpDurationMs)
 
     if (shouldHardSnapTraveler) {
       animatedRouteTimeRef.current = nextTime
@@ -2672,6 +2686,52 @@ export function MapboxTravelMap({
       clearRoutePreloadTimer()
     }
   }, [isLoaded, mapStyle, positionedLegs, routeSignature])
+
+  useEffect(() => {
+    const map = mapInstanceRef.current
+    if (!map || !isLoaded || !hasResolvedRoutedLegs || !hasFocusedCurrentLocationRef.current) {
+      return
+    }
+
+    const routeDataSignature = [
+      routeSignature,
+      routedLegs.length,
+      ...routedLegs.map((leg) =>
+        [
+          leg.fromTime,
+          leg.toTime,
+          leg.coordinates.length,
+          leg.isFallback ? "fallback" : "routed",
+        ].join(":"),
+      ),
+    ].join("|")
+
+    if (routeDataSignature === lastRouteDataReconcileSignatureRef.current) {
+      return
+    }
+
+    lastRouteDataReconcileSignatureRef.current = routeDataSignature
+
+    runWhenStyleReady(map, () => {
+      const currentMap = mapInstanceRef.current
+      if (!currentMap || !canUpdateCamera(currentMap)) {
+        return
+      }
+
+      currentMap.resize()
+      rebuildCameraTimeline(currentMap)
+
+      const latestPlaybackTime = latestPlaybackTimeRef.current
+      const latestRouteCoordinate =
+        getRouteCoordinateAtTime(positionedLegsRef.current, latestPlaybackTime) ??
+        liveRouteCoordinateRef.current
+
+      snapTravelerToPlaybackTime(currentMap, latestPlaybackTime, latestRouteCoordinate, {
+        forceTravelerSnap: !isPlayingRef.current,
+        catchUpDurationMs: routeDataReconcileCatchUpDurationMs,
+      })
+    })
+  }, [hasResolvedRoutedLegs, isLoaded, positionedLegs, routeSignature, routedLegs])
 
   useEffect(() => {
     const currentTime = safeCurrentKeyframe.time
