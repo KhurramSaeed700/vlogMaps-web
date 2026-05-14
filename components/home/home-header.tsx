@@ -53,8 +53,8 @@ export function HomeHeader({
             </Button>
           </Link>
 
-          <Link href="/auth/login" className="hidden sm:block">
-            <Button variant="ghost" className="rounded-full">
+          <Link href="/auth/login" className="block">
+            <Button variant="ghost" size="sm" className="rounded-full px-3 sm:h-10 sm:px-4">
               Sign In
             </Button>
           </Link>
