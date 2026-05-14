@@ -2491,30 +2491,51 @@ export function MapboxTravelMap({
       scheduleViewportMarkerRefresh(map)
     }
 
-    const handleMapZoomStart = (event?: unknown) => {
+    const keepTravelerCenteredDuringFollowZoom = () => {
+      if (!isUserZoomingWhileFollowingRef.current || !canUpdateCamera(map)) {
+        return
+      }
+
+      const travelerCenter = animatedRouteCoordinateRef.current ?? liveRouteCoordinateRef.current
+      targetCameraCenterRef.current = travelerCenter
+      animatedCameraCenterRef.current = travelerCenter
+      animatedCameraZoomRef.current = map.getZoom()
+
+      try {
+        runAutomatedCameraUpdate(() => {
+          map.jumpTo({ center: travelerCenter, zoom: map.getZoom() })
+        })
+      } catch {
+        // The next zoom frame or follow animation will re-center when the map is ready.
+      }
+    }
+
+    const handleMapZoomStart = () => {
       if (
         isFollowingRef.current &&
         !isAutomatedCameraUpdateRef.current &&
         !isProgrammaticCameraMoveRef.current
       ) {
         isUserZoomingWhileFollowingRef.current = true
+        clearManualFollowResume()
+        clearTrackingLoading()
+        clearProgrammaticCameraMove()
         stopMarkerAnimation()
-      }
-
-      if (hasOriginalMapEvent(event)) {
-        suspendFollowForManualInteraction(map)
+        keepTravelerCenteredDuringFollowZoom()
       }
     }
 
     const handleMapZoom = () => {
+      keepTravelerCenteredDuringFollowZoom()
       updateKeyframeMarkerSizes(map)
       scheduleViewportMarkerRefresh(map)
     }
 
     const handleMapZoomEnd = () => {
+      keepTravelerCenteredDuringFollowZoom()
       updateKeyframeMarkerSizes(map)
       scheduleViewportMarkerRefresh(map)
-      if ((isUserZoomingWhileFollowingRef.current || isManualCameraOverrideRef.current) && rememberFollowZoomFromMap(map)) {
+      if (isUserZoomingWhileFollowingRef.current && rememberFollowZoomFromMap(map)) {
         startMarkerAnimation()
       }
       isUserZoomingWhileFollowingRef.current = false
