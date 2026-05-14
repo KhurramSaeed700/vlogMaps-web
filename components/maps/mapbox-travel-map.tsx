@@ -47,6 +47,16 @@ interface CameraTimelineEntry extends CameraTarget {
   coordinate: RouteCoordinate
 }
 
+interface RouteMotionContext {
+  leg: PositionedRoutedLeg | null
+  progress: number
+  remainingSeconds: number
+  durationSeconds: number
+  distanceKm: number
+  speedKmPerSecond: number
+  isStationary: boolean
+}
+
 type ReachedKeyframeMarker = {
   keyframe: Keyframe
   pointNumber: number
@@ -96,6 +106,29 @@ const cameraMovementZoomOutMinDistanceKm = 1.5
 const cameraMovementZoomOutScale = 0.38
 const cameraMovementMaxZoomOutOffset = 1.45
 const cameraMovementOutOfViewMinZoomOutOffset = 0.85
+const cameraLookAheadMinSeconds = 3
+const cameraLookAheadMaxSeconds = 16
+const cameraLookAheadMaxWeight = 0.42
+const cameraSpeedZoomOutScale = 0.45
+const cameraSpeedZoomOutMaxOffset = 1.15
+const cameraStationaryZoomInOffset = 0.45
+const cameraFollowDeadZoneMinPx = 36
+const cameraFollowDeadZoneRatio = 0.085
+const cameraFollowSoftPaddingRatio = 0.22
+const cameraCenterSmoothingMs = 980
+const cameraCenterCatchUpSmoothingMs = 460
+const cameraZoomOutSmoothingMs = 620
+const cameraZoomInSmoothingMs = 1650
+const cameraZoomCatchUpSmoothingMs = 420
+const cameraZoomDeadband = 0.08
+const manualCameraOverrideDurationMs = 6500
+const visualPlaybackExtrapolationMaxSeconds = 0.24
+const visualPlaybackNormalSmoothingMs = 170
+const visualPlaybackCatchUpSmoothingMs = 85
+const visualPlaybackPausedSmoothingMs = 130
+const visualCatchUpDurationMs = 1100
+const visualHardSeekSnapSeconds = 18
+const visualHardSeekSnapDistanceKm = 18
 const manualTrailMaxDirectDistanceKm = 30
 const manualTrailMinRouteDetourKm = 1
 const manualTrailDetourRatio = 3
@@ -108,8 +141,9 @@ const stopKeyframeMarkerColor = "#0f766e"
 const routeLineColor = pointKeyframeMarkerColor
 const keyframeMarkerMinZoom = 5
 const keyframeMarkerMaxZoom = 13
-const keyframeMarkerMinSize = 15
+const keyframeMarkerMinSize = 5
 const keyframeMarkerMaxSize = 30
+const keyframeMarkerLabelMinSize = 13
 const playbackJumpSnapThresholdSeconds = 1.25
 const keyframeMarkerViewportPaddingPx = Math.ceil(keyframeMarkerMaxSize / 2) + 6
 const visibleMapMinTileCacheSize = 384
@@ -218,13 +252,40 @@ function getSearchResultZoom(feature: GeocodingFeature, currentZoom: number) {
   return Math.max(currentZoom, 15)
 }
 
-function getKeyframeMarkerSizeForZoom(zoom: number) {
-  const zoomProgress =
+function getKeyframeMarkerZoomProgress(zoom: number) {
+  return (
     (clampNumber(zoom, keyframeMarkerMinZoom, keyframeMarkerMaxZoom) - keyframeMarkerMinZoom) /
     (keyframeMarkerMaxZoom - keyframeMarkerMinZoom)
-  const easedProgress = zoomProgress * zoomProgress * (3 - 2 * zoomProgress)
+  )
+}
 
-  return keyframeMarkerMinSize + (keyframeMarkerMaxSize - keyframeMarkerMinSize) * easedProgress
+function getKeyframeMarkerStyleForZoom(zoom: number) {
+  const zoomProgress = getKeyframeMarkerZoomProgress(zoom)
+  const sizeProgress = zoomProgress ** 2.35
+  const size = keyframeMarkerMinSize + (keyframeMarkerMaxSize - keyframeMarkerMinSize) * sizeProgress
+  const showLabel = size >= keyframeMarkerLabelMinSize
+  const fontSize = showLabel ? clampNumber(size * 0.42, 6, 12) : 0
+  const borderWidth = size < 8 ? 0.75 : clampNumber(size * 0.07, 1, 2)
+  const opacity = 0.68 + 0.3 * zoomProgress ** 0.75
+
+  return {
+    size,
+    fontSize,
+    borderWidth,
+    opacity,
+    showLabel,
+  }
+}
+
+function getKeyframeMarkerCollisionDistanceForZoom(zoom: number) {
+  const zoomProgress = getKeyframeMarkerZoomProgress(zoom)
+  if (zoomProgress >= 1) {
+    return 0
+  }
+
+  const markerStyle = getKeyframeMarkerStyleForZoom(zoom)
+  const farZoomBias = 1 - zoomProgress
+  return Math.max(markerStyle.size + 3, 8 + farZoomBias * 10)
 }
 
 function shouldTriggerTimestampHighlight(previousTime: number | null, currentTime: number, timestamp: number) {
@@ -589,6 +650,135 @@ function getRouteCoordinateAtTime(legs: PositionedRoutedLeg[], currentTime: numb
   return interpolateAlongLeg(matchingLeg, progress)
 }
 
+function getRouteTimeBounds(legs: PositionedRoutedLeg[]) {
+  if (legs.length === 0) {
+    return null
+  }
+
+  return {
+    start: legs[0].fromTime,
+    end: legs[legs.length - 1].toTime,
+  }
+}
+
+function clampRouteTime(legs: PositionedRoutedLeg[], time: number) {
+  const bounds = getRouteTimeBounds(legs)
+  if (!bounds) {
+    return time
+  }
+
+  return clampNumber(time, bounds.start, bounds.end)
+}
+
+function getRouteMotionContext(legs: PositionedRoutedLeg[], currentTime: number): RouteMotionContext {
+  if (legs.length === 0) {
+    return {
+      leg: null,
+      progress: 0,
+      remainingSeconds: 0,
+      durationSeconds: 0,
+      distanceKm: 0,
+      speedKmPerSecond: 0,
+      isStationary: true,
+    }
+  }
+
+  const leg =
+    legs.find((routeLeg) => currentTime >= routeLeg.fromTime && currentTime <= routeLeg.toTime) ??
+    (currentTime < legs[0].fromTime ? legs[0] : legs[legs.length - 1])
+  const durationSeconds = Math.max(leg.toTime - leg.fromTime, 1)
+  const progress = clampNumber((currentTime - leg.fromTime) / durationSeconds, 0, 1)
+  const remainingSeconds = Math.max(leg.toTime - currentTime, 0)
+  const isStationary = Boolean(leg.isStationary || leg.totalDistance <= 0.02)
+  const speedKmPerSecond = isStationary ? 0 : leg.totalDistance / durationSeconds
+
+  return {
+    leg,
+    progress,
+    remainingSeconds,
+    durationSeconds,
+    distanceKm: leg.totalDistance,
+    speedKmPerSecond,
+    isStationary,
+  }
+}
+
+function getCameraLookAheadSeconds(context: RouteMotionContext) {
+  if (!context.leg || context.isStationary) {
+    return 0
+  }
+
+  const speedProgress = clampNumber(
+    context.speedKmPerSecond / birdEyeMovementMinSpeedKmPerSecond,
+    0,
+    1,
+  )
+  const desiredLead = interpolateNumber(
+    cameraLookAheadMinSeconds,
+    cameraLookAheadMaxSeconds,
+    speedProgress,
+  )
+
+  return clampNumber(
+    Math.min(desiredLead, context.remainingSeconds),
+    0,
+    cameraLookAheadMaxSeconds,
+  )
+}
+
+function getCameraLookAheadCoordinate(
+  legs: PositionedRoutedLeg[],
+  currentTime: number,
+  currentCoordinate: RouteCoordinate,
+  context: RouteMotionContext,
+) {
+  const lookAheadSeconds = getCameraLookAheadSeconds(context)
+  if (lookAheadSeconds <= 0) {
+    return currentCoordinate
+  }
+
+  return getRouteCoordinateAtTime(legs, currentTime + lookAheadSeconds) ?? currentCoordinate
+}
+
+function getCameraFocusCoordinate(
+  legs: PositionedRoutedLeg[],
+  currentTime: number,
+  currentCoordinate: RouteCoordinate,
+  context: RouteMotionContext,
+) {
+  const lookAheadCoordinate = getCameraLookAheadCoordinate(legs, currentTime, currentCoordinate, context)
+  const lookAheadDistanceKm = haversineDistance(currentCoordinate, lookAheadCoordinate)
+  if (context.isStationary || lookAheadDistanceKm <= 0.02) {
+    return currentCoordinate
+  }
+
+  const speedProgress = clampNumber(
+    context.speedKmPerSecond / birdEyeMovementMinSpeedKmPerSecond,
+    0,
+    1,
+  )
+  const distanceProgress = clampNumber(lookAheadDistanceKm / 3, 0, 1)
+  const lookAheadWeight = clampNumber(
+    0.16 + speedProgress * 0.18 + distanceProgress * 0.12,
+    0.16,
+    cameraLookAheadMaxWeight,
+  )
+
+  return interpolateCoordinate(currentCoordinate, lookAheadCoordinate, lookAheadWeight)
+}
+
+function getCameraSpeedZoomOutOffset(context: RouteMotionContext) {
+  if (context.isStationary || context.speedKmPerSecond <= 0) {
+    return 0
+  }
+
+  return clampNumber(
+    Math.log2(context.speedKmPerSecond / 0.035 + 1) * cameraSpeedZoomOutScale,
+    0,
+    cameraSpeedZoomOutMaxOffset,
+  )
+}
+
 function getMotionWindowCoordinates(legs: PositionedRoutedLeg[], currentTime: number) {
   if (legs.length === 0) {
     return []
@@ -786,6 +976,7 @@ function getDynamicCameraTarget(
   currentCoordinate: RouteCoordinate,
   fallbackZoom = defaultFollowZoom,
 ): CameraTarget {
+  const motionContext = getRouteMotionContext(legs, currentTime)
   const birdEyeLeg = getBirdEyeMovementLegForTime(legs, currentTime)
   if (birdEyeLeg) {
     const birdEyeTarget = getCameraTargetForCoordinates(
@@ -809,9 +1000,19 @@ function getDynamicCameraTarget(
     }
   }
 
+  const focusCoordinate = getCameraFocusCoordinate(legs, currentTime, currentCoordinate, motionContext)
+  const dynamicZoom = getDynamicCameraZoom(map, legs, currentTime, fallbackZoom)
+  const motionZoomOffset = motionContext.isStationary
+    ? -cameraStationaryZoomInOffset
+    : getCameraSpeedZoomOutOffset(motionContext)
+
   return {
-    center: currentCoordinate,
-    zoom: getDynamicCameraZoom(map, legs, currentTime, fallbackZoom),
+    center: focusCoordinate,
+    zoom: clampNumber(
+      dynamicZoom - motionZoomOffset,
+      dynamicCameraMinZoom,
+      dynamicCameraMaxZoom,
+    ),
   }
 }
 
@@ -1045,6 +1246,46 @@ function isPointWithinMapViewport(
   )
 }
 
+function getCameraFollowSoftPadding(map: mapboxgl.Map) {
+  const container = map.getContainer()
+  const horizontalPadding = Math.max(72, container.clientWidth * cameraFollowSoftPaddingRatio)
+  const verticalPadding = Math.max(72, container.clientHeight * cameraFollowSoftPaddingRatio)
+
+  return {
+    top: Math.max(96, verticalPadding),
+    right: horizontalPadding,
+    bottom: verticalPadding,
+    left: horizontalPadding,
+  }
+}
+
+function shouldMoveCameraCenter(
+  map: mapboxgl.Map,
+  currentCenter: RouteCoordinate,
+  desiredCenter: RouteCoordinate,
+  travelerCoordinate: RouteCoordinate,
+  forceMove: boolean,
+) {
+  if (forceMove) {
+    return true
+  }
+
+  if (!isPointWithinMapViewport(map, travelerCoordinate, getCameraFollowSoftPadding(map))) {
+    return true
+  }
+
+  const container = map.getContainer()
+  const desiredPoint = map.project(desiredCenter)
+  const centerPoint = map.project(currentCenter)
+  const pixelDistance = Math.hypot(desiredPoint.x - centerPoint.x, desiredPoint.y - centerPoint.y)
+  const deadZonePx = Math.max(
+    cameraFollowDeadZoneMinPx,
+    Math.min(container.clientWidth, container.clientHeight) * cameraFollowDeadZoneRatio,
+  )
+
+  return pixelDistance >= deadZonePx
+}
+
 function runWhenStyleReady(map: mapboxgl.Map, callback: () => void) {
   if (map.isStyleLoaded()) {
     callback()
@@ -1119,12 +1360,17 @@ export function MapboxTravelMap({
   const followZoomOffsetRef = useRef(readStoredFollowZoomOffset(followZoomPreferenceKey))
   const isAutomatedCameraUpdateRef = useRef(false)
   const isUserZoomingWhileFollowingRef = useRef(false)
+  const isPlayingRef = useRef(isPlaying)
   const animationFrameRef = useRef<number | null>(null)
   const previousAnimationTimestampRef = useRef<number | null>(null)
   const previousPlaybackTimeRef = useRef<number | null>(null)
+  const targetPlaybackUpdatedAtRef = useRef(0)
+  const visualCatchUpUntilRef = useRef(0)
   const lastAnimatedRouteDrawTimestampRef = useRef(0)
   const hasFocusedCurrentLocationRef = useRef(false)
   const isFollowingRef = useRef(true)
+  const isManualCameraOverrideRef = useRef(false)
+  const manualFollowResumeTimerRef = useRef<number | null>(null)
   const appliedMapStyleRef = useRef<MapStyleOptionId>("streets")
   const isProgrammaticCameraMoveRef = useRef(false)
   const programmaticCameraMoveTimeoutRef = useRef<number | null>(null)
@@ -1148,9 +1394,19 @@ export function MapboxTravelMap({
   const [mapError, setMapError] = useState<string | null>(null)
   const [routedLegs, setRoutedLegs] = useState<RoutedLeg[]>([])
 
+  isPlayingRef.current = isPlaying
+
   const getPreferredFollowZoom = (automaticZoom: number) => {
+    const offset = followZoomOffsetRef.current
+    const positiveOffsetScale = clampNumber(
+      (automaticZoom - dynamicCameraMinZoom) / 2,
+      0.35,
+      1,
+    )
+    const scaledOffset = offset > 0 ? offset * positiveOffsetScale : offset
+
     return clampNumber(
-      automaticZoom + followZoomOffsetRef.current,
+      automaticZoom + scaledOffset,
       dynamicCameraMinZoom,
       dynamicCameraMaxZoom,
     )
@@ -1183,7 +1439,7 @@ export function MapboxTravelMap({
   }
 
   const rememberFollowZoomFromMap = (map: mapboxgl.Map) => {
-    if (!isFollowingRef.current || !canUpdateCamera(map)) {
+    if ((!isFollowingRef.current && !isManualCameraOverrideRef.current) || !canUpdateCamera(map)) {
       return false
     }
 
@@ -1220,6 +1476,98 @@ export function MapboxTravelMap({
         isAutomatedCameraUpdateRef.current = false
       }, 0)
     }
+  }
+
+  const clearManualFollowResume = (clearOverride = true) => {
+    if (manualFollowResumeTimerRef.current !== null) {
+      window.clearTimeout(manualFollowResumeTimerRef.current)
+      manualFollowResumeTimerRef.current = null
+    }
+
+    if (clearOverride) {
+      isManualCameraOverrideRef.current = false
+    }
+  }
+
+  const updateFollowCameraTarget = (
+    map: mapboxgl.Map,
+    routeTime: number,
+    routeCoordinate: RouteCoordinate,
+    fallbackZoom = map.getZoom(),
+  ) => {
+    const cameraTarget = getAutomaticCameraTarget(
+      map,
+      positionedLegsRef.current,
+      routeTime,
+      routeCoordinate,
+      fallbackZoom,
+    )
+    targetCameraCenterRef.current = cameraTarget.center
+    targetCameraZoomRef.current = getPreferredFollowZoom(cameraTarget.zoom)
+  }
+
+  const getFramePlaybackTargetTime = (timestamp: number) => {
+    const targetTime = targetRouteTimeRef.current
+    if (!isPlayingRef.current) {
+      return targetTime
+    }
+
+    const elapsedSincePlaybackUpdateSeconds = clampNumber(
+      (timestamp - targetPlaybackUpdatedAtRef.current) / 1000,
+      0,
+      visualPlaybackExtrapolationMaxSeconds,
+    )
+
+    return clampRouteTime(
+      positionedLegsRef.current,
+      targetTime + elapsedSincePlaybackUpdateSeconds,
+    )
+  }
+
+  const resumeFollowFromManualOverride = () => {
+    const map = mapInstanceRef.current
+    if (!map || !hasUsableMapSize(map)) {
+      clearManualFollowResume()
+      return
+    }
+
+    clearManualFollowResume()
+    isFollowingRef.current = true
+    setIsFollowingTraveler(true)
+
+    const currentCenter = map.getCenter()
+    animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
+    animatedCameraZoomRef.current = map.getZoom()
+    const routeTime = animatedRouteTimeRef.current || targetRouteTimeRef.current
+    const routeCoordinate = animatedRouteCoordinateRef.current ?? liveRouteCoordinateRef.current
+    updateFollowCameraTarget(map, routeTime, routeCoordinate, map.getZoom())
+    visualCatchUpUntilRef.current = window.performance.now() + visualCatchUpDurationMs
+    startMarkerAnimation()
+  }
+
+  const suspendFollowForManualInteraction = (
+    map: mapboxgl.Map,
+    durationMs = manualCameraOverrideDurationMs,
+  ) => {
+    if (!isFollowingRef.current && !isManualCameraOverrideRef.current) {
+      return
+    }
+
+    clearManualFollowResume(false)
+    clearTrackingLoading()
+    clearProgrammaticCameraMove()
+    isManualCameraOverrideRef.current = true
+    isFollowingRef.current = false
+    setIsFollowingTraveler(false)
+
+    const currentCenter = map.getCenter()
+    animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
+    animatedCameraZoomRef.current = map.getZoom()
+
+    manualFollowResumeTimerRef.current = window.setTimeout(
+      resumeFollowFromManualOverride,
+      durationMs,
+    )
   }
 
   useEffect(() => {
@@ -1318,6 +1666,7 @@ export function MapboxTravelMap({
 
   useEffect(() => {
     stopMarkerAnimation()
+    clearManualFollowResume()
     clearKeyframeMarkers()
     previousPlaybackTimeRef.current = null
     previousHighlightTimeRef.current = null
@@ -1327,6 +1676,8 @@ export function MapboxTravelMap({
     routeRevealTimeRef.current = safeCurrentKeyframe.time
     targetRouteTimeRef.current = safeCurrentKeyframe.time
     animatedRouteTimeRef.current = safeCurrentKeyframe.time
+    targetPlaybackUpdatedAtRef.current = window.performance.now()
+    visualCatchUpUntilRef.current = 0
     liveRouteCoordinateRef.current = liveRouteCoordinate
     targetRouteCoordinateRef.current = liveRouteCoordinate
     animatedRouteCoordinateRef.current = liveRouteCoordinate
@@ -1391,14 +1742,15 @@ export function MapboxTravelMap({
   }
 
   const updateKeyframeMarkerElementSize = (element: HTMLButtonElement, zoom: number) => {
-    const size = getKeyframeMarkerSizeForZoom(zoom)
-    const fontSize = clampNumber(size * 0.42, 7, 12)
-    const borderWidth = clampNumber(size * 0.075, 1.25, 2)
+    const markerStyle = getKeyframeMarkerStyleForZoom(zoom)
+    const shadowOpacity = 0.04 + getKeyframeMarkerZoomProgress(zoom) * 0.16
 
-    element.style.width = `${size}px`
-    element.style.height = `${size}px`
-    element.style.fontSize = `${fontSize}px`
-    element.style.borderWidth = `${borderWidth}px`
+    element.style.width = `${markerStyle.size}px`
+    element.style.height = `${markerStyle.size}px`
+    element.style.fontSize = `${markerStyle.fontSize}px`
+    element.style.borderWidth = `${markerStyle.borderWidth}px`
+    element.style.opacity = `${markerStyle.opacity}`
+    element.style.boxShadow = `0 ${markerStyle.showLabel ? 2 : 1}px ${markerStyle.showLabel ? 4 : 2}px rgba(0,0,0,${shadowOpacity})`
   }
 
   const updateKeyframeMarkerSizes = (map: mapboxgl.Map) => {
@@ -1409,13 +1761,35 @@ export function MapboxTravelMap({
   }
 
   const getVisibleReachedKeyframeMarkers = (map: mapboxgl.Map, reachedKeyframes: ReachedKeyframeMarker[]) => {
-    return reachedKeyframes.filter(({ keyframe }) =>
+    const viewportReachedKeyframes = reachedKeyframes.filter(({ keyframe }) =>
       isPointWithinMapViewport(
         map,
         [keyframe.lng, keyframe.lat],
         keyframeMarkerViewportPaddingPx,
       ),
     )
+    const collisionDistance = getKeyframeMarkerCollisionDistanceForZoom(map.getZoom())
+    if (collisionDistance <= 0 || viewportReachedKeyframes.length <= 1) {
+      return viewportReachedKeyframes
+    }
+
+    const acceptedMarkers: Array<{ markerKey: string; point: { x: number; y: number } }> = []
+    const acceptedMarkerKeys = new Set<string>()
+
+    for (let index = viewportReachedKeyframes.length - 1; index >= 0; index -= 1) {
+      const marker = viewportReachedKeyframes[index]
+      const point = map.project([marker.keyframe.lng, marker.keyframe.lat])
+      const overlapsAcceptedMarker = acceptedMarkers.some(({ point: acceptedPoint }) => {
+        return Math.hypot(point.x - acceptedPoint.x, point.y - acceptedPoint.y) < collisionDistance
+      })
+
+      if (!overlapsAcceptedMarker) {
+        acceptedMarkers.push({ markerKey: marker.markerKey, point })
+        acceptedMarkerKeys.add(marker.markerKey)
+      }
+    }
+
+    return viewportReachedKeyframes.filter(({ markerKey }) => acceptedMarkerKeys.has(markerKey))
   }
 
   const syncTravelerMarkerVisibility = (map: mapboxgl.Map) => {
@@ -1457,12 +1831,14 @@ export function MapboxTravelMap({
       color: white;
       font-weight: bold;
       line-height: 1;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      overflow: hidden;
+      user-select: none;
       contain: layout paint style;
-      transition: width 120ms ease, height 120ms ease, border-width 120ms ease, font-size 120ms ease, background-color 160ms ease, color 160ms ease;
+      transition: width 120ms ease, height 120ms ease, border-width 120ms ease, font-size 120ms ease, opacity 120ms ease, box-shadow 120ms ease, background-color 160ms ease, color 160ms ease;
     `
     updateKeyframeMarkerElementSize(el, map.getZoom())
     el.textContent = pointNumber.toString()
+    el.setAttribute("aria-label", `Jump to route point ${pointNumber}`)
     el.addEventListener("click", (event) => {
       event.preventDefault()
       event.stopPropagation()
@@ -1657,17 +2033,28 @@ export function MapboxTravelMap({
     previousAnimationTimestampRef.current = timestamp
 
     const currentTime = animatedRouteTimeRef.current
-    const targetTime = targetRouteTimeRef.current
-    const target = targetRouteCoordinateRef.current
-    const smoothing = 1 - Math.exp(-deltaMs / 180)
+    const targetTime = getFramePlaybackTargetTime(timestamp)
+    const target = getRouteCoordinateAtTime(positionedLegsRef.current, targetTime) ?? targetRouteCoordinateRef.current
+    const isCatchUp = timestamp < visualCatchUpUntilRef.current
+    const playbackSmoothingMs = isCatchUp
+      ? visualPlaybackCatchUpSmoothingMs
+      : isPlayingRef.current
+        ? visualPlaybackNormalSmoothingMs
+        : visualPlaybackPausedSmoothingMs
+    const smoothing = 1 - Math.exp(-deltaMs / playbackSmoothingMs)
     const nextTime = currentTime + (targetTime - currentTime) * smoothing
-    const snappedTime = Math.abs(nextTime - targetTime) < 0.08 ? targetTime : nextTime
+    const snappedTime = Math.abs(nextTime - targetTime) < (isPlayingRef.current ? 0.025 : 0.01) ? targetTime : nextTime
     const snappedCoordinate = getRouteCoordinateAtTime(positionedLegsRef.current, snappedTime) ?? target
 
     animatedRouteTimeRef.current = snappedTime
     routeRevealTimeRef.current = snappedTime
     animatedRouteCoordinateRef.current = snappedCoordinate
     marker.setLngLat(snappedCoordinate)
+
+    if (isFollowingRef.current && canUpdateCamera(map)) {
+      updateFollowCameraTarget(map, snappedTime, snappedCoordinate, animatedCameraZoomRef.current)
+    }
+
     const shouldDrawRoute =
       timestamp - lastAnimatedRouteDrawTimestampRef.current >= 50 ||
       Math.abs(snappedTime - targetTime) < 0.08
@@ -1677,40 +2064,68 @@ export function MapboxTravelMap({
     }
 
     let snappedZoom = animatedCameraZoomRef.current
+    let effectiveCameraCenterTarget = targetCameraCenterRef.current
+    let effectiveCameraZoomTarget = targetCameraZoomRef.current
+    let isCameraCenterHeld = false
     if (isFollowingRef.current && canUpdateCamera(map)) {
       const currentZoom = animatedCameraZoomRef.current
       const currentCenter = animatedCameraCenterRef.current
-      const targetCenter = targetCameraCenterRef.current
-      const distanceToTargetKm = haversineDistance(currentCenter, targetCenter)
+      const desiredCenter = targetCameraCenterRef.current
+      const distanceToTargetKm = haversineDistance(currentCenter, desiredCenter)
       const targetZoom = targetCameraZoomRef.current
-      const isDestinationVisible = isPointWithinMapViewport(
+      const isTravelerVisible = isPointWithinMapViewport(
         map,
-        targetRouteCoordinateRef.current,
+        snappedCoordinate,
         travelerMarkerViewportPadding,
       )
       const zoomOutOffset = Math.max(
         getCameraMovementZoomOutOffset(distanceToTargetKm),
-        isDestinationVisible ? 0 : cameraMovementOutOfViewMinZoomOutOffset,
+        isTravelerVisible ? 0 : cameraMovementOutOfViewMinZoomOutOffset,
       )
       const movementAwareTargetZoom = clampNumber(
         targetZoom - zoomOutOffset,
         dynamicCameraMinZoom,
         dynamicCameraMaxZoom,
       )
+      effectiveCameraZoomTarget =
+        !isCatchUp &&
+        isPlayingRef.current &&
+        Math.abs(movementAwareTargetZoom - currentZoom) < cameraZoomDeadband
+          ? currentZoom
+          : movementAwareTargetZoom
       const zoomSmoothing = 1 - Math.exp(
-        -deltaMs / (movementAwareTargetZoom < currentZoom ? 180 : isDestinationVisible ? 1500 : 620),
+        -deltaMs /
+          (isCatchUp
+            ? cameraZoomCatchUpSmoothingMs
+            : effectiveCameraZoomTarget < currentZoom
+              ? cameraZoomOutSmoothingMs
+              : cameraZoomInSmoothingMs),
       )
-      const nextZoom = currentZoom + (movementAwareTargetZoom - currentZoom) * zoomSmoothing
-      snappedZoom = Math.abs(nextZoom - movementAwareTargetZoom) < 0.015 ? movementAwareTargetZoom : nextZoom
+      const nextZoom = currentZoom + (effectiveCameraZoomTarget - currentZoom) * zoomSmoothing
+      snappedZoom =
+        Math.abs(nextZoom - effectiveCameraZoomTarget) < 0.015
+          ? effectiveCameraZoomTarget
+          : nextZoom
       animatedCameraZoomRef.current = snappedZoom
-      const centerSmoothing = 1 - Math.exp(-deltaMs / 360)
+      const shouldMoveCenter = shouldMoveCameraCenter(
+        map,
+        currentCenter,
+        desiredCenter,
+        snappedCoordinate,
+        isCatchUp || !isPlayingRef.current,
+      )
+      effectiveCameraCenterTarget = shouldMoveCenter ? desiredCenter : currentCenter
+      isCameraCenterHeld = !shouldMoveCenter
+      const centerSmoothing = 1 - Math.exp(
+        -deltaMs / (isCatchUp ? cameraCenterCatchUpSmoothingMs : cameraCenterSmoothingMs),
+      )
       const nextCenter: RouteCoordinate = [
-        currentCenter[0] + (targetCenter[0] - currentCenter[0]) * centerSmoothing,
-        currentCenter[1] + (targetCenter[1] - currentCenter[1]) * centerSmoothing,
+        currentCenter[0] + (effectiveCameraCenterTarget[0] - currentCenter[0]) * centerSmoothing,
+        currentCenter[1] + (effectiveCameraCenterTarget[1] - currentCenter[1]) * centerSmoothing,
       ]
       const snappedCenter =
-        coordinateDistance(nextCenter, targetCenter) < 0.00001
-          ? targetCenter
+        coordinateDistance(nextCenter, effectiveCameraCenterTarget) < 0.00001
+          ? effectiveCameraCenterTarget
           : nextCenter
       animatedCameraCenterRef.current = snappedCenter
 
@@ -1731,8 +2146,13 @@ export function MapboxTravelMap({
     syncTravelerMarkerVisibility(map)
 
     const hasReachedCoordinate = Math.abs(snappedTime - targetTime) < 0.08 || coordinateDistance(snappedCoordinate, target) < 0.00001
-    const hasReachedCenter = !isFollowingRef.current || coordinateDistance(animatedCameraCenterRef.current, targetCameraCenterRef.current) < 0.00001
-    const hasReachedZoom = !isFollowingRef.current || Math.abs(snappedZoom - targetCameraZoomRef.current) < 0.015
+    const hasReachedCenter =
+      !isFollowingRef.current ||
+      isCameraCenterHeld ||
+      coordinateDistance(animatedCameraCenterRef.current, effectiveCameraCenterTarget) < 0.00001
+    const hasReachedZoom =
+      !isFollowingRef.current ||
+      Math.abs(snappedZoom - effectiveCameraZoomTarget) < 0.015
     if (hasReachedCoordinate && hasReachedCenter && hasReachedZoom) {
       stopMarkerAnimation()
       return
@@ -1754,31 +2174,34 @@ export function MapboxTravelMap({
     stopMarkerAnimation()
     clearTrackingLoading()
     clearProgrammaticCameraMove()
+    const previousCoordinate = animatedRouteCoordinateRef.current
+    const routeJumpDistanceKm = haversineDistance(previousCoordinate, nextCoordinate)
+    const routeJumpSeconds = Math.abs(nextTime - animatedRouteTimeRef.current)
+    const shouldHardSnapTraveler =
+      routeJumpSeconds >= visualHardSeekSnapSeconds ||
+      routeJumpDistanceKm >= visualHardSeekSnapDistanceKm
+
     targetRouteTimeRef.current = nextTime
-    animatedRouteTimeRef.current = nextTime
-    routeRevealTimeRef.current = nextTime
     targetRouteCoordinateRef.current = nextCoordinate
-    animatedRouteCoordinateRef.current = nextCoordinate
-    markerRef.current?.setLngLat(nextCoordinate)
+    targetPlaybackUpdatedAtRef.current = window.performance.now()
+    visualCatchUpUntilRef.current = targetPlaybackUpdatedAtRef.current + visualCatchUpDurationMs
+
+    if (shouldHardSnapTraveler) {
+      animatedRouteTimeRef.current = nextTime
+      routeRevealTimeRef.current = nextTime
+      animatedRouteCoordinateRef.current = nextCoordinate
+      markerRef.current?.setLngLat(nextCoordinate)
+    }
 
     if (isFollowingRef.current && canUpdateCamera(map)) {
-      const cameraTarget = getAutomaticCameraTarget(
-        map,
-        positionedLegsRef.current,
-        nextTime,
-        nextCoordinate,
-        map.getZoom(),
-      )
-      targetCameraCenterRef.current = cameraTarget.center
-      targetCameraZoomRef.current = getPreferredFollowZoom(cameraTarget.zoom)
-      animatedCameraCenterRef.current = cameraTarget.center
-      animatedCameraZoomRef.current = targetCameraZoomRef.current
+      updateFollowCameraTarget(map, nextTime, nextCoordinate, map.getZoom())
+      const currentCenter = map.getCenter()
+      animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
+      animatedCameraZoomRef.current = map.getZoom()
 
       try {
         map.stop()
-        runAutomatedCameraUpdate(() => {
-          map.jumpTo({ center: cameraTarget.center, zoom: targetCameraZoomRef.current })
-        })
+        startMarkerAnimation()
         setMapError(null)
       } catch {
         setMapError("The map view could not center on the traveler yet.")
@@ -1791,6 +2214,7 @@ export function MapboxTravelMap({
 
     drawRoute(map)
     syncTravelerMarkerVisibility(map)
+    startMarkerAnimation()
   }
 
   const updateRouteSource = (map: mapboxgl.Map, coordinates: RouteCoordinate[]) => {
@@ -1810,6 +2234,11 @@ export function MapboxTravelMap({
 
   const ensureRouteLayer = (map: mapboxgl.Map) => {
     if (map.getLayer("route")) {
+      try {
+        map.moveLayer("route")
+      } catch {
+        // Some style reload phases briefly reject layer moves; the next draw will retry.
+      }
       return
     }
 
@@ -1823,10 +2252,16 @@ export function MapboxTravelMap({
       },
       paint: {
         "line-color": routeLineColor,
-        "line-width": 4,
-        "line-opacity": 0.8,
+        "line-width": 4.5,
+        "line-opacity": 0.92,
       },
     })
+
+    try {
+      map.moveLayer("route")
+    } catch {
+      // Some style reload phases briefly reject layer moves; the next draw will retry.
+    }
   }
 
   const drawRoute = (map: mapboxgl.Map) => {
@@ -2048,9 +2483,7 @@ export function MapboxTravelMap({
 
     const handleUserMapDrag = (event: unknown) => {
       if (hasOriginalMapEvent(event)) {
-        isFollowingRef.current = false
-        setIsFollowingTraveler(false)
-        clearProgrammaticCameraMove()
+        suspendFollowForManualInteraction(map)
       }
     }
 
@@ -2069,7 +2502,7 @@ export function MapboxTravelMap({
       }
 
       if (hasOriginalMapEvent(event)) {
-        clearProgrammaticCameraMove()
+        suspendFollowForManualInteraction(map)
       }
     }
 
@@ -2081,7 +2514,7 @@ export function MapboxTravelMap({
     const handleMapZoomEnd = () => {
       updateKeyframeMarkerSizes(map)
       scheduleViewportMarkerRefresh(map)
-      if (isUserZoomingWhileFollowingRef.current && rememberFollowZoomFromMap(map)) {
+      if ((isUserZoomingWhileFollowingRef.current || isManualCameraOverrideRef.current) && rememberFollowZoomFromMap(map)) {
         startMarkerAnimation()
       }
       isUserZoomingWhileFollowingRef.current = false
@@ -2140,6 +2573,7 @@ export function MapboxTravelMap({
     return () => {
       stopMarkerAnimation()
       cancelViewportMarkerRefresh()
+      clearManualFollowResume()
       clearTrackingLoading(false)
       clearProgrammaticCameraMove()
       destroyRoutePreloader()
@@ -2262,18 +2696,11 @@ export function MapboxTravelMap({
         const nextPlaybackTime = safeCurrentKeyframe.time
         const previousPlaybackTime = previousPlaybackTimeRef.current
         previousPlaybackTimeRef.current = nextPlaybackTime
+        targetPlaybackUpdatedAtRef.current = window.performance.now()
 
         map.resize()
         targetRouteCoordinateRef.current = liveRouteCoordinate
-        const cameraTarget = getAutomaticCameraTarget(
-          map,
-          positionedLegs,
-          nextPlaybackTime,
-          liveRouteCoordinate,
-          map.getZoom(),
-        )
-        targetCameraCenterRef.current = cameraTarget.center
-        targetCameraZoomRef.current = getPreferredFollowZoom(cameraTarget.zoom)
+        updateFollowCameraTarget(map, nextPlaybackTime, liveRouteCoordinate, map.getZoom())
 
         if (!hasFocusedCurrentLocationRef.current) {
           targetRouteTimeRef.current = nextPlaybackTime
@@ -2532,6 +2959,7 @@ export function MapboxTravelMap({
     }
 
     clearTrackingLoading()
+    clearManualFollowResume()
     isFollowingRef.current = false
     setIsFollowingTraveler(false)
     map.stop()
@@ -2613,6 +3041,7 @@ export function MapboxTravelMap({
         return
       }
 
+      clearManualFollowResume()
       const followTime = Number.isFinite(animatedRouteTimeRef.current)
         ? animatedRouteTimeRef.current
         : safeCurrentKeyframe.time
@@ -2621,15 +3050,7 @@ export function MapboxTravelMap({
       setIsFollowingTraveler(true)
       targetRouteTimeRef.current = safeCurrentKeyframe.time
       targetRouteCoordinateRef.current = liveRouteCoordinate
-      const cameraTarget = getAutomaticCameraTarget(
-        map,
-        positionedLegsRef.current,
-        followTime,
-        getCurrentTravelerCenter(),
-        map.getZoom(),
-      )
-      targetCameraCenterRef.current = cameraTarget.center
-      targetCameraZoomRef.current = getPreferredFollowZoom(cameraTarget.zoom)
+      updateFollowCameraTarget(map, followTime, getCurrentTravelerCenter(), map.getZoom())
       const currentCenter = map.getCenter()
       animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
       animatedCameraZoomRef.current = map.getZoom()
@@ -2656,6 +3077,7 @@ export function MapboxTravelMap({
 
   const toggleTravelerTracking = () => {
     if (isFollowingRef.current) {
+      clearManualFollowResume()
       clearTrackingLoading()
       isFollowingRef.current = false
       setIsFollowingTraveler(false)
@@ -2667,6 +3089,7 @@ export function MapboxTravelMap({
 
   const fitToRoute = () => {
     if (mapInstanceRef.current) {
+      clearManualFollowResume()
       clearTrackingLoading()
       isFollowingRef.current = false
       setIsFollowingTraveler(false)
@@ -2689,20 +3112,16 @@ export function MapboxTravelMap({
         return
       }
 
+      if (!isFollowingRef.current) {
+        return
+      }
+
       isFollowingRef.current = true
       setIsFollowingTraveler(true)
       targetRouteTimeRef.current = safeCurrentKeyframe.time
       targetRouteCoordinateRef.current = liveRouteCoordinate
 
-      const cameraTarget = getAutomaticCameraTarget(
-        map,
-        positionedLegsRef.current,
-        safeCurrentKeyframe.time,
-        liveRouteCoordinate,
-        map.getZoom(),
-      )
-      targetCameraCenterRef.current = cameraTarget.center
-      targetCameraZoomRef.current = getPreferredFollowZoom(cameraTarget.zoom)
+      updateFollowCameraTarget(map, safeCurrentKeyframe.time, liveRouteCoordinate, map.getZoom())
 
       const currentCenter = map.getCenter()
       animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
