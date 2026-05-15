@@ -139,10 +139,10 @@ const markerHighlightDurationMs = 1000
 const pointKeyframeMarkerColor = "#ea580c"
 const stopKeyframeMarkerColor = "#0f766e"
 const travelerMarkerColor = "#ef4444"
-const travelerMarkerDesktopScale = 1.2
-const travelerMarkerDefaultWidth = 27
-const travelerMarkerDefaultHeight = 41
-const mobileMapMaxWidthPx = 639
+const travelerMarkerMinWidth = 16
+const travelerMarkerMaxWidth = 29
+const travelerMarkerMinHeight = 24
+const travelerMarkerMaxHeight = 44
 const routeLineColor = pointKeyframeMarkerColor
 const keyframeMarkerMinZoom = 5
 const keyframeMarkerMaxZoom = 13
@@ -282,9 +282,67 @@ function getKeyframeMarkerStyleForZoom(zoom: number) {
   }
 }
 
-function getTravelerMarkerScaleForZoom(zoom: number) {
-  const markerStyle = getKeyframeMarkerStyleForZoom(zoom)
-  return travelerMarkerDesktopScale * (markerStyle.size / keyframeMarkerMaxSize)
+function getTravelerMarkerStyleForZoom(zoom: number) {
+  const zoomProgress = getKeyframeMarkerZoomProgress(zoom)
+  const sizeProgress = 0.18 + 0.82 * zoomProgress ** 1.45
+  const width = travelerMarkerMinWidth + (travelerMarkerMaxWidth - travelerMarkerMinWidth) * sizeProgress
+  const height = travelerMarkerMinHeight + (travelerMarkerMaxHeight - travelerMarkerMinHeight) * sizeProgress
+
+  return {
+    width,
+    height,
+  }
+}
+
+function createTravelerMarkerElement(zoom: number) {
+  const element = document.createElement("div")
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path")
+  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle")
+
+  element.className = "traveler-marker"
+  element.style.cssText = `
+    display: block;
+    pointer-events: none;
+    user-select: none;
+    transform-origin: bottom center;
+    contain: layout paint style;
+    transition: width 120ms ease, height 120ms ease;
+  `
+
+  svg.setAttribute("viewBox", "0 0 27 41")
+  svg.setAttribute("aria-hidden", "true")
+  svg.style.cssText = "display:block;width:100%;height:100%;overflow:visible;"
+
+  path.setAttribute(
+    "d",
+    "M13.5 0C6.1 0 0 6.1 0 13.5C0 23.6 13.5 41 13.5 41C13.5 41 27 23.6 27 13.5C27 6.1 20.9 0 13.5 0Z",
+  )
+  path.setAttribute("fill", travelerMarkerColor)
+  path.setAttribute("stroke", "white")
+  path.setAttribute("stroke-width", "2")
+
+  circle.setAttribute("cx", "13.5")
+  circle.setAttribute("cy", "13.5")
+  circle.setAttribute("r", "4.4")
+  circle.setAttribute("fill", "white")
+  circle.setAttribute("opacity", "0.95")
+
+  svg.append(path, circle)
+  element.append(svg)
+
+  applyTravelerMarkerSize(element, zoom)
+
+  return element
+}
+
+function applyTravelerMarkerSize(element: HTMLElement, zoom: number) {
+  const markerStyle = getTravelerMarkerStyleForZoom(zoom)
+
+  element.style.width = `${markerStyle.width}px`
+  element.style.height = `${markerStyle.height}px`
+
+  return markerStyle
 }
 
 function getKeyframeMarkerCollisionDistanceForZoom(zoom: number) {
@@ -1314,10 +1372,6 @@ function canUpdateCamera(map: mapboxgl.Map) {
   return hasUsableMapSize(map) && map.isStyleLoaded()
 }
 
-function isMobileMapView(map: mapboxgl.Map) {
-  return map.getContainer().clientWidth <= mobileMapMaxWidthPx
-}
-
 function hasOriginalMapEvent(event: unknown) {
   return Boolean(
     typeof event === "object" &&
@@ -1348,7 +1402,7 @@ export function MapboxTravelMap({
   const routePreloadSignatureRef = useRef("")
   const routePreloadGenerationRef = useRef(0)
   const markerRef = useRef<mapboxgl.Marker | null>(null)
-  const travelerMarkerScaleRef = useRef<number | null>(null)
+  const travelerMarkerSizeRef = useRef<string | null>(null)
   const keyframeMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map())
   const keyframeMarkerElementsRef = useRef<Map<string, { element: HTMLButtonElement; time: number }>>(new Map())
   const reachedKeyframeMarkersRef = useRef<ReachedKeyframeMarker[]>([])
@@ -1835,24 +1889,13 @@ export function MapboxTravelMap({
       return
     }
 
-    const scale = isMobileMapView(map) ? getTravelerMarkerScaleForZoom(map.getZoom()) : travelerMarkerDesktopScale
-    if (travelerMarkerScaleRef.current !== null && Math.abs(travelerMarkerScaleRef.current - scale) < 0.005) {
+    const markerStyle = applyTravelerMarkerSize(marker.getElement(), map.getZoom())
+    const nextSizeKey = `${Math.round(markerStyle.width * 10)}:${Math.round(markerStyle.height * 10)}`
+    if (travelerMarkerSizeRef.current === nextSizeKey) {
       return
     }
 
-    const element = marker.getElement()
-    const svg = element.querySelector<SVGSVGElement>("svg")
-    const width = travelerMarkerDefaultWidth * scale
-    const height = travelerMarkerDefaultHeight * scale
-
-    travelerMarkerScaleRef.current = scale
-    element.style.width = `${width}px`
-    element.style.height = `${height}px`
-
-    if (svg) {
-      svg.setAttribute("width", `${width}`)
-      svg.setAttribute("height", `${height}`)
-    }
+    travelerMarkerSizeRef.current = nextSizeKey
   }
 
   const createKeyframeMarker = (
@@ -2517,8 +2560,8 @@ export function MapboxTravelMap({
       })
 
     const marker = new mapboxgl.Marker({
-      color: travelerMarkerColor,
-      scale: travelerMarkerDesktopScale,
+      element: createTravelerMarkerElement(map.getZoom()),
+      anchor: "bottom",
     })
       .setLngLat(liveRouteCoordinateRef.current)
       .addTo(map)
@@ -2666,7 +2709,7 @@ export function MapboxTravelMap({
       map.remove()
       mapInstanceRef.current = null
       markerRef.current = null
-      travelerMarkerScaleRef.current = null
+      travelerMarkerSizeRef.current = null
     }
   }, [])
 
