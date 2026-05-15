@@ -8,6 +8,7 @@ import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
 import { ThemeToggle } from "@/components/app-shell/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { isCreatorEmail } from "@/lib/creator-access"
 
 interface HomeHeaderProps {
   isPending: boolean
@@ -24,7 +25,13 @@ export function HomeHeader({
   onSubmit,
   onYoutubeUrlChange,
 }: HomeHeaderProps) {
-  const { isLoaded, isSignedIn } = useUser()
+  const { isLoaded, isSignedIn, user } = useUser()
+  const email = user?.primaryEmailAddress?.emailAddress ?? null
+  const isApprovedCreator = isLoaded && isSignedIn && isCreatorEmail(email)
+  const creatorCtaHref = isApprovedCreator ? "/creator/dashboard" : "/creator/apply"
+  const creatorCtaLabel = isApprovedCreator ? "Go to Dashboard" : "Become a creator"
+  const mobileCreatorCtaLabel = isApprovedCreator ? "CD" : "CM"
+  const creatorCtaAriaLabel = isApprovedCreator ? "Go to creator dashboard" : "Open creator mode"
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
@@ -52,11 +59,25 @@ export function HomeHeader({
         <div className="ml-auto flex items-center gap-2">
           <ThemeToggle />
 
-          <Link href="/creator/apply" className="hidden md:block">
-            <Button variant="outline" className="rounded-full">
-              Become a creator
-            </Button>
-          </Link>
+          {!isLoaded ? (
+            <div className="hidden h-10 w-[148px] md:block" aria-hidden="true" />
+          ) : (
+            <Link href={creatorCtaHref} className="hidden md:block" aria-label={creatorCtaAriaLabel}>
+              <Button variant="outline" className="rounded-full">
+                {creatorCtaLabel}
+              </Button>
+            </Link>
+          )}
+
+          {!isLoaded ? (
+            <div className="h-9 w-11 md:hidden" aria-hidden="true" />
+          ) : (
+            <Link href={creatorCtaHref} className="md:hidden" aria-label={creatorCtaAriaLabel}>
+              <Button variant="outline" size="sm" className="h-9 min-w-11 rounded-full px-3">
+                {mobileCreatorCtaLabel}
+              </Button>
+            </Link>
+          )}
 
           {!isLoaded ? (
             <div className="h-9 w-[72px] sm:h-10" aria-hidden="true" />

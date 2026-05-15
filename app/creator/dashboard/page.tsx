@@ -152,25 +152,24 @@ function CreatorDashboardContent() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
-        <div className="mx-auto flex max-w-screen-2xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-          <TravelMapLogo />
+        <div className="mx-auto flex max-w-screen-2xl items-center justify-between gap-2 px-3 py-2.5 sm:px-6 sm:py-3 lg:px-8">
+          <TravelMapLogo className="gap-2" textClassName="hidden sm:inline" />
 
           <div className="flex items-center gap-2">
+            <span className="rounded-full border border-border bg-card px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground sm:text-[11px]">
+              Creator Dashboard
+            </span>
             <ThemeToggle />
             <UserButton />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8">
-        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <main className="mx-auto max-w-screen-2xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
+        <div className="mb-4 flex flex-col gap-3 sm:mb-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm">
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-              Creator workspace
-            </div>
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
                 Welcome back, {user?.firstName || "Creator"}
               </h1>
               <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
@@ -179,80 +178,81 @@ function CreatorDashboardContent() {
             </div>
           </div>
 
-          <Link href="/creator/video/new">
-            <Button className="h-10 rounded-lg px-4">
+          <Link href="/creator/video/new" className="w-full sm:w-auto">
+            <Button className="h-9 w-full rounded-lg px-4 sm:h-10 sm:w-auto">
               <Plus className="mr-2 h-4 w-4" />
-              Paste YouTube URL
+              <span className="sm:hidden">New video</span>
+              <span className="hidden sm:inline">Paste YouTube URL</span>
             </Button>
           </Link>
         </div>
 
-        <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mb-4 grid grid-cols-2 gap-2 sm:mb-6 sm:gap-3 lg:grid-cols-5">
           <Card className="overflow-hidden border-border bg-card shadow-sm">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between gap-4">
+            <CardContent className="p-3 sm:p-5">
+              <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
-                  <p className="text-xs font-semibold uppercase text-muted-foreground">Videos</p>
-                  <p className="mt-2 text-3xl font-semibold tracking-tight">{stats.totalVideos}</p>
+                  <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Videos</p>
+                  <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{stats.totalVideos}</p>
                 </div>
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300">
-                  <Youtube className="h-5 w-5" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300 sm:h-10 sm:w-10">
+                  <Youtube className="h-4 w-4 sm:h-5 sm:w-5" />
                 </span>
               </div>
             </CardContent>
           </Card>
 
           <Card className="overflow-hidden border-border bg-card shadow-sm">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between gap-4">
+            <CardContent className="p-3 sm:p-5">
+              <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
-                  <p className="text-xs font-semibold uppercase text-muted-foreground">Published</p>
-                  <p className="mt-2 text-3xl font-semibold tracking-tight">{stats.publishedVideos}</p>
+                  <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Published</p>
+                  <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{stats.publishedVideos}</p>
                 </div>
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
-                  <CheckCircle2 className="h-5 w-5" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300 sm:h-10 sm:w-10">
+                  <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />
                 </span>
               </div>
             </CardContent>
           </Card>
 
           <Card className="overflow-hidden border-border bg-card shadow-sm">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between gap-4">
+            <CardContent className="p-3 sm:p-5">
+              <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
-                  <p className="text-xs font-semibold uppercase text-muted-foreground">Views</p>
-                  <p className="mt-2 text-3xl font-semibold tracking-tight">{formatCompactNumber(stats.totalViews)}</p>
+                  <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Views</p>
+                  <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{formatCompactNumber(stats.totalViews)}</p>
                 </div>
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-300">
-                  <Eye className="h-5 w-5" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-300 sm:h-10 sm:w-10">
+                  <Eye className="h-4 w-4 sm:h-5 sm:w-5" />
                 </span>
               </div>
             </CardContent>
           </Card>
 
           <Card className="overflow-hidden border-border bg-card shadow-sm">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between gap-4">
+            <CardContent className="p-3 sm:p-5">
+              <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
-                  <p className="text-xs font-semibold uppercase text-muted-foreground">Map Views</p>
-                  <p className="mt-2 text-3xl font-semibold tracking-tight">{formatCompactNumber(stats.totalMapViews)}</p>
+                  <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Map Views</p>
+                  <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{formatCompactNumber(stats.totalMapViews)}</p>
                 </div>
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300">
-                  <MapPin className="h-5 w-5" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300 sm:h-10 sm:w-10">
+                  <MapPin className="h-4 w-4 sm:h-5 sm:w-5" />
                 </span>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="overflow-hidden border-border bg-card shadow-sm">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between gap-4">
+          <Card className="col-span-2 overflow-hidden border-border bg-card shadow-sm lg:col-span-1">
+            <CardContent className="p-3 sm:p-5">
+              <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
-                  <p className="text-xs font-semibold uppercase text-muted-foreground">Engagement</p>
-                  <p className="mt-2 text-3xl font-semibold tracking-tight text-emerald-700 dark:text-emerald-300">{stats.avgEngagement}%</p>
+                  <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Engagement</p>
+                  <p className="mt-1 text-2xl font-semibold tracking-tight text-emerald-700 dark:text-emerald-300 sm:mt-2 sm:text-3xl">{stats.avgEngagement}%</p>
                 </div>
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
-                  <TrendingUp className="h-5 w-5" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300 sm:h-10 sm:w-10">
+                  <TrendingUp className="h-4 w-4 sm:h-5 sm:w-5" />
                 </span>
               </div>
             </CardContent>
