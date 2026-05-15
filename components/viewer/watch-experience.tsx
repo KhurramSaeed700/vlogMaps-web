@@ -102,7 +102,7 @@ export function WatchExperience({ video }: WatchExperienceProps) {
 
   return (
     <div ref={wrapperRef} className="flex h-[100dvh] flex-col overflow-hidden bg-black text-white">
-      <header className="absolute left-0 right-0 top-0 z-50 bg-black/75 p-2.5 backdrop-blur-sm sm:p-3 xl:p-4">
+      <header className="relative z-50 shrink-0 bg-black/75 p-1.5 backdrop-blur-sm sm:p-2">
         <div className="flex w-full items-center justify-between gap-3">
           <div className="flex items-center">
             <Link href="/">
@@ -141,13 +141,13 @@ export function WatchExperience({ video }: WatchExperienceProps) {
       {feedbackMessage && (
         <div
           role="status"
-          className="absolute left-1/2 top-14 z-[60] -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-950 shadow-lg sm:top-16"
+          className="absolute left-1/2 top-12 z-[60] -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-950 shadow-lg sm:top-14"
         >
           {feedbackMessage}
         </div>
       )}
 
-      <div className="flex min-h-0 w-full flex-1 flex-col pt-14 sm:pt-16 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:pt-0 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div className="flex min-h-0 w-full flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <div className="relative z-10 shrink-0 overflow-hidden bg-black lg:h-full lg:min-h-0">
           <div className="relative aspect-video w-full overflow-hidden bg-gray-950 lg:h-full lg:aspect-auto">
             <YouTubePlayer

@@ -3338,7 +3338,7 @@ export function MapboxTravelMap({
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-x-2 top-2 z-30 flex flex-col gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 lg:top-16 xl:flex-row xl:items-start xl:justify-between">
+      <div className="pointer-events-none absolute inset-x-2 top-2 z-30 flex flex-col gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 xl:flex-row xl:items-start xl:justify-between">
         <form onSubmit={searchLocations} className="pointer-events-auto w-full max-w-full sm:w-[18rem] 2xl:w-[21rem]">
           <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 p-1 shadow-lg backdrop-blur-md sm:gap-2 sm:rounded-xl">
             <Search className="ml-2 h-4 w-4 shrink-0 text-white/60" />
