@@ -3340,8 +3340,8 @@ export function MapboxTravelMap({
 
       <div className="pointer-events-none absolute inset-x-2 top-2 z-30 flex flex-col gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 lg:top-16 xl:flex-row xl:items-start xl:justify-between">
         <form onSubmit={searchLocations} className="pointer-events-auto w-full max-w-full sm:w-[18rem] 2xl:w-[21rem]">
-          <div className="flex items-center gap-1.5 rounded-lg bg-white/95 p-1 shadow-lg backdrop-blur-sm sm:gap-2 sm:rounded-xl">
-            <Search className="ml-2 h-4 w-4 shrink-0 text-slate-500" />
+          <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 p-1 shadow-lg backdrop-blur-md sm:gap-2 sm:rounded-xl">
+            <Search className="ml-2 h-4 w-4 shrink-0 text-white/60" />
             <Input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
@@ -3354,10 +3354,10 @@ export function MapboxTravelMap({
               aria-activedescendant={
                 activeSearchIndex >= 0 ? `watch-map-search-suggestion-${activeSearchIndex}` : undefined
               }
-              className="h-8 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:h-9"
+              className="h-8 border-0 bg-transparent px-0 text-sm text-white shadow-none placeholder:text-white/60 focus-visible:ring-0 focus-visible:ring-offset-0 sm:h-9"
             />
             {searchQuery && (
-              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={clearSearch}>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-white/75 hover:bg-white/10 hover:text-white" onClick={clearSearch}>
                 <X className="h-4 w-4" />
               </Button>
             )}
@@ -3365,7 +3365,7 @@ export function MapboxTravelMap({
               type="submit"
               size="sm"
               disabled={isSearching}
-              className="h-8 bg-slate-950 px-3 text-white hover:bg-slate-800 disabled:bg-slate-800 sm:h-9"
+              className="h-8 bg-white/20 px-3 text-white hover:bg-white/25 disabled:bg-white/10 disabled:text-white/50 sm:h-9"
             >
               {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : "Go"}
             </Button>
@@ -3375,10 +3375,10 @@ export function MapboxTravelMap({
             <div
               id="watch-map-search-suggestions"
               role="listbox"
-              className="mt-1.5 max-h-[min(18rem,calc(100dvh-9rem))] overflow-y-auto rounded-lg bg-white/95 shadow-lg backdrop-blur-sm sm:mt-2 sm:rounded-xl"
+              className="mt-1.5 max-h-[min(18rem,calc(100dvh-9rem))] overflow-y-auto rounded-lg border border-white/10 bg-slate-950/75 shadow-lg backdrop-blur-md sm:mt-2 sm:rounded-xl"
             >
               {isSearching && searchResults.length === 0 && (
-                <div className="flex items-center gap-2 px-3 py-2 text-sm text-slate-500">
+                <div className="flex items-center gap-2 px-3 py-2 text-sm text-white/70">
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Searching...
                 </div>
@@ -3390,26 +3390,26 @@ export function MapboxTravelMap({
                   type="button"
                   role="option"
                   aria-selected={activeSearchIndex === index}
-                  className={`block w-full px-3 py-2 text-left text-sm text-slate-700 ${
-                    activeSearchIndex === index ? "bg-slate-100" : "hover:bg-slate-100"
+                  className={`block w-full px-3 py-2 text-left text-sm text-white/75 ${
+                    activeSearchIndex === index ? "bg-white/20" : "hover:bg-white/10"
                   }`}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => selectSearchResult(feature)}
                 >
-                  <span className="line-clamp-1 font-medium text-slate-950">{feature.text}</span>
-                  <span className="line-clamp-1 text-xs text-slate-500">{feature.place_name}</span>
+                  <span className="line-clamp-1 font-medium text-white">{feature.text}</span>
+                  <span className="line-clamp-1 text-xs text-white/60">{feature.place_name}</span>
                 </button>
               ))}
-              {searchError && <p className="px-3 py-2 text-sm text-slate-500">{searchError}</p>}
+              {searchError && <p className="px-3 py-2 text-sm text-white/70">{searchError}</p>}
               {googleMapsQuery && (
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between gap-3 border-t border-slate-200 px-3 py-2 text-left text-sm font-medium text-slate-950 hover:bg-slate-100"
+                  className="flex w-full items-center justify-between gap-3 border-t border-white/10 px-3 py-2 text-left text-sm font-medium text-white hover:bg-white/10"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={openGoogleMapsSearch}
                 >
                   <span className="truncate">Search Google Maps</span>
-                  <ExternalLink className="h-4 w-4 shrink-0 text-slate-500" />
+                  <ExternalLink className="h-4 w-4 shrink-0 text-white/60" />
                 </button>
               )}
             </div>
@@ -3417,15 +3417,15 @@ export function MapboxTravelMap({
         </form>
 
         <div className="pointer-events-auto flex max-w-full flex-wrap justify-end gap-1 self-end sm:gap-2 xl:self-start">
-          <div className="flex shrink-0 items-center rounded-lg border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
+          <div className="flex shrink-0 items-center rounded-lg border border-white/10 bg-slate-950/60 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
             <Button
               type="button"
               size="icon"
               variant="ghost"
               className={`h-8 w-8 rounded-lg hover:text-white ${
                 isFollowingTraveler
-                  ? "bg-white text-slate-950 hover:bg-white/90"
-                  : "text-white hover:bg-white/15"
+                  ? "bg-white/20 text-white hover:bg-white/25"
+                  : "text-white/75 hover:bg-white/10"
               }`}
               aria-pressed={isFollowingTraveler}
               aria-label={isFollowingTraveler ? "Stop tracking traveler" : "Track traveler"}
@@ -3435,7 +3435,7 @@ export function MapboxTravelMap({
               <Crosshair className="h-4 w-4" />
             </Button>
           </div>
-          <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1 rounded-lg border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1 rounded-lg border border-white/10 bg-slate-950/60 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
             {mapStyleOptions.map((option) => (
               <Button
                 key={option.id}
@@ -3444,8 +3444,8 @@ export function MapboxTravelMap({
                 variant={mapStyle === option.id ? "default" : "ghost"}
                 className={`h-8 shrink-0 rounded-lg px-2 text-[11px] sm:h-9 sm:px-3 sm:text-xs 2xl:text-sm ${
                   mapStyle === option.id
-                    ? "bg-white text-slate-950 hover:bg-white/90"
-                    : "text-white/85 hover:bg-white/15 hover:text-white"
+                    ? "bg-white/20 text-white hover:bg-white/25"
+                    : "text-white/70 hover:bg-white/10 hover:text-white"
                 }`}
                 onClick={() => changeMapStyle(option.id)}
               >
