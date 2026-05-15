@@ -103,7 +103,7 @@ export function WatchExperience({ video }: WatchExperienceProps) {
   return (
     <div ref={wrapperRef} className="flex h-[100dvh] flex-col overflow-hidden bg-black text-white">
       <header className="absolute left-0 right-0 top-0 z-50 bg-black/75 p-2.5 backdrop-blur-sm sm:p-3 xl:p-4">
-        <div className="mx-auto flex w-full max-w-[1880px] items-center justify-between gap-3">
+        <div className="flex w-full items-center justify-between gap-3">
           <div className="flex items-center">
             <Link href="/">
               <Button
@@ -147,9 +147,9 @@ export function WatchExperience({ video }: WatchExperienceProps) {
         </div>
       )}
 
-      <div className="mx-auto flex min-h-0 w-full max-w-[1880px] flex-1 flex-col pt-14 sm:pt-16 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-3 lg:px-3 lg:pb-3 lg:pt-[4.25rem] xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] xl:gap-4 xl:px-4 xl:pb-4 xl:pt-[4.75rem] 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] 2xl:gap-5 2xl:px-5 2xl:pb-5">
-        <div className="relative z-10 shrink-0 overflow-hidden bg-black lg:flex lg:h-full lg:min-h-0 lg:items-center lg:justify-center lg:rounded-lg lg:border lg:border-white/10 lg:bg-zinc-950/80 lg:p-3 xl:p-4">
-          <div className="relative aspect-video w-full overflow-hidden bg-gray-950 shadow-2xl lg:w-[min(100%,calc((100dvh-7.25rem)*16/9))] lg:rounded-md xl:w-[min(100%,calc((100dvh-8rem)*16/9))]">
+      <div className="flex min-h-0 w-full flex-1 flex-col pt-14 sm:pt-16 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:pt-0 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="relative z-10 shrink-0 overflow-hidden bg-black lg:h-full lg:min-h-0">
+          <div className="relative aspect-video w-full overflow-hidden bg-gray-950 lg:h-full lg:aspect-auto">
             <YouTubePlayer
               videoId={video.youtubeId}
               currentTime={currentTime}
@@ -167,7 +167,7 @@ export function WatchExperience({ video }: WatchExperienceProps) {
           </div>
         </div>
 
-        <div className="relative z-0 min-h-0 flex-1 overflow-hidden lg:h-full lg:rounded-lg">
+        <div className="relative z-0 min-h-0 flex-1 overflow-hidden lg:h-full">
           <MapboxTravelMap
             keyframes={routePoints}
             routeShapes={routeShapes}

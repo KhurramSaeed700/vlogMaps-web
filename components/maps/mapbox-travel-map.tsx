@@ -5,7 +5,6 @@ import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
 import { Crosshair, ExternalLink, Loader2, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { fetchRoutedLegsForKeyframes, type RouteCoordinate, type RoutedLeg } from "@/lib/mapbox-directions"
 import { mapboxAccessToken } from "@/lib/mapbox"
@@ -3277,7 +3276,7 @@ export function MapboxTravelMap({
     <div className={`relative isolate overflow-hidden ${className}`}>
       <div
         ref={mapRef}
-        className={`relative z-0 h-full w-full overflow-hidden rounded-none transition duration-200 lg:rounded-lg ${isMapBusy ? "blur-sm" : ""}`}
+        className={`relative z-0 h-full w-full overflow-hidden transition duration-200 ${isMapBusy ? "blur-sm" : ""}`}
       />
       <div
         ref={routePreloadMapContainerRef}
@@ -3287,18 +3286,16 @@ export function MapboxTravelMap({
 
       {mapError && (
         <div className="absolute inset-x-4 bottom-4 z-20">
-          <Card className="border-amber-200 bg-white/95 shadow-lg backdrop-blur-sm">
-            <CardContent className="flex items-center justify-between gap-4 p-4 text-sm text-slate-700">
-              <span>{mapError}</span>
-              <Button variant="secondary" size="sm" onClick={fitToRoute}>
-                Fit route
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="flex items-center justify-between gap-4 bg-white/95 p-3 text-sm text-slate-700 shadow-lg backdrop-blur-sm">
+            <span>{mapError}</span>
+            <Button variant="secondary" size="sm" onClick={fitToRoute}>
+              Fit route
+            </Button>
+          </div>
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-x-2 top-2 z-30 flex flex-col gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 xl:flex-row xl:items-start xl:justify-between">
+      <div className="pointer-events-none absolute inset-x-2 top-2 z-30 flex flex-col gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 lg:top-16 xl:flex-row xl:items-start xl:justify-between">
         <form onSubmit={searchLocations} className="pointer-events-auto w-full max-w-full sm:w-[18rem] 2xl:w-[21rem]">
           <div className="flex items-center gap-1.5 rounded-lg bg-white/95 p-1 shadow-lg backdrop-blur-sm sm:gap-2 sm:rounded-xl">
             <Search className="ml-2 h-4 w-4 shrink-0 text-slate-500" />
