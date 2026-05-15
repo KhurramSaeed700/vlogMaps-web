@@ -139,6 +139,11 @@ const manualTrailRoadPathMinRouteDistanceKm = 1
 const markerHighlightDurationMs = 1000
 const pointKeyframeMarkerColor = "#ea580c"
 const stopKeyframeMarkerColor = "#0f766e"
+const travelerMarkerColor = "#ef4444"
+const travelerMarkerDesktopScale = 1.2
+const travelerMarkerDefaultWidth = 27
+const travelerMarkerDefaultHeight = 41
+const mobileMapMaxWidthPx = 639
 const routeLineColor = pointKeyframeMarkerColor
 const keyframeMarkerMinZoom = 5
 const keyframeMarkerMaxZoom = 13
@@ -276,6 +281,11 @@ function getKeyframeMarkerStyleForZoom(zoom: number) {
     opacity,
     showLabel,
   }
+}
+
+function getTravelerMarkerScaleForZoom(zoom: number) {
+  const markerStyle = getKeyframeMarkerStyleForZoom(zoom)
+  return travelerMarkerDesktopScale * (markerStyle.size / keyframeMarkerMaxSize)
 }
 
 function getKeyframeMarkerCollisionDistanceForZoom(zoom: number) {
@@ -1305,6 +1315,10 @@ function canUpdateCamera(map: mapboxgl.Map) {
   return hasUsableMapSize(map) && map.isStyleLoaded()
 }
 
+function isMobileMapView(map: mapboxgl.Map) {
+  return map.getContainer().clientWidth <= mobileMapMaxWidthPx
+}
+
 function hasOriginalMapEvent(event: unknown) {
   return Boolean(
     typeof event === "object" &&
@@ -1335,6 +1349,7 @@ export function MapboxTravelMap({
   const routePreloadSignatureRef = useRef("")
   const routePreloadGenerationRef = useRef(0)
   const markerRef = useRef<mapboxgl.Marker | null>(null)
+  const travelerMarkerScaleRef = useRef<number | null>(null)
   const keyframeMarkersRef = useRef<Map<string, mapboxgl.Marker>>(new Map())
   const keyframeMarkerElementsRef = useRef<Map<string, { element: HTMLButtonElement; time: number }>>(new Map())
   const reachedKeyframeMarkersRef = useRef<ReachedKeyframeMarker[]>([])
@@ -1815,6 +1830,32 @@ export function MapboxTravelMap({
     marker.getElement().style.display = isVisible ? "" : "none"
   }
 
+  const updateTravelerMarkerSize = (map: mapboxgl.Map) => {
+    const marker = markerRef.current
+    if (!marker) {
+      return
+    }
+
+    const scale = isMobileMapView(map) ? getTravelerMarkerScaleForZoom(map.getZoom()) : travelerMarkerDesktopScale
+    if (travelerMarkerScaleRef.current !== null && Math.abs(travelerMarkerScaleRef.current - scale) < 0.005) {
+      return
+    }
+
+    const element = marker.getElement()
+    const svg = element.querySelector<SVGSVGElement>("svg")
+    const width = travelerMarkerDefaultWidth * scale
+    const height = travelerMarkerDefaultHeight * scale
+
+    travelerMarkerScaleRef.current = scale
+    element.style.width = `${width}px`
+    element.style.height = `${height}px`
+
+    if (svg) {
+      svg.setAttribute("width", `${width}`)
+      svg.setAttribute("height", `${height}`)
+    }
+  }
+
   const createKeyframeMarker = (
     map: mapboxgl.Map,
     keyframe: Keyframe,
@@ -1908,6 +1949,7 @@ export function MapboxTravelMap({
       return
     }
 
+    updateTravelerMarkerSize(map)
     syncReachedKeyframeMarkers(map, reachedKeyframeMarkersRef.current)
     syncTravelerMarkerVisibility(map)
   }
@@ -2476,8 +2518,8 @@ export function MapboxTravelMap({
       })
 
     const marker = new mapboxgl.Marker({
-      color: "#ef4444",
-      scale: 1.2,
+      color: travelerMarkerColor,
+      scale: travelerMarkerDesktopScale,
     })
       .setLngLat(liveRouteCoordinateRef.current)
       .addTo(map)
@@ -2542,12 +2584,14 @@ export function MapboxTravelMap({
     const handleMapZoom = () => {
       keepTravelerCenteredDuringFollowZoom()
       updateKeyframeMarkerSizes(map)
+      updateTravelerMarkerSize(map)
       scheduleViewportMarkerRefresh(map)
     }
 
     const handleMapZoomEnd = () => {
       keepTravelerCenteredDuringFollowZoom()
       updateKeyframeMarkerSizes(map)
+      updateTravelerMarkerSize(map)
       scheduleViewportMarkerRefresh(map)
       if (isUserZoomingWhileFollowingRef.current && rememberFollowZoomFromMap(map)) {
         startMarkerAnimation()
@@ -2623,6 +2667,7 @@ export function MapboxTravelMap({
       map.remove()
       mapInstanceRef.current = null
       markerRef.current = null
+      travelerMarkerScaleRef.current = null
     }
   }, [])
 
@@ -3253,8 +3298,8 @@ export function MapboxTravelMap({
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-x-2 top-2 z-30 flex flex-col gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 min-[1500px]:flex-row min-[1500px]:items-start min-[1500px]:justify-between">
-        <form onSubmit={searchLocations} className="pointer-events-auto w-full max-w-full sm:w-[18rem] 2xl:w-[22rem]">
+      <div className="pointer-events-none absolute inset-x-2 top-2 z-30 flex flex-col gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 xl:flex-row xl:items-start xl:justify-between">
+        <form onSubmit={searchLocations} className="pointer-events-auto w-full max-w-full sm:w-[18rem] 2xl:w-[21rem]">
           <div className="flex items-center gap-1.5 rounded-lg bg-white/95 p-1 shadow-lg backdrop-blur-sm sm:gap-2 sm:rounded-xl">
             <Search className="ml-2 h-4 w-4 shrink-0 text-slate-500" />
             <Input
@@ -3290,7 +3335,7 @@ export function MapboxTravelMap({
             <div
               id="watch-map-search-suggestions"
               role="listbox"
-              className="mt-1.5 overflow-hidden rounded-lg bg-white/95 shadow-lg backdrop-blur-sm sm:mt-2 sm:rounded-xl"
+              className="mt-1.5 max-h-[min(18rem,calc(100dvh-9rem))] overflow-y-auto rounded-lg bg-white/95 shadow-lg backdrop-blur-sm sm:mt-2 sm:rounded-xl"
             >
               {isSearching && searchResults.length === 0 && (
                 <div className="flex items-center gap-2 px-3 py-2 text-sm text-slate-500">
@@ -3331,7 +3376,7 @@ export function MapboxTravelMap({
           )}
         </form>
 
-        <div className="pointer-events-auto flex max-w-full flex-wrap justify-end gap-1 self-end sm:gap-2">
+        <div className="pointer-events-auto flex max-w-full flex-wrap justify-end gap-1 self-end sm:gap-2 xl:self-start">
           <div className="flex shrink-0 items-center rounded-lg border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
             <Button
               type="button"
@@ -3350,14 +3395,14 @@ export function MapboxTravelMap({
               <Crosshair className="h-4 w-4" />
             </Button>
           </div>
-          <div className="flex min-w-0 items-center gap-1 rounded-lg border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1 rounded-lg border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
             {mapStyleOptions.map((option) => (
               <Button
                 key={option.id}
                 type="button"
                 size="sm"
                 variant={mapStyle === option.id ? "default" : "ghost"}
-                className={`h-8 rounded-lg px-2 text-xs sm:h-9 sm:px-3 sm:text-sm ${
+                className={`h-8 shrink-0 rounded-lg px-2 text-[11px] sm:h-9 sm:px-3 sm:text-xs 2xl:text-sm ${
                   mapStyle === option.id
                     ? "bg-white text-slate-950 hover:bg-white/90"
                     : "text-white/85 hover:bg-white/15 hover:text-white"
