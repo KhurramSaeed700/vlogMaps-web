@@ -158,6 +158,7 @@ const routePreloadMaxTileCacheSize = 768
 const routePreloadSampleCount = 32
 const routePreloadStepDelayMs = 220
 const routePreloadMaxZoom = 13
+const mapOverlayWideMinWidth = 760
 const cameraTimelineMaxSamples = 240
 const cameraTimelineTargetSecondsPerSample = 2
 const followZoomPreferenceMinOffset = -4
@@ -1464,6 +1465,7 @@ export function MapboxTravelMap({
   const [searchError, setSearchError] = useState<string | null>(null)
   const [mapError, setMapError] = useState<string | null>(null)
   const [routedLegs, setRoutedLegs] = useState<RoutedLeg[]>([])
+  const [isMapOverlayWide, setIsMapOverlayWide] = useState(false)
 
   isPlayingRef.current = isPlaying
 
@@ -3032,6 +3034,29 @@ export function MapboxTravelMap({
   }, [])
 
   useEffect(() => {
+    const container = mapRef.current
+    if (!container) {
+      return
+    }
+
+    const updateOverlayLayout = () => {
+      const nextIsWide = container.clientWidth >= mapOverlayWideMinWidth
+      setIsMapOverlayWide((currentIsWide) => (currentIsWide === nextIsWide ? currentIsWide : nextIsWide))
+    }
+
+    updateOverlayLayout()
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateOverlayLayout)
+      return () => window.removeEventListener("resize", updateOverlayLayout)
+    }
+
+    const observer = new ResizeObserver(updateOverlayLayout)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
     const map = mapInstanceRef.current
     const container = mapRef.current
 
@@ -3338,7 +3363,11 @@ export function MapboxTravelMap({
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-x-2 top-2 z-30 flex flex-col gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 xl:flex-row xl:items-start xl:justify-between">
+      <div
+        className={`pointer-events-none absolute inset-x-2 top-2 z-30 flex gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 ${
+          isMapOverlayWide ? "flex-row items-start justify-between" : "flex-col"
+        }`}
+      >
         <form onSubmit={searchLocations} className="pointer-events-auto w-full max-w-full sm:w-[18rem] 2xl:w-[21rem]">
           <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 p-1 shadow-lg backdrop-blur-md sm:gap-2 sm:rounded-xl">
             <Search className="ml-2 h-4 w-4 shrink-0 text-white/60" />
@@ -3416,7 +3445,11 @@ export function MapboxTravelMap({
           )}
         </form>
 
-        <div className="pointer-events-auto flex max-w-full flex-wrap justify-end gap-1 self-end sm:gap-2 xl:self-start">
+        <div
+          className={`pointer-events-auto flex max-w-full flex-wrap justify-end gap-1 sm:gap-2 ${
+            isMapOverlayWide ? "self-start" : "self-end"
+          }`}
+        >
           <div className="flex shrink-0 items-center rounded-lg border border-white/10 bg-slate-950/60 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
             <Button
               type="button"
