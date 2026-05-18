@@ -9,7 +9,6 @@ import {
   saveSelectedPreference,
   type PreferenceId,
 } from "@/components/home/home-preferences"
-import { PreferenceFilter } from "@/components/home/preference-filter"
 import { HomeVideoGrid } from "@/components/home/video-grid"
 import { fetchPublishedCloudVideos } from "@/lib/creator-videos-cloud-client"
 import { createInstantWatchVideo, getPublishedTravelVideosClient, mergeTravelVideos } from "@/lib/creator-videos"
@@ -160,7 +159,12 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
       <HomeHeader
         isPending={isPending}
         launcherError={launcherError}
+        selectedPreference={selectedPreference}
         youtubeUrl={youtubeUrl}
+        onPreferenceChange={(preference) => {
+          setSelectedPreference(preference)
+          saveSelectedPreference(preference)
+        }}
         onSubmit={handleLaunch}
         onYoutubeUrlChange={setYoutubeUrl}
       />
@@ -175,14 +179,6 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
             <span>{homeLoadingMessage}</span>
           </div>
         )}
-
-        <PreferenceFilter
-          selectedPreference={selectedPreference}
-          onPreferenceChange={(preference) => {
-            setSelectedPreference(preference)
-            saveSelectedPreference(preference)
-          }}
-        />
 
         <HomeVideoGrid isCatalogLoading={isCatalogLoading} videos={videos} />
       </main>

@@ -1,19 +1,23 @@
 "use client"
 
-import type { FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import { UserButton, useUser } from "@clerk/nextjs"
 import Link from "next/link"
-import { Search } from "lucide-react"
+import { Check, ChevronRight, Moon, Search, Settings, Sun } from "lucide-react"
+import { useTheme } from "next-themes"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
-import { ThemeToggle } from "@/components/app-shell/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { preferenceOptions, type PreferenceId } from "@/components/home/home-preferences"
 import { isCreatorEmail } from "@/lib/creator-access"
 
 interface HomeHeaderProps {
   isPending: boolean
   launcherError: string | null
+  selectedPreference: PreferenceId
   youtubeUrl: string
+  onPreferenceChange: (preference: PreferenceId) => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
   onYoutubeUrlChange: (value: string) => void
 }
@@ -21,17 +25,28 @@ interface HomeHeaderProps {
 export function HomeHeader({
   isPending,
   launcherError,
+  selectedPreference,
   youtubeUrl,
+  onPreferenceChange,
   onSubmit,
   onYoutubeUrlChange,
 }: HomeHeaderProps) {
+  const [isThemeMounted, setIsThemeMounted] = useState(false)
+  const { resolvedTheme, setTheme } = useTheme()
   const { isLoaded, isSignedIn, user } = useUser()
   const email = user?.primaryEmailAddress?.emailAddress ?? null
   const isApprovedCreator = isLoaded && isSignedIn && isCreatorEmail(email)
   const creatorCtaHref = isApprovedCreator ? "/creator/dashboard" : "/creator/apply"
   const creatorCtaLabel = isApprovedCreator ? "Go to Dashboard" : "Become a creator"
-  const mobileCreatorCtaLabel = isApprovedCreator ? "CD" : "CM"
   const creatorCtaAriaLabel = isApprovedCreator ? "Go to creator dashboard" : "Open creator mode"
+  const menuItemClass =
+    "flex cursor-pointer select-none items-center gap-3 rounded-md px-2.5 py-2 text-sm text-popover-foreground outline-none transition-colors hover:bg-accent focus:bg-accent data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+  const selectedPreferenceLabel =
+    preferenceOptions.find((option) => option.id === selectedPreference)?.label ?? "All"
+
+  useEffect(() => {
+    setIsThemeMounted(true)
+  }, [])
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
@@ -57,27 +72,89 @@ export function HomeHeader({
         </form>
 
         <div className="ml-auto flex items-center gap-2">
-          <ThemeToggle />
-
-          {!isLoaded ? (
-            <div className="hidden h-10 w-[148px] md:block" aria-hidden="true" />
-          ) : (
-            <Link href={creatorCtaHref} className="hidden md:block" aria-label={creatorCtaAriaLabel}>
-              <Button variant="outline" className="rounded-full">
-                {creatorCtaLabel}
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 rounded-full border-border bg-background text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground sm:h-10 sm:w-10"
+                aria-label="Open settings menu"
+                title="Settings"
+              >
+                <Settings className="h-4 w-4" />
               </Button>
-            </Link>
-          )}
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={10}
+                className="z-50 w-[min(calc(100vw-2rem),19rem)] rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-xl"
+              >
+                <div className="px-2.5 pb-2 pt-1">
+                  <p className="text-sm font-semibold text-foreground">Settings</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Preference: {selectedPreferenceLabel}</p>
+                </div>
 
-          {!isLoaded ? (
-            <div className="h-9 w-11 md:hidden" aria-hidden="true" />
-          ) : (
-            <Link href={creatorCtaHref} className="md:hidden" aria-label={creatorCtaAriaLabel}>
-              <Button variant="outline" size="sm" className="h-9 min-w-11 rounded-full px-3">
-                {mobileCreatorCtaLabel}
-              </Button>
-            </Link>
-          )}
+                <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  User preferences
+                </div>
+                {preferenceOptions.map((option) => {
+                  const Icon = option.icon
+                  const isSelected = selectedPreference === option.id
+
+                  return (
+                    <DropdownMenu.Item
+                      key={option.id}
+                      className={menuItemClass}
+                      onSelect={() => onPreferenceChange(option.id)}
+                    >
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                      <span className="flex-1">{option.label}</span>
+                      {isSelected && <Check className="h-4 w-4" />}
+                    </DropdownMenu.Item>
+                  )
+                })}
+
+                <DropdownMenu.Separator className="my-2 h-px bg-border" />
+
+                <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Appearance
+                </div>
+                <DropdownMenu.Item
+                  className={menuItemClass}
+                  disabled={!isThemeMounted}
+                  onSelect={() => setTheme("light")}
+                >
+                  <Sun className="h-4 w-4 text-muted-foreground" />
+                  <span className="flex-1">Light mode</span>
+                  {isThemeMounted && resolvedTheme === "light" && <Check className="h-4 w-4" />}
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className={menuItemClass}
+                  disabled={!isThemeMounted}
+                  onSelect={() => setTheme("dark")}
+                >
+                  <Moon className="h-4 w-4 text-muted-foreground" />
+                  <span className="flex-1">Dark mode</span>
+                  {isThemeMounted && resolvedTheme === "dark" && <Check className="h-4 w-4" />}
+                </DropdownMenu.Item>
+
+                {isLoaded && isSignedIn && (
+                  <>
+                    <DropdownMenu.Separator className="my-2 h-px bg-border" />
+                    <DropdownMenu.Item asChild>
+                      <Link href={creatorCtaHref} className={menuItemClass} aria-label={creatorCtaAriaLabel}>
+                        <Settings className="h-4 w-4 text-muted-foreground" />
+                        <span className="flex-1">{creatorCtaLabel}</span>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </Link>
+                    </DropdownMenu.Item>
+                  </>
+                )}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
 
           {!isLoaded ? (
             <div className="h-9 w-[72px] sm:h-10" aria-hidden="true" />

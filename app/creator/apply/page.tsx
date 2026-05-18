@@ -37,15 +37,10 @@ interface CreatorApplicationFormData {
   phone: string
   country: string
   city: string
-  channelName: string
   channelUrl: string
-  channelHandle: string
   ownershipEmail: string
-  subscriberCount: string
   monthlyViews: string
-  uploadCadence: string
   channelStartedAt: string
-  travelContentPercentage: string
   recentTravelUploads: string
   travelRegions: string
   channelFocus: string
@@ -89,15 +84,10 @@ function buildInitialFormData({
     phone: "",
     country: "",
     city: "",
-    channelName: "",
     channelUrl: "",
-    channelHandle: "",
     ownershipEmail: email || "",
-    subscriberCount: "",
     monthlyViews: "",
-    uploadCadence: "",
     channelStartedAt: "",
-    travelContentPercentage: "",
     recentTravelUploads: "",
     travelRegions: "",
     channelFocus: "",
@@ -199,7 +189,6 @@ function CreatorApplicationContent() {
 
   const validationErrors = useMemo(() => {
     const errors: string[] = []
-    const travelPercentage = parseIntegerValue(formData.travelContentPercentage)
     const travelUploads = parseIntegerValue(formData.recentTravelUploads)
     const sampleUrls = [
       formData.sampleVideoUrlOne,
@@ -216,23 +205,14 @@ function CreatorApplicationContent() {
     if (!formData.country.trim()) {
       errors.push("country")
     }
-    if (!formData.channelName.trim()) {
-      errors.push("channel name")
-    }
     if (!isYoutubeUrl(formData.channelUrl)) {
       errors.push("valid YouTube channel URL")
-    }
-    if (!formData.channelHandle.trim()) {
-      errors.push("channel handle")
     }
     if (!formData.ownershipEmail.trim()) {
       errors.push("ownership email")
     }
     if (!formData.managerRole.trim()) {
       errors.push("role on channel")
-    }
-    if (travelPercentage === null || travelPercentage < 50) {
-      errors.push("travel content percentage of at least 50%")
     }
     if (travelUploads === null || travelUploads < 3) {
       errors.push("at least 3 recent travel uploads")
@@ -288,8 +268,7 @@ function CreatorApplicationContent() {
   }
 
   const reviewerSignals = [
-    "Channel URL and handle",
-    "Travel content percentage",
+    "Channel URL",
     "Recent travel uploads count",
     "Ownership proof statement",
     "Verification code placement",
@@ -338,8 +317,7 @@ function CreatorApplicationContent() {
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="rounded-lg border border-emerald-200 bg-white p-4">
                   <p className="text-sm font-medium text-slate-900">Channel submitted</p>
-                  <p className="mt-1 text-sm text-slate-600">{formData.channelName}</p>
-                  <p className="mt-2 text-xs text-slate-500">{formData.channelUrl}</p>
+                  <p className="mt-1 break-all text-sm text-slate-600">{formData.channelUrl}</p>
                 </div>
                 <div className="rounded-lg border border-emerald-200 bg-white p-4">
                   <p className="text-sm font-medium text-slate-900">Verification code</p>
@@ -373,6 +351,32 @@ function CreatorApplicationContent() {
         ) : (
           <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Reviewer checklist</CardTitle>
+                  <CardDescription>What your team should be able to confirm from this form.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-2">
+                  {reviewerSignals.map((signal) => (
+                    <div key={signal} className="flex items-start gap-3 text-sm text-slate-700">
+                      <CheckCircle className="mt-0.5 h-4 w-4 text-emerald-600" />
+                      <span>{signal}</span>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Approval standard</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm text-slate-600">
+                  <p>Approve creators who clearly own a real travel-focused YouTube channel.</p>
+                  <p>Reject channels that are generic entertainment, reposts, or missing ownership proof.</p>
+                  <p>Grant creator access only after review, then let approved accounts add timestamps and route points.</p>
+                </CardContent>
+              </Card>
+
               <section className="space-y-4">
                 <Badge className="border-0 bg-red-600 text-white">Travel YouTube creators only</Badge>
                 <div className="space-y-3">
@@ -491,24 +495,6 @@ function CreatorApplicationContent() {
                     <CardDescription>These details establish the channel identity your team is approving.</CardDescription>
                   </CardHeader>
                   <CardContent className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="channelName">Channel name *</Label>
-                      <Input
-                        id="channelName"
-                        value={formData.channelName}
-                        onChange={(event) => handleInputChange("channelName", event.target.value)}
-                        placeholder="YouTube channel name"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="channelHandle">Channel handle *</Label>
-                      <Input
-                        id="channelHandle"
-                        value={formData.channelHandle}
-                        onChange={(event) => handleInputChange("channelHandle", event.target.value)}
-                        placeholder="@yourchannel"
-                      />
-                    </div>
                     <div className="space-y-2 md:col-span-2">
                       <Label htmlFor="channelUrl">Channel URL *</Label>
                       <Input
@@ -538,15 +524,6 @@ function CreatorApplicationContent() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="subscriberCount">Subscriber count</Label>
-                      <Input
-                        id="subscriberCount"
-                        value={formData.subscriberCount}
-                        onChange={(event) => handleInputChange("subscriberCount", event.target.value)}
-                        placeholder="e.g. 125000"
-                      />
-                    </div>
-                    <div className="space-y-2">
                       <Label htmlFor="monthlyViews">Approx. monthly views</Label>
                       <Input
                         id="monthlyViews"
@@ -564,15 +541,6 @@ function CreatorApplicationContent() {
                         placeholder="Month and year"
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="uploadCadence">Upload cadence</Label>
-                      <Input
-                        id="uploadCadence"
-                        value={formData.uploadCadence}
-                        onChange={(event) => handleInputChange("uploadCadence", event.target.value)}
-                        placeholder="Weekly, twice a month, seasonal"
-                      />
-                    </div>
                   </CardContent>
                 </Card>
 
@@ -587,25 +555,14 @@ function CreatorApplicationContent() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label htmlFor="travelContentPercentage">Travel content percentage *</Label>
-                        <Input
-                          id="travelContentPercentage"
-                          value={formData.travelContentPercentage}
-                          onChange={(event) => handleInputChange("travelContentPercentage", event.target.value)}
-                          placeholder="e.g. 85"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="recentTravelUploads">Recent travel uploads in last 90 days *</Label>
-                        <Input
-                          id="recentTravelUploads"
-                          value={formData.recentTravelUploads}
-                          onChange={(event) => handleInputChange("recentTravelUploads", event.target.value)}
-                          placeholder="e.g. 6"
-                        />
-                      </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="recentTravelUploads">Recent travel uploads in last 90 days *</Label>
+                      <Input
+                        id="recentTravelUploads"
+                        value={formData.recentTravelUploads}
+                        onChange={(event) => handleInputChange("recentTravelUploads", event.target.value)}
+                        placeholder="e.g. 6"
+                      />
                     </div>
 
                     <div className="space-y-2">
@@ -628,6 +585,48 @@ function CreatorApplicationContent() {
                         rows={4}
                         placeholder="Road trips, city guides, long-form itineraries, hiking vlogs, food-focused travel, rail journeys..."
                       />
+                    </div>
+
+                    <div className="space-y-4 border-t border-border pt-5">
+                      <div>
+                        <h3 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-foreground">
+                          <FileText className="h-5 w-5" />
+                          Sample videos for review
+                        </h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Share the travel videos your team should judge when deciding whether this channel qualifies.
+                        </p>
+                      </div>
+
+                      <div className="grid gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="sampleVideoUrlOne">Sample travel video 1 *</Label>
+                          <Input
+                            id="sampleVideoUrlOne"
+                            value={formData.sampleVideoUrlOne}
+                            onChange={(event) => handleInputChange("sampleVideoUrlOne", event.target.value)}
+                            placeholder="https://youtube.com/watch?v=..."
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="sampleVideoUrlTwo">Sample travel video 2 *</Label>
+                          <Input
+                            id="sampleVideoUrlTwo"
+                            value={formData.sampleVideoUrlTwo}
+                            onChange={(event) => handleInputChange("sampleVideoUrlTwo", event.target.value)}
+                            placeholder="https://youtube.com/watch?v=..."
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="sampleVideoUrlThree">Sample travel video 3</Label>
+                          <Input
+                            id="sampleVideoUrlThree"
+                            value={formData.sampleVideoUrlThree}
+                            onChange={(event) => handleInputChange("sampleVideoUrlThree", event.target.value)}
+                            placeholder="Optional third review link"
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     <div className="space-y-2">
@@ -731,47 +730,6 @@ function CreatorApplicationContent() {
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
-                      <FileText className="h-5 w-5" />
-                      Sample videos for review
-                    </CardTitle>
-                    <CardDescription>
-                      Share the travel videos your team should judge when deciding whether this channel qualifies.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="sampleVideoUrlOne">Sample travel video 1 *</Label>
-                      <Input
-                        id="sampleVideoUrlOne"
-                        value={formData.sampleVideoUrlOne}
-                        onChange={(event) => handleInputChange("sampleVideoUrlOne", event.target.value)}
-                        placeholder="https://youtube.com/watch?v=..."
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="sampleVideoUrlTwo">Sample travel video 2 *</Label>
-                      <Input
-                        id="sampleVideoUrlTwo"
-                        value={formData.sampleVideoUrlTwo}
-                        onChange={(event) => handleInputChange("sampleVideoUrlTwo", event.target.value)}
-                        placeholder="https://youtube.com/watch?v=..."
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="sampleVideoUrlThree">Sample travel video 3</Label>
-                      <Input
-                        id="sampleVideoUrlThree"
-                        value={formData.sampleVideoUrlThree}
-                        onChange={(event) => handleInputChange("sampleVideoUrlThree", event.target.value)}
-                        placeholder="Optional third review link"
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
                       <AlertCircle className="h-5 w-5 text-amber-600" />
                       Declarations
                     </CardTitle>
@@ -837,32 +795,6 @@ function CreatorApplicationContent() {
             </div>
 
             <aside className="space-y-6 lg:sticky lg:top-24 lg:self-start">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Reviewer checklist</CardTitle>
-                  <CardDescription>What your team should be able to confirm from this form.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {reviewerSignals.map((signal) => (
-                    <div key={signal} className="flex items-start gap-3 text-sm text-slate-700">
-                      <CheckCircle className="mt-0.5 h-4 w-4 text-emerald-600" />
-                      <span>{signal}</span>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Approval standard</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm text-slate-600">
-                  <p>Approve creators who clearly own a real travel-focused YouTube channel.</p>
-                  <p>Reject channels that are generic entertainment, reposts, or missing ownership proof.</p>
-                  <p>Grant creator access only after review, then let approved accounts add timestamps and route points.</p>
-                </CardContent>
-              </Card>
-
               <Card>
                 <CardHeader>
                   <CardTitle>Helpful links</CardTitle>
