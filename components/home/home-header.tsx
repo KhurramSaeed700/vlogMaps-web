@@ -10,7 +10,7 @@ import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { preferenceOptions, type PreferenceId } from "@/components/home/home-preferences"
-import { isCreatorEmail } from "@/lib/creator-access"
+import { useCreatorAccess } from "@/lib/use-creator-access"
 
 interface HomeHeaderProps {
   isPending: boolean
@@ -34,10 +34,13 @@ export function HomeHeader({
   const [isThemeMounted, setIsThemeMounted] = useState(false)
   const { resolvedTheme, setTheme } = useTheme()
   const { isLoaded, isSignedIn, user } = useUser()
-  const email = user?.primaryEmailAddress?.emailAddress ?? null
-  const isApprovedCreator = isLoaded && isSignedIn && isCreatorEmail(email)
+  const { isApprovedCreator, isCheckingCreatorAccess } = useCreatorAccess({
+    isLoaded,
+    isSignedIn: Boolean(isSignedIn),
+    user,
+  })
   const creatorCtaHref = isApprovedCreator ? "/creator/dashboard" : "/creator/apply"
-  const creatorCtaLabel = isApprovedCreator ? "Go to Dashboard" : "Become a creator"
+  const creatorCtaLabel = isApprovedCreator ? "Creator Dashboard" : "Become a creator"
   const creatorCtaAriaLabel = isApprovedCreator ? "Go to creator dashboard" : "Open creator mode"
   const menuItemClass =
     "flex cursor-pointer select-none items-center gap-3 rounded-md px-2.5 py-2 text-sm text-popover-foreground outline-none transition-colors hover:bg-accent focus:bg-accent data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
@@ -140,7 +143,7 @@ export function HomeHeader({
                   {isThemeMounted && resolvedTheme === "dark" && <Check className="h-4 w-4" />}
                 </DropdownMenu.Item>
 
-                {isLoaded && isSignedIn && (
+                {isLoaded && isSignedIn && !isCheckingCreatorAccess && (
                   <>
                     <DropdownMenu.Separator className="my-2 h-px bg-border" />
                     <DropdownMenu.Item asChild>
@@ -159,14 +162,23 @@ export function HomeHeader({
           {!isLoaded ? (
             <div className="h-9 w-[72px] sm:h-10" aria-hidden="true" />
           ) : isSignedIn ? (
-            <UserButton
-              signInUrl="/auth/login"
-              appearance={{
-                elements: {
-                  avatarBox: "h-9 w-9",
-                },
-              }}
-            />
+            <>
+              {!isCheckingCreatorAccess && (
+                <Link href={creatorCtaHref} className="hidden sm:block" aria-label={creatorCtaAriaLabel}>
+                  <Button variant="outline" size="sm" className="rounded-full px-4 font-semibold">
+                    {creatorCtaLabel}
+                  </Button>
+                </Link>
+              )}
+              <UserButton
+                signInUrl="/auth/login"
+                appearance={{
+                  elements: {
+                    avatarBox: "h-9 w-9",
+                  },
+                }}
+              />
+            </>
           ) : (
             <Link href="/auth/login" className="block">
               <Button variant="ghost" size="sm" className="rounded-full px-3 sm:h-10 sm:px-4">

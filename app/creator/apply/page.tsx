@@ -26,7 +26,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
 import { ThemeToggle } from "@/components/app-shell/theme-toggle"
-import { isCreatorEmail } from "@/lib/creator-access"
+import { useCreatorAccess } from "@/lib/use-creator-access"
 
 const applicationDraftStorageKey = "travelmap:creator-application:v2"
 
@@ -819,8 +819,11 @@ function CreatorApplicationContent() {
 export default function CreatorApplicationPage() {
   const router = useRouter()
   const { isLoaded, isSignedIn, user } = useUser()
-  const email = user?.primaryEmailAddress?.emailAddress ?? null
-  const isApprovedCreator = isCreatorEmail(email)
+  const { isApprovedCreator, isCheckingCreatorAccess } = useCreatorAccess({
+    isLoaded,
+    isSignedIn: Boolean(isSignedIn),
+    user,
+  })
 
   useEffect(() => {
     if (isLoaded && isSignedIn && isApprovedCreator) {
@@ -828,7 +831,7 @@ export default function CreatorApplicationPage() {
     }
   }, [isApprovedCreator, isLoaded, isSignedIn, router])
 
-  if (!isLoaded) {
+  if (!isLoaded || isCheckingCreatorAccess) {
     return <div className="p-8 text-sm text-slate-500">Loading creator application...</div>
   }
 

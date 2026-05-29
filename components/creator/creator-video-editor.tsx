@@ -874,6 +874,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   }, [])
 
   const activePointNumber = draftPoint?.id ? pointNumberById.get(draftPoint.id) ?? null : null
+  const canUploadVideo = video.status !== "published"
   const formatTripLocation = (location: CreatorTripLocation | null) => {
     if (!location) {
       return "Choose place"
@@ -1010,17 +1011,19 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   Edit Page
                 </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8"
-                  onClick={uploadEditedVideo}
-                  disabled={isUploadingVideo}
-                >
-                  <UploadCloud className="mr-1 h-4 w-4" />
-                  {isUploadingVideo ? "Uploading..." : "Upload"}
-                </Button>
+                {canUploadVideo && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={uploadEditedVideo}
+                    disabled={isUploadingVideo}
+                  >
+                    <UploadCloud className="mr-1 h-4 w-4" />
+                    {isUploadingVideo ? "Uploading..." : "Upload"}
+                  </Button>
+                )}
                 <Popover.Trigger asChild>
                   <Button
                     type="button"

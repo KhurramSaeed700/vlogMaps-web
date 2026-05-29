@@ -143,12 +143,28 @@ const travelerMarkerMinWidth = 16
 const travelerMarkerMaxWidth = 29
 const travelerMarkerMinHeight = 24
 const travelerMarkerMaxHeight = 44
+const travelerMarkerMinZoom = 5
+const travelerMarkerMaxZoom = 13
 const routeLineColor = pointKeyframeMarkerColor
 const keyframeMarkerMinZoom = 5
-const keyframeMarkerMaxZoom = 13
+const keyframeMarkerMaxZoom = 16
 const keyframeMarkerMinSize = 5
-const keyframeMarkerMaxSize = 30
-const keyframeMarkerLabelMinSize = 13
+const keyframeMarkerMaxSize = 24
+const keyframeMarkerLabelMinSize = 11
+const keyframeMarkerZoomStops = [
+  { zoom: 5, size: 5, fontSize: 0, borderWidth: 0.75, opacity: 0.62 },
+  { zoom: 6, size: 5.5, fontSize: 0, borderWidth: 0.75, opacity: 0.66 },
+  { zoom: 7, size: 6.25, fontSize: 0, borderWidth: 0.75, opacity: 0.7 },
+  { zoom: 8, size: 7.5, fontSize: 0, borderWidth: 0.9, opacity: 0.74 },
+  { zoom: 9, size: 9.25, fontSize: 0, borderWidth: 1, opacity: 0.78 },
+  { zoom: 10, size: 11, fontSize: 6, borderWidth: 1.1, opacity: 0.82 },
+  { zoom: 11, size: 13, fontSize: 6.75, borderWidth: 1.15, opacity: 0.86 },
+  { zoom: 12, size: 15.5, fontSize: 7.4, borderWidth: 1.25, opacity: 0.9 },
+  { zoom: 13, size: 18, fontSize: 8, borderWidth: 1.35, opacity: 0.92 },
+  { zoom: 14, size: 20.5, fontSize: 8.5, borderWidth: 1.45, opacity: 0.94 },
+  { zoom: 15, size: 22.5, fontSize: 9, borderWidth: 1.55, opacity: 0.94 },
+  { zoom: 16, size: 24, fontSize: 9.25, borderWidth: 1.6, opacity: 0.94 },
+] as const
 const playbackJumpSnapThresholdSeconds = 1.25
 const keyframeMarkerViewportPaddingPx = Math.ceil(keyframeMarkerMaxSize / 2) + 6
 const visibleMapMinTileCacheSize = 384
@@ -265,14 +281,37 @@ function getKeyframeMarkerZoomProgress(zoom: number) {
   )
 }
 
+function getTravelerMarkerZoomProgress(zoom: number) {
+  return (
+    (clampNumber(zoom, travelerMarkerMinZoom, travelerMarkerMaxZoom) - travelerMarkerMinZoom) /
+    (travelerMarkerMaxZoom - travelerMarkerMinZoom)
+  )
+}
+
 function getKeyframeMarkerStyleForZoom(zoom: number) {
-  const zoomProgress = getKeyframeMarkerZoomProgress(zoom)
-  const sizeProgress = zoomProgress ** 2.35
-  const size = keyframeMarkerMinSize + (keyframeMarkerMaxSize - keyframeMarkerMinSize) * sizeProgress
+  const normalizedZoom = clampNumber(zoom, keyframeMarkerMinZoom, keyframeMarkerMaxZoom)
+  const lowerStopIndex = keyframeMarkerZoomStops.findLastIndex((stop) => stop.zoom <= normalizedZoom)
+  const lowerStop = keyframeMarkerZoomStops[Math.max(0, lowerStopIndex)]
+  const upperStop = keyframeMarkerZoomStops.find((stop) => stop.zoom >= normalizedZoom) ?? lowerStop
+
+  if (!lowerStop || !upperStop || lowerStop.zoom === upperStop.zoom) {
+    const size = lowerStop?.size ?? keyframeMarkerMinSize
+
+    return {
+      size,
+      fontSize: size >= keyframeMarkerLabelMinSize ? lowerStop?.fontSize ?? 0 : 0,
+      borderWidth: lowerStop?.borderWidth ?? 0.75,
+      opacity: lowerStop?.opacity ?? 0.7,
+      showLabel: size >= keyframeMarkerLabelMinSize,
+    }
+  }
+
+  const stopProgress = (normalizedZoom - lowerStop.zoom) / (upperStop.zoom - lowerStop.zoom)
+  const size = interpolateNumber(lowerStop.size, upperStop.size, stopProgress)
   const showLabel = size >= keyframeMarkerLabelMinSize
-  const fontSize = showLabel ? clampNumber(size * 0.42, 6, 12) : 0
-  const borderWidth = size < 8 ? 0.75 : clampNumber(size * 0.07, 1, 2)
-  const opacity = 0.68 + 0.3 * zoomProgress ** 0.75
+  const fontSize = showLabel ? interpolateNumber(lowerStop.fontSize, upperStop.fontSize, stopProgress) : 0
+  const borderWidth = interpolateNumber(lowerStop.borderWidth, upperStop.borderWidth, stopProgress)
+  const opacity = interpolateNumber(lowerStop.opacity, upperStop.opacity, stopProgress)
 
   return {
     size,
@@ -284,7 +323,7 @@ function getKeyframeMarkerStyleForZoom(zoom: number) {
 }
 
 function getTravelerMarkerStyleForZoom(zoom: number) {
-  const zoomProgress = getKeyframeMarkerZoomProgress(zoom)
+  const zoomProgress = getTravelerMarkerZoomProgress(zoom)
   const sizeProgress = 0.18 + 0.82 * zoomProgress ** 1.45
   const width = travelerMarkerMinWidth + (travelerMarkerMaxWidth - travelerMarkerMinWidth) * sizeProgress
   const height = travelerMarkerMinHeight + (travelerMarkerMaxHeight - travelerMarkerMinHeight) * sizeProgress

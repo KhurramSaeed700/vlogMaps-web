@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { CreatorLoadingState, type CreatorLoadingStep } from "@/components/creator/creator-loading-state"
-import { demoCreatorEmails, isCreatorEmail } from "@/lib/creator-access"
+import { demoCreatorEmails } from "@/lib/creator-access"
+import { useCreatorAccess } from "@/lib/use-creator-access"
 
 interface CreatorAccessGuardProps {
   children: ReactNode
@@ -20,30 +21,34 @@ export function CreatorAccessGuard({
   loadingTitle = "Opening creator tools",
   pendingLabel = null,
 }: CreatorAccessGuardProps) {
-  const { isLoaded, user } = useUser()
-  const email = user?.primaryEmailAddress?.emailAddress ?? null
+  const { isLoaded, isSignedIn, user } = useUser()
+  const { isApprovedCreator, isCheckingCreatorAccess } = useCreatorAccess({
+    isLoaded,
+    isSignedIn: Boolean(isSignedIn),
+    user,
+  })
   const loadingSteps: CreatorLoadingStep[] = [
     {
       label: "Checking creator access",
-      status: isLoaded ? "complete" : "active",
+      status: isLoaded && !isCheckingCreatorAccess ? "complete" : "active",
     },
     ...(pendingLabel
       ? [
           {
             label: pendingLabel,
-            status: isLoaded ? "active" : "pending",
+            status: isLoaded && !isCheckingCreatorAccess ? "active" : "pending",
           } satisfies CreatorLoadingStep,
         ]
       : []),
   ]
 
-  if (!isLoaded) {
+  if (!isLoaded || isCheckingCreatorAccess) {
     return (
       <CreatorLoadingState title={loadingTitle} steps={loadingSteps} />
     )
   }
 
-  if (!isCreatorEmail(email)) {
+  if (!isApprovedCreator) {
     return (
       <Card className="border-amber-200 bg-amber-50">
         <CardHeader>
