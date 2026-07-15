@@ -1,26 +1,25 @@
 import { NextResponse } from "next/server"
 import { listPublishedCreatorVideosFromDb, isCreatorVideosDbConfigured } from "@/lib/creator-videos-db"
-import { getPublishedTravelVideos, type TravelVideo } from "@/lib/demo-data"
+import type { TravelVideo } from "@/lib/demo-data"
 
 export const dynamic = "force-dynamic"
 
-function mergeVideos(...groups: TravelVideo[][]) {
-  const order: string[] = []
-  const byId = new Map<string, TravelVideo>()
+function getVideoDedupeKey(video: TravelVideo) {
+  return video.youtubeId.trim().toLowerCase() || video.id
+}
 
-  for (const group of groups) {
-    for (const video of group) {
-      if (!byId.has(video.id)) {
-        order.push(video.id)
-      }
+function dedupeVideosByYouTubeId(videos: TravelVideo[]) {
+  const seenVideoKeys = new Set<string>()
 
-      byId.set(video.id, video)
+  return videos.filter((video) => {
+    const videoKey = getVideoDedupeKey(video)
+
+    if (seenVideoKeys.has(videoKey)) {
+      return false
     }
-  }
 
-  return order.flatMap((id) => {
-    const video = byId.get(id)
-    return video ? [video] : []
+    seenVideoKeys.add(videoKey)
+    return true
   })
 }
 
@@ -29,6 +28,6 @@ export async function GET() {
 
   return NextResponse.json({
     configured: isCreatorVideosDbConfigured(),
-    videos: mergeVideos(getPublishedTravelVideos(), cloudVideos),
+    videos: dedupeVideosByYouTubeId(cloudVideos),
   })
 }

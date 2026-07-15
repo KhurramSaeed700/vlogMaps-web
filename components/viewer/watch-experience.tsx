@@ -1,9 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
-import { ArrowLeft, Share2 } from "lucide-react"
-import { ThemeToggle } from "@/components/app-shell/theme-toggle"
+import { ArrowLeft, Pencil, Share2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { MapboxTravelMap } from "@/components/maps/mapbox-travel-map"
 import { YouTubePlayer } from "@/components/media/youtube-player"
@@ -14,11 +13,17 @@ import type { HydratedTravelVideo } from "@/lib/youtube-client"
 
 interface WatchExperienceProps {
   video: TravelVideo | HydratedTravelVideo
+  viewerCanEdit?: boolean
+  editHref?: string | null
 }
 
-export function WatchExperience({ video }: WatchExperienceProps) {
+const watchTimeRenderStepSeconds = 0.25
+
+export function WatchExperience({ video, viewerCanEdit = false, editHref = null }: WatchExperienceProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const feedbackTimeoutRef = useRef<number | null>(null)
+  const currentTimeRef = useRef(0)
+  const renderedCurrentTimeRef = useRef(0)
   const [routePoints, setRoutePoints] = useState<CreatorMapPoint[]>(() => loadCreatorPoints(video.id, video.keyframes))
   const [routeShapes, setRouteShapes] = useState<CreatorRouteShapes>(() => video.routeShapes ?? loadCreatorRouteShapes(video.id))
   const [isPlaying, setIsPlaying] = useState(true)
@@ -30,9 +35,23 @@ export function WatchExperience({ video }: WatchExperienceProps) {
   useEffect(() => {
     setRoutePoints(loadCreatorPoints(video.id, video.keyframes))
     setRouteShapes(video.routeShapes ?? loadCreatorRouteShapes(video.id))
+    currentTimeRef.current = 0
+    renderedCurrentTimeRef.current = 0
     setCurrentTime(0)
     setSeekRequest(null)
   }, [video.id, video.keyframes, video.routeShapes])
+
+  const commitCurrentTime = useCallback((time: number, force = false) => {
+    if (!Number.isFinite(time)) {
+      return
+    }
+
+    currentTimeRef.current = time
+    if (force || Math.abs(time - renderedCurrentTimeRef.current) >= watchTimeRenderStepSeconds) {
+      renderedCurrentTimeRef.current = time
+      setCurrentTime(time)
+    }
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -59,7 +78,7 @@ export function WatchExperience({ video }: WatchExperienceProps) {
   }
 
   const jumpToKeyframe = (time: number) => {
-    setCurrentTime(time)
+    commitCurrentTime(time, true)
     setSeekRequest((currentRequest) => ({
       id: (currentRequest?.id ?? 0) + 1,
       time,
@@ -121,7 +140,21 @@ export function WatchExperience({ video }: WatchExperienceProps) {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
-            <ThemeToggle />
+            {viewerCanEdit && editHref && (
+              <Link href={editHref}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 gap-1.5 px-2.5 text-white hover:bg-white/20 sm:h-10 sm:px-3"
+                  aria-label="Edit this video"
+                  title="Edit this video"
+                >
+                  <Pencil className="h-4 w-4" />
+                  <span className="hidden text-xs font-semibold sm:inline">Edit</span>
+                </Button>
+              </Link>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -161,7 +194,7 @@ export function WatchExperience({ video }: WatchExperienceProps) {
               autoPlay
               showControls
               allowWatchKeyboardControls
-              onTimeChange={(time) => setCurrentTime(time)}
+              onTimeChange={commitCurrentTime}
               onPlayingChange={setIsPlaying}
             />
           </div>
@@ -172,6 +205,7 @@ export function WatchExperience({ video }: WatchExperienceProps) {
             keyframes={routePoints}
             routeShapes={routeShapes}
             currentKeyframe={currentLocation}
+            liveCurrentTimeRef={currentTimeRef}
             isPlaying={isPlaying}
             followZoomPreferenceKey={video.id}
             onLocationClick={(keyframe) => jumpToKeyframe(keyframe.time)}

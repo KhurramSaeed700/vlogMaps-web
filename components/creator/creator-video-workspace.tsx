@@ -11,11 +11,9 @@ import { uploadCreatorVideoToCloud, fetchCreatorCloudVideos } from "@/lib/creato
 import {
   buildCreatorVideoStateSnapshot,
   createLocalCreatorVideo,
-  getAllCreatorVideosClient,
-  mergeTravelVideos,
-  updateLocalCreatorVideo,
   withSyncedVideoState,
 } from "@/lib/creator-videos"
+import { migrateLegacyCreatorStorageToDatabase } from "@/lib/legacy-creator-storage-migration"
 import { formatDuration, type TravelVideo } from "@/lib/demo-data"
 import { resolveYouTubeDuration } from "@/lib/youtube-duration-client"
 
@@ -30,16 +28,44 @@ export function CreatorVideoWorkspace() {
 
   useEffect(() => {
     isMountedRef.current = true
-    const localVideos = getAllCreatorVideosClient()
-    setVideos(localVideos)
 
-    fetchCreatorCloudVideos()
-      .then((response) => {
-        if (isMountedRef.current) {
-          setVideos(mergeTravelVideos(localVideos, response.videos))
+    const loadVideos = async () => {
+      try {
+        const response = await fetchCreatorCloudVideos()
+        if (!isMountedRef.current) {
+          return
         }
-      })
-      .catch(() => undefined)
+
+        setVideos(response.videos)
+        if (!response.configured) {
+          setMessage("Database is not configured. Add DATABASE_URL, restart the app, and try again.")
+          return
+        }
+
+        if (response.error) {
+          setMessage(response.error)
+          return
+        }
+
+        const migration = await migrateLegacyCreatorStorageToDatabase()
+        if (!isMountedRef.current || migration.attempted === 0) {
+          return
+        }
+
+        if (migration.failed === 0 && migration.migrated > 0) {
+          const refreshedResponse = await fetchCreatorCloudVideos()
+          if (isMountedRef.current) {
+            setVideos(refreshedResponse.videos)
+          }
+        }
+      } catch {
+        if (isMountedRef.current) {
+          setMessage("Unable to load creator videos from the database.")
+        }
+      }
+    }
+
+    loadVideos()
 
     return () => {
       isMountedRef.current = false
@@ -59,7 +85,6 @@ export function CreatorVideoWorkspace() {
             return
           }
 
-          updateLocalCreatorVideo(video.id, { durationSeconds: duration })
           setVideos((currentVideos) =>
             currentVideos.map((currentVideo) =>
               currentVideo.id === video.id ? { ...currentVideo, durationSeconds: duration } : currentVideo,
@@ -89,10 +114,21 @@ export function CreatorVideoWorkspace() {
       const video = await createLocalCreatorVideo({ youtubeUrl })
       const state = buildCreatorVideoStateSnapshot(video)
       const uploadVideo = withSyncedVideoState(video, state, video.status)
-      await uploadCreatorVideoToCloud(uploadVideo, state).catch(() => null)
-      const cloudVideos = await fetchCreatorCloudVideos().catch(() => ({ videos: [] }))
-      setVideos(mergeTravelVideos(getAllCreatorVideosClient(), cloudVideos.videos))
-      router.push(`/creator/video/${video.id}/edit`)
+      const uploadResponse = await uploadCreatorVideoToCloud(uploadVideo, state)
+
+      if (!uploadResponse.configured) {
+        setMessage("Database is not configured. Add DATABASE_URL, restart the app, and try again.")
+        return
+      }
+
+      if (!uploadResponse.saved || !uploadResponse.video) {
+        setMessage("Unable to save this video to the database.")
+        return
+      }
+
+      const cloudVideos = await fetchCreatorCloudVideos().catch(() => ({ videos: uploadResponse.video ? [uploadResponse.video] : [] }))
+      setVideos(cloudVideos.videos)
+      router.push(`/creator/video/${uploadResponse.video.id}/edit`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to create a creator video from that URL.")
     } finally {
@@ -137,44 +173,50 @@ export function CreatorVideoWorkspace() {
         </div>
       ) : (
         <div className="divide-y divide-slate-200 border-y border-slate-200">
-          {orderedVideos.map((video) => (
-            <div key={video.id} className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="relative aspect-video w-24 flex-none overflow-hidden rounded-md bg-slate-100 sm:w-32">
-                  <Image
-                    src={video.thumbnail || "/placeholder.svg"}
-                    alt={video.title}
-                    fill
-                    sizes="(min-width: 640px) 8rem, 6rem"
-                    className="object-cover"
-                  />
+          {orderedVideos.map((video) => {
+            const canEditVideo = video.viewerCanEdit !== false
+
+            return (
+              <div key={video.id} className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="relative aspect-video w-24 flex-none overflow-hidden rounded-md bg-slate-100 sm:w-32">
+                    <Image
+                      src={video.thumbnail || "/placeholder.svg"}
+                      alt={video.title}
+                      fill
+                      sizes="(min-width: 640px) 8rem, 6rem"
+                      className="object-cover"
+                    />
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <h2 className="truncate font-medium text-slate-950">{video.title}</h2>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                      <span className="inline-flex items-center gap-1">
+                        <Clock3 className="h-3.5 w-3.5" />
+                        {formatDuration(video.durationSeconds)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <h2 className="truncate font-medium text-slate-950">{video.title}</h2>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                    <span className="inline-flex items-center gap-1">
-                      <Clock3 className="h-3.5 w-3.5" />
-                      {formatDuration(video.durationSeconds)}
-                    </span>
-                  </div>
+                <div className="flex items-center gap-2">
+                  {canEditVideo && (
+                    <Link href={`/creator/video/${video.id}/edit`}>
+                      <Button size="sm">Open editor</Button>
+                    </Link>
+                  )}
+                  <Link href={`/watch/${video.id}`}>
+                    <Button variant="ghost" size="icon" aria-label={`Preview ${video.title}`} title="Preview">
+                      <ExternalLink className="h-4 w-4" />
+                    </Button>
+                  </Link>
                 </div>
               </div>
-
-              <div className="flex items-center gap-2">
-                <Link href={`/creator/video/${video.id}/edit`}>
-                  <Button size="sm">Open editor</Button>
-                </Link>
-                <Link href={`/watch/${video.id}`}>
-                  <Button variant="ghost" size="icon" aria-label={`Preview ${video.title}`} title="Preview">
-                    <ExternalLink className="h-4 w-4" />
-                  </Button>
-                </Link>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

@@ -17,6 +17,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 dev-server-*.log
+.codex-dev-*.log
 
 # env files
 .env*

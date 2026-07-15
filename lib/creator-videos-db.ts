@@ -14,8 +14,38 @@ type VideoWithRoute = Video & {
 const catalogOwnerUserId = "catalog"
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
+type OwnerUserIdInput = string | string[] | null | undefined
+
+interface RowToTravelVideoOptions {
+  editableOwnerUserIds?: string[]
+}
+
+interface CreatorVideoListOptions {
+  includeCatalog?: boolean
+}
+
+export class CreatorVideoPersistenceError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = "CreatorVideoPersistenceError"
+    this.status = status
+  }
+}
+
 function isUuid(value: string) {
   return uuidPattern.test(value)
+}
+
+function normalizeOwnerUserIds(ownerUserIds: OwnerUserIdInput) {
+  return [
+    ...new Set(
+      (Array.isArray(ownerUserIds) ? ownerUserIds : [ownerUserIds]).filter(
+        (ownerUserId): ownerUserId is string => Boolean(ownerUserId),
+      ),
+    ),
+  ]
 }
 
 function asStringArray(value: Prisma.JsonValue | null | undefined) {
@@ -54,12 +84,12 @@ function keyframeToDbCreate(videoId: string, keyframe: TravelVideoKeyframe): Pri
     longitude: keyframe.lng,
     locationName: keyframe.location,
     description: keyframe.description,
-    pointType: keyframe.pointType === "stop" ? "stop" : "point",
+    pointType: keyframe.pointType === "stop" || keyframe.pointType === "flight" ? keyframe.pointType : "point",
   }
 }
 
 function rowKeyframeToTravelKeyframe(keyframe: VideoKeyframe): TravelVideoKeyframe {
-  const pointType = keyframe.pointType === "stop" ? "stop" : "point"
+  const pointType = keyframe.pointType === "stop" || keyframe.pointType === "flight" ? keyframe.pointType : "point"
 
   return {
     time: keyframe.timestampSeconds,
@@ -75,14 +105,18 @@ function rowKeyframeToTravelKeyframe(keyframe: VideoKeyframe): TravelVideoKeyfra
   }
 }
 
-function rowToTravelVideo(video: VideoWithRoute): TravelVideo {
+function rowToTravelVideo(video: VideoWithRoute, options: RowToTravelVideoOptions = {}): TravelVideo {
   const keyframes =
     video.editorState && asCreatorPoints(video.editorState.points).length > 0
       ? asCreatorPoints(video.editorState.points).map(({ id: _id, ...point }) => point)
       : video.keyframes.map(rowKeyframeToTravelKeyframe)
+  const editableOwnerUserIds = options.editableOwnerUserIds
+  const ownerUserId = video.ownerUserId ?? ""
+  const viewerCanEdit = editableOwnerUserIds ? editableOwnerUserIds.includes(ownerUserId) : undefined
+  const isCatalog = ownerUserId === catalogOwnerUserId
 
   return {
-    id: video.appId || video.id,
+    id: video.id,
     title: video.title,
     creator: video.creatorName || "Creator",
     creatorChannelUrl: video.creatorChannelUrl || `https://www.youtube.com/watch?v=${video.youtubeId}`,
@@ -99,6 +133,8 @@ function rowToTravelVideo(video: VideoWithRoute): TravelVideo {
     keyframes,
     routeShapes: video.editorState ? asRouteShapes(video.editorState.routeShapes) : undefined,
     tags: asStringArray(video.tags),
+    viewerCanEdit,
+    isCatalog,
   }
 }
 
@@ -129,11 +165,13 @@ export function isCreatorVideosDbConfigured() {
 export async function saveCreatorVideoToDb({
   video,
   ownerUserId,
+  ownerUserIds,
   state,
   publish = false,
 }: {
   video: TravelVideo
   ownerUserId: string
+  ownerUserIds?: string[]
   state?: CreatorVideoState | null
   publish?: boolean
 }) {
@@ -144,18 +182,21 @@ export async function saveCreatorVideoToDb({
 
   const keyframes = state?.points?.length ? state.points.map(({ id: _id, ...point }) => point) : video.keyframes
   const status = publish ? "published" : video.status
+  const editableOwnerUserIds = normalizeOwnerUserIds(ownerUserIds?.length ? ownerUserIds : ownerUserId)
 
   const savedVideo = await prisma.$transaction(async (tx) => {
     const existingVideo = await tx.video.findFirst({
       where: getVideoLookup(video.id),
     })
 
+    if (existingVideo && !editableOwnerUserIds.includes(existingVideo.ownerUserId ?? "")) {
+      throw new CreatorVideoPersistenceError(409, "A video with this id already belongs to another creator.")
+    }
+
     const saved = existingVideo
       ? await tx.video.update({
           where: { id: existingVideo.id },
           data: {
-            ownerUserId,
-            appId: video.id,
             title: video.title,
             youtubeId: video.youtubeId,
             thumbnailUrl: video.thumbnail,
@@ -204,7 +245,6 @@ export async function saveCreatorVideoToDb({
           routeShapes: toJsonInput(state.routeShapes),
         },
         update: {
-          ownerUserId,
           points: toJsonInput(state.points),
           tripRoute: toJsonInput(state.tripRoute),
           routeShapes: toJsonInput(state.routeShapes),
@@ -224,18 +264,26 @@ export async function saveCreatorVideoToDb({
     })
   })
 
-  return savedVideo ? rowToTravelVideo(savedVideo) : null
+  return savedVideo ? rowToTravelVideo(savedVideo, { editableOwnerUserIds }) : null
 }
 
-export async function listCreatorVideosFromDb(ownerUserId: string) {
+export async function listCreatorVideosFromDb(ownerUserIds: OwnerUserIdInput, options: CreatorVideoListOptions = {}) {
   const prisma = getPrisma()
   if (!prisma) {
+    return []
+  }
+  const editableOwnerUserIds = normalizeOwnerUserIds(ownerUserIds)
+  const allowedOwnerUserIds = options.includeCatalog
+    ? [...new Set([...editableOwnerUserIds, catalogOwnerUserId])]
+    : editableOwnerUserIds
+
+  if (allowedOwnerUserIds.length === 0) {
     return []
   }
 
   const videos = await prisma.video.findMany({
     where: {
-      ownerUserId,
+      ownerUserId: { in: allowedOwnerUserIds },
       appId: { not: null },
     },
     include: {
@@ -247,7 +295,7 @@ export async function listCreatorVideosFromDb(ownerUserId: string) {
     orderBy: { createdAt: "desc" },
   })
 
-  return videos.map(rowToTravelVideo)
+  return videos.map((video) => rowToTravelVideo(video, { editableOwnerUserIds }))
 }
 
 export async function listPublishedCreatorVideosFromDb() {
@@ -271,7 +319,7 @@ export async function listPublishedCreatorVideosFromDb() {
       orderBy: { createdAt: "desc" },
     })
 
-    return videos.map(rowToTravelVideo)
+    return videos.map((video) => rowToTravelVideo(video))
   } catch {
     return []
   }
@@ -307,15 +355,63 @@ export async function getCreatorVideoFromDb(videoId: string, requesterUserId?: s
   }
 }
 
-export async function deleteCreatorVideoFromDb(videoId: string, ownerUserId: string) {
+export async function getOwnedCreatorVideoFromDb(videoId: string, ownerUserIds: OwnerUserIdInput) {
   const prisma = getPrisma()
   if (!prisma) {
+    return null
+  }
+  const editableOwnerUserIds = normalizeOwnerUserIds(ownerUserIds)
+  if (editableOwnerUserIds.length === 0) {
+    return null
+  }
+
+  const video = await prisma.video.findFirst({
+    where: {
+      AND: [getVideoLookup(videoId), { ownerUserId: { in: editableOwnerUserIds } }],
+    },
+    include: {
+      editorState: true,
+      keyframes: {
+        orderBy: { timestampSeconds: "asc" },
+      },
+    },
+  })
+
+  return video ? rowToTravelVideo(video, { editableOwnerUserIds }) : null
+}
+
+export async function isCreatorVideoOwnedByUser(videoId: string, ownerUserIds: OwnerUserIdInput) {
+  const prisma = getPrisma()
+  const editableOwnerUserIds = normalizeOwnerUserIds(ownerUserIds)
+  if (!prisma || editableOwnerUserIds.length === 0) {
     return false
   }
 
   const video = await prisma.video.findFirst({
     where: {
-      AND: [getVideoLookup(videoId), { ownerUserId }],
+      AND: [getVideoLookup(videoId), { ownerUserId: { in: editableOwnerUserIds } }],
+    },
+    select: {
+      id: true,
+    },
+  })
+
+  return Boolean(video)
+}
+
+export async function deleteCreatorVideoFromDb(videoId: string, ownerUserIds: OwnerUserIdInput) {
+  const prisma = getPrisma()
+  if (!prisma) {
+    return false
+  }
+  const editableOwnerUserIds = normalizeOwnerUserIds(ownerUserIds)
+  if (editableOwnerUserIds.length === 0) {
+    return false
+  }
+
+  const video = await prisma.video.findFirst({
+    where: {
+      AND: [getVideoLookup(videoId), { ownerUserId: { in: editableOwnerUserIds } }],
     },
   })
 
@@ -330,15 +426,19 @@ export async function deleteCreatorVideoFromDb(videoId: string, ownerUserId: str
   return true
 }
 
-export async function getCreatorVideoStateFromDb(videoId: string, ownerUserId: string) {
+export async function getCreatorVideoStateFromDb(videoId: string, ownerUserIds: OwnerUserIdInput) {
   const prisma = getPrisma()
   if (!prisma) {
+    return null
+  }
+  const editableOwnerUserIds = normalizeOwnerUserIds(ownerUserIds)
+  if (editableOwnerUserIds.length === 0) {
     return null
   }
 
   const video = await prisma.video.findFirst({
     where: {
-      AND: [getVideoLookup(videoId), { OR: [{ ownerUserId }, { ownerUserId: catalogOwnerUserId }] }],
+      AND: [getVideoLookup(videoId), { ownerUserId: { in: editableOwnerUserIds } }],
     },
     include: {
       editorState: true,
@@ -359,38 +459,73 @@ export async function getCreatorVideoStateFromDb(videoId: string, ownerUserId: s
   }
 }
 
-export async function saveCreatorVideoStateForVideoId(videoId: string, ownerUserId: string, state: CreatorVideoState) {
+export async function saveCreatorVideoStateForVideoId(
+  videoId: string,
+  ownerUserId: string,
+  ownerUserIds: OwnerUserIdInput,
+  state: CreatorVideoState,
+) {
   const prisma = getPrisma()
   if (!prisma) {
+    return null
+  }
+  const editableOwnerUserIds = normalizeOwnerUserIds(ownerUserIds)
+  if (editableOwnerUserIds.length === 0) {
     return null
   }
 
   const video = await prisma.video.findFirst({
     where: {
-      AND: [getVideoLookup(videoId), { OR: [{ ownerUserId }, { ownerUserId: catalogOwnerUserId }] }],
+      AND: [getVideoLookup(videoId), { ownerUserId: { in: editableOwnerUserIds } }],
     },
   })
 
   if (!video) {
+    const existingVideo = await prisma.video.findFirst({
+      where: getVideoLookup(videoId),
+      select: {
+        ownerUserId: true,
+      },
+    })
+
+    if (existingVideo?.ownerUserId === catalogOwnerUserId) {
+      throw new CreatorVideoPersistenceError(403, "Catalog videos are read-only.")
+    }
+
+    if (existingVideo) {
+      throw new CreatorVideoPersistenceError(403, "You do not own this video.")
+    }
+
     return null
   }
 
-  const savedState = await prisma.videoEditorState.upsert({
-    where: { videoId: video.id },
-    create: {
-      videoId: video.id,
-      ownerUserId,
-      points: toJsonInput(state.points),
-      tripRoute: toJsonInput(state.tripRoute),
-      routeShapes: toJsonInput(state.routeShapes),
-    },
-    update: {
-      ownerUserId,
-      points: toJsonInput(state.points),
-      tripRoute: toJsonInput(state.tripRoute),
-      routeShapes: toJsonInput(state.routeShapes),
-      updatedAt: new Date(),
-    },
+  const keyframes = state.points.map(({ id: _id, ...point }) => point)
+  const savedState = await prisma.$transaction(async (tx) => {
+    await replaceVideoKeyframes(tx, video.id, keyframes)
+    await tx.video.update({
+      where: { id: video.id },
+      data: {
+        locations: keyframes.map((point) => point.location),
+        updatedAt: new Date(),
+      },
+    })
+
+    return tx.videoEditorState.upsert({
+      where: { videoId: video.id },
+      create: {
+        videoId: video.id,
+        ownerUserId,
+        points: toJsonInput(state.points),
+        tripRoute: toJsonInput(state.tripRoute),
+        routeShapes: toJsonInput(state.routeShapes),
+      },
+      update: {
+        points: toJsonInput(state.points),
+        tripRoute: toJsonInput(state.tripRoute),
+        routeShapes: toJsonInput(state.routeShapes),
+        updatedAt: new Date(),
+      },
+    })
   })
 
   return savedState.updatedAt.toISOString()

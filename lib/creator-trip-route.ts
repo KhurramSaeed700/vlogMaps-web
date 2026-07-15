@@ -16,44 +16,46 @@ export const emptyCreatorTripRoute: CreatorTripRoute = {
   end: null,
 }
 
-function getStorageKey(videoId: string) {
+function creatorTripRouteStorageKey(videoId: string) {
   return `travelmap:creator-trip-route:${videoId}`
 }
 
-function isValidLocation(value: unknown): value is CreatorTripLocation {
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value)
+}
+
+function isTripLocation(value: unknown): value is CreatorTripLocation {
   if (!value || typeof value !== "object") {
     return false
   }
 
-  const location = value as CreatorTripLocation
-  return (
-    typeof location.lat === "number" &&
-    Number.isFinite(location.lat) &&
-    typeof location.lng === "number" &&
-    Number.isFinite(location.lng) &&
-    (typeof location.name === "undefined" || typeof location.name === "string")
-  )
+  const location = value as Partial<CreatorTripLocation>
+  return isFiniteNumber(location.lat) && isFiniteNumber(location.lng)
+}
+
+function isTripRoute(value: unknown): value is CreatorTripRoute {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const route = value as Partial<CreatorTripRoute>
+  return (route.start === null || isTripLocation(route.start)) && (route.end === null || isTripLocation(route.end))
 }
 
 export function loadCreatorTripRoute(videoId: string) {
-  if (typeof window === "undefined") {
-    return emptyCreatorTripRoute
-  }
-
-  const raw = window.localStorage.getItem(getStorageKey(videoId))
-  if (!raw) {
-    return emptyCreatorTripRoute
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<CreatorTripRoute>
-    return {
-      start: isValidLocation(parsed.start) ? parsed.start : null,
-      end: isValidLocation(parsed.end) ? parsed.end : null,
+  if (typeof window !== "undefined") {
+    try {
+      const rawRoute = window.localStorage.getItem(creatorTripRouteStorageKey(videoId))
+      const parsedRoute = rawRoute ? (JSON.parse(rawRoute) as unknown) : null
+      if (isTripRoute(parsedRoute)) {
+        return parsedRoute
+      }
+    } catch {
+      window.localStorage.removeItem(creatorTripRouteStorageKey(videoId))
     }
-  } catch {
-    return emptyCreatorTripRoute
   }
+
+  return emptyCreatorTripRoute
 }
 
 export function saveCreatorTripRoute(videoId: string, route: CreatorTripRoute) {
@@ -61,7 +63,7 @@ export function saveCreatorTripRoute(videoId: string, route: CreatorTripRoute) {
     return
   }
 
-  window.localStorage.setItem(getStorageKey(videoId), JSON.stringify(route))
+  window.localStorage.setItem(creatorTripRouteStorageKey(videoId), JSON.stringify(route))
 }
 
 export function clearCreatorTripRoute(videoId: string) {
@@ -69,5 +71,5 @@ export function clearCreatorTripRoute(videoId: string) {
     return
   }
 
-  window.localStorage.removeItem(getStorageKey(videoId))
+  window.localStorage.removeItem(creatorTripRouteStorageKey(videoId))
 }

@@ -28,8 +28,6 @@ import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
 import { ThemeToggle } from "@/components/app-shell/theme-toggle"
 import { useCreatorAccess } from "@/lib/use-creator-access"
 
-const applicationDraftStorageKey = "travelmap:creator-application:v2"
-
 interface CreatorApplicationFormData {
   fullName: string
   displayName: string
@@ -127,44 +125,16 @@ function CreatorApplicationContent() {
   const [submitMessage, setSubmitMessage] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!user || typeof window === "undefined") {
+    if (!user) {
       return
     }
 
-    const rawDraft = window.localStorage.getItem(applicationDraftStorageKey)
-    const defaults = buildInitialFormData({
+    setFormData(buildInitialFormData({
       fullName: user.fullName,
       email: user.primaryEmailAddress?.emailAddress,
       verificationCode,
-    })
-
-    if (!rawDraft) {
-      setFormData(defaults)
-      return
-    }
-
-    try {
-      const parsed = JSON.parse(rawDraft) as Partial<CreatorApplicationFormData>
-      setFormData({
-        ...defaults,
-        ...parsed,
-        fullName: parsed.fullName || defaults.fullName,
-        email: parsed.email || defaults.email,
-        ownershipEmail: parsed.ownershipEmail || defaults.ownershipEmail,
-        verificationCode,
-      })
-    } catch {
-      setFormData(defaults)
-    }
+    }))
   }, [user, verificationCode])
-
-  useEffect(() => {
-    if (typeof window === "undefined" || isSubmitted) {
-      return
-    }
-
-    window.localStorage.setItem(applicationDraftStorageKey, JSON.stringify(formData))
-  }, [formData, isSubmitted])
 
   const handleInputChange = <K extends keyof CreatorApplicationFormData>(
     field: K,
@@ -263,7 +233,6 @@ function CreatorApplicationContent() {
       setIsSubmitting(false)
       setIsSubmitted(true)
       setSubmitMessage("Verification form submitted. In a production flow this would enter the review queue.")
-      window.localStorage.removeItem(applicationDraftStorageKey)
     }, 1800)
   }
 

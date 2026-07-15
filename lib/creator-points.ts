@@ -6,8 +6,32 @@ export interface CreatorMapPoint extends VideoKeyframe {
   id: string
 }
 
+function creatorPointsStorageKey(videoId: string) {
+  return `travelmap:creator-points:${videoId}`
+}
+
 function createPointId(videoId: string, time: number, lat: number, lng: number) {
   return `${videoId}-${time}-${lat.toFixed(4)}-${lng.toFixed(4)}`
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value)
+}
+
+function isCreatorMapPoint(value: unknown): value is CreatorMapPoint {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const point = value as Partial<CreatorMapPoint>
+  return (
+    typeof point.id === "string" &&
+    isFiniteNumber(point.time) &&
+    isFiniteNumber(point.lat) &&
+    isFiniteNumber(point.lng) &&
+    typeof point.location === "string" &&
+    typeof point.description === "string"
+  )
 }
 
 export function sortCreatorPoints(points: CreatorMapPoint[]) {
@@ -15,7 +39,11 @@ export function sortCreatorPoints(points: CreatorMapPoint[]) {
 }
 
 export function getCreatorPointType(point: Pick<VideoKeyframe, "pointType">): CreatorMapPointType {
-  return point.pointType === "stop" ? "stop" : "point"
+  if (point.pointType === "stop" || point.pointType === "flight") {
+    return point.pointType
+  }
+
+  return "point"
 }
 
 export function toCreatorMapPoints(videoId: string, keyframes: VideoKeyframe[]) {
@@ -42,30 +70,23 @@ function normalizeCreatorPoint(videoId: string, point: CreatorMapPoint) {
   }
 }
 
-function getStorageKey(videoId: string) {
-  return `travelmap:creator-points:${videoId}`
-}
-
 export function loadCreatorPoints(videoId: string, fallback: VideoKeyframe[]) {
-  if (typeof window === "undefined") {
-    return toCreatorMapPoints(videoId, fallback)
-  }
-
-  const raw = window.localStorage.getItem(getStorageKey(videoId))
-  if (!raw) {
-    return toCreatorMapPoints(videoId, fallback)
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as CreatorMapPoint[]
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return toCreatorMapPoints(videoId, fallback)
+  if (typeof window !== "undefined") {
+    try {
+      const rawPoints = window.localStorage.getItem(creatorPointsStorageKey(videoId))
+      const parsedPoints = rawPoints ? (JSON.parse(rawPoints) as unknown) : null
+      if (Array.isArray(parsedPoints)) {
+        const savedPoints = parsedPoints.filter(isCreatorMapPoint).map((point) => normalizeCreatorPoint(videoId, point))
+        if (savedPoints.length > 0) {
+          return sortCreatorPoints(savedPoints)
+        }
+      }
+    } catch {
+      window.localStorage.removeItem(creatorPointsStorageKey(videoId))
     }
-
-    return sortCreatorPoints(parsed.map((point) => normalizeCreatorPoint(videoId, point)))
-  } catch {
-    return toCreatorMapPoints(videoId, fallback)
   }
+
+  return toCreatorMapPoints(videoId, fallback)
 }
 
 export function saveCreatorPoints(videoId: string, points: CreatorMapPoint[]) {
@@ -73,7 +94,7 @@ export function saveCreatorPoints(videoId: string, points: CreatorMapPoint[]) {
     return
   }
 
-  window.localStorage.setItem(getStorageKey(videoId), JSON.stringify(sortCreatorPoints(points)))
+  window.localStorage.setItem(creatorPointsStorageKey(videoId), JSON.stringify(sortCreatorPoints(points)))
 }
 
 export function clearCreatorPoints(videoId: string) {
@@ -81,7 +102,7 @@ export function clearCreatorPoints(videoId: string) {
     return
   }
 
-  window.localStorage.removeItem(getStorageKey(videoId))
+  window.localStorage.removeItem(creatorPointsStorageKey(videoId))
 }
 
 export function upsertCreatorPoint(videoId: string, points: CreatorMapPoint[], point: Omit<CreatorMapPoint, "id"> & { id?: string }) {

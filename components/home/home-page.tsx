@@ -11,7 +11,7 @@ import {
 } from "@/components/home/home-preferences"
 import { HomeVideoGrid } from "@/components/home/video-grid"
 import { fetchPublishedCloudVideos } from "@/lib/creator-videos-cloud-client"
-import { createInstantWatchVideo, getPublishedTravelVideosClient, mergeTravelVideos } from "@/lib/creator-videos"
+import { createInstantWatchVideo } from "@/lib/creator-videos"
 import type { TravelVideo } from "@/lib/demo-data"
 import { hydrateTravelVideos, toHydratedTravelVideo, type HydratedTravelVideo } from "@/lib/youtube-client"
 
@@ -42,15 +42,32 @@ async function hydrateTravelVideosWithTimeout(videos: TravelVideo[]) {
   }
 }
 
+function getVideoDedupeKey(video: TravelVideo) {
+  return video.youtubeId.trim().toLowerCase() || video.id
+}
+
+function dedupeVideosByYouTubeId<T extends TravelVideo>(videos: T[]) {
+  const seenVideoKeys = new Set<string>()
+
+  return videos.filter((video) => {
+    const videoKey = getVideoDedupeKey(video)
+
+    if (seenVideoKeys.has(videoKey)) {
+      return false
+    }
+
+    seenVideoKeys.add(videoKey)
+    return true
+  })
+}
+
 export default function HomePage({ initialVideos = [] }: HomePageProps) {
   const router = useRouter()
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [selectedPreference, setSelectedPreference] = useState<PreferenceId>("all")
-  const [catalogVideos, setCatalogVideos] = useState<HydratedTravelVideo[]>(() =>
-    toResolvedFallbackVideos(initialVideos),
-  )
-  const [isCatalogLoading, setIsCatalogLoading] = useState(false)
-  const [isHydratingCatalog, setIsHydratingCatalog] = useState(() => initialVideos.length > 0)
+  const [catalogVideos, setCatalogVideos] = useState<HydratedTravelVideo[]>([])
+  const [isCatalogLoading, setIsCatalogLoading] = useState(true)
+  const [isHydratingCatalog, setIsHydratingCatalog] = useState(false)
   const [launcherError, setLauncherError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
@@ -60,39 +77,33 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
       setSelectedPreference(savedPreference)
     }
 
-    let localVideos: ReturnType<typeof getPublishedTravelVideosClient>
-    try {
-      localVideos = getPublishedTravelVideosClient()
-    } catch {
-      localVideos = []
-    }
-
-    const resolvedFallbackVideos = toResolvedFallbackVideos(mergeTravelVideos(initialVideos, localVideos))
-    setCatalogVideos(resolvedFallbackVideos)
-    setIsCatalogLoading(false)
-    setIsHydratingCatalog(resolvedFallbackVideos.length > 0)
-
     let isMounted = true
+    setCatalogVideos([])
+    setIsCatalogLoading(true)
+    setIsHydratingCatalog(false)
+
     fetchPublishedCloudVideos()
       .then((response) => {
         if (!isMounted) {
           return []
         }
 
-        const baseVideos = mergeTravelVideos(initialVideos, localVideos, response.videos)
+        const baseVideos = response.videos
         const nextFallbackVideos = toResolvedFallbackVideos(baseVideos)
         setCatalogVideos(nextFallbackVideos)
+        setIsCatalogLoading(false)
         setIsHydratingCatalog(baseVideos.length > 0)
         return hydrateTravelVideosWithTimeout(baseVideos)
       })
       .then((nextVideos) => {
         if (isMounted) {
-          setCatalogVideos(nextVideos.length > 0 ? nextVideos : resolvedFallbackVideos)
+          setCatalogVideos(nextVideos)
         }
       })
       .catch(() => {
         if (isMounted) {
-          setCatalogVideos(resolvedFallbackVideos)
+          setCatalogVideos([])
+          setIsCatalogLoading(false)
         }
       })
       .finally(() => {
@@ -113,14 +124,10 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
         : catalogVideos.filter((video) => video.tags?.includes(selectedPreference))
 
     const nextVideos = filtered.length > 0 ? filtered : catalogVideos
-    return [...nextVideos].sort((a, b) => b.views - a.views)
+    return dedupeVideosByYouTubeId(nextVideos).sort((a, b) => b.views - a.views)
   }, [catalogVideos, selectedPreference])
 
   const homeLoadingMessage = useMemo(() => {
-    if (isCatalogLoading) {
-      return "Loading videos..."
-    }
-
     if (isHydratingCatalog && videos.length === 0) {
       return "Refreshing video titles and details..."
     }
@@ -137,14 +144,6 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
         youtubeUrl,
         preferredTag: selectedPreference === "all" ? undefined : selectedPreference,
       })
-
-      const baseVideos = mergeTravelVideos(catalogVideos, getPublishedTravelVideosClient())
-      setCatalogVideos(toResolvedFallbackVideos(baseVideos))
-      setIsHydratingCatalog(true)
-      hydrateTravelVideosWithTimeout(baseVideos)
-        .then((nextVideos) => setCatalogVideos(nextVideos))
-        .catch(() => setCatalogVideos(toResolvedFallbackVideos(baseVideos)))
-        .finally(() => setIsHydratingCatalog(false))
 
       startTransition(() => {
         router.push(`/watch/${video.id}`)

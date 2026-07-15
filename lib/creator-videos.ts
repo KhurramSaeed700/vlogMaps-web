@@ -3,11 +3,7 @@ import { loadCreatorPoints } from "@/lib/creator-points"
 import { loadCreatorRouteShapes } from "@/lib/creator-route-shapes"
 import { loadCreatorTripRoute } from "@/lib/creator-trip-route"
 import type { CreatorVideoState } from "@/lib/creator-video-state"
-import { creatorProfile, getCreatorVideos, getPublishedTravelVideos, getTravelVideoById } from "@/lib/demo-data"
 import { extractYouTubeId, getYouTubeThumbnailUrl, type ResolvedYouTubeMetadata } from "@/lib/youtube"
-
-const creatorVideosStorageKey = "travelmap:creator-videos"
-const instantVideosStorageKey = "travelmap:instant-videos"
 
 const instantRouteTemplates = [
   {
@@ -71,32 +67,16 @@ function createVideoId(prefix: string, youtubeId: string) {
   return `${prefix}-${youtubeId}`
 }
 
+function createOpaqueCreatorVideoId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `custom-${crypto.randomUUID()}`
+  }
+
+  return `custom-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
+}
+
 function hashValue(value: string) {
   return Array.from(value).reduce((total, char) => total + char.charCodeAt(0), 0)
-}
-
-function readStorageItem(key: string) {
-  if (typeof window === "undefined") {
-    return null
-  }
-
-  try {
-    return window.localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
-function writeStorageItem(key: string, value: string) {
-  if (typeof window === "undefined") {
-    return
-  }
-
-  try {
-    window.localStorage.setItem(key, value)
-  } catch {
-    // Local storage can be unavailable in private or restricted browser contexts.
-  }
 }
 
 function buildInstantKeyframes(youtubeId: string, preferredTag?: string) {
@@ -170,64 +150,27 @@ export function withSyncedVideoState(video: TravelVideo, state: CreatorVideoStat
 }
 
 export function loadLocalCreatorVideos() {
-  const raw = readStorageItem(creatorVideosStorageKey)
-  if (!raw) {
-    return [] as TravelVideo[]
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as TravelVideo[]
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
+  return [] as TravelVideo[]
 }
 
-export function saveLocalCreatorVideos(videos: TravelVideo[]) {
-  writeStorageItem(creatorVideosStorageKey, JSON.stringify(videos))
-}
+export function saveLocalCreatorVideos(_videos: TravelVideo[]) {}
 
 export function loadInstantWatchVideos() {
-  const raw = readStorageItem(instantVideosStorageKey)
-  if (!raw) {
-    return [] as TravelVideo[]
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as TravelVideo[]
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
+  return [] as TravelVideo[]
 }
 
-export function saveInstantWatchVideos(videos: TravelVideo[]) {
-  writeStorageItem(instantVideosStorageKey, JSON.stringify(videos))
-}
+export function saveInstantWatchVideos(_videos: TravelVideo[]) {}
 
 export function getAllCreatorVideosClient() {
-  const localVideos = loadLocalCreatorVideos()
-  const catalogCreatorVideos = getCreatorVideos().filter(
-    (catalogVideo) =>
-      !localVideos.some(
-        (localVideo) => localVideo.id === catalogVideo.id || localVideo.youtubeId === catalogVideo.youtubeId,
-      ),
-  )
-
-  return [...localVideos, ...catalogCreatorVideos]
+  return [] as TravelVideo[]
 }
 
 export function getPublishedTravelVideosClient() {
-  return [...getPublishedTravelVideos(), ...loadLocalCreatorVideos().filter((video) => video.status === "published"), ...loadInstantWatchVideos()]
+  return [] as TravelVideo[]
 }
 
 export function getTravelVideoByIdClient(id: string) {
-  const catalogVideo = getTravelVideoById(id)
-  if (catalogVideo) {
-    return catalogVideo
-  }
-
-  return [...loadLocalCreatorVideos(), ...loadInstantWatchVideos()].find((video) => video.id === id)
+  return createInstantWatchVideoFromId(id)
 }
 
 async function fetchMetadataForCreatorVideo(youtubeId: string) {
@@ -258,23 +201,13 @@ export async function createLocalCreatorVideo({
     throw new Error("Please paste a valid YouTube URL.")
   }
 
-  const existingVideo = loadLocalCreatorVideos().find((video) => video.youtubeId === youtubeId)
-  if (existingVideo) {
-    return existingVideo
-  }
-
-  const existingCatalogVideo = getCreatorVideos().find((video) => video.youtubeId === youtubeId)
-  if (existingCatalogVideo) {
-    return existingCatalogVideo
-  }
-
   const metadata = await fetchMetadataForCreatorVideo(youtubeId)
   const now = new Date().toISOString()
   const video: TravelVideo = {
-    id: `custom-${youtubeId}-${Date.now()}`,
+    id: createOpaqueCreatorVideoId(),
     title: metadata?.title || `New travel video (${youtubeId})`,
-    creator: metadata?.creator || creatorProfile.name,
-    creatorChannelUrl: metadata?.creatorChannelUrl || creatorProfile.channelUrl,
+    creator: metadata?.creator || "Unknown creator",
+    creatorChannelUrl: metadata?.creatorChannelUrl || `https://www.youtube.com/watch?v=${youtubeId}`,
     youtubeId,
     thumbnail: metadata?.thumbnail || getYouTubeThumbnailUrl(youtubeId),
     durationSeconds: metadata?.durationSeconds ?? 0,
@@ -290,8 +223,6 @@ export async function createLocalCreatorVideo({
     tags: ["creator"],
   }
 
-  const nextVideos = [video, ...loadLocalCreatorVideos()]
-  saveLocalCreatorVideos(nextVideos)
   return video
 }
 
@@ -308,19 +239,9 @@ export function createInstantWatchVideo({
     throw new Error("Paste a valid YouTube URL to launch the instant watch view.")
   }
 
-  const creatorVideo = loadLocalCreatorVideos().find((video) => video.youtubeId === youtubeId)
-  if (creatorVideo) {
-    return creatorVideo
-  }
-
-  const existingVideo = loadInstantWatchVideos().find((video) => video.youtubeId === youtubeId)
-  if (existingVideo) {
-    return existingVideo
-  }
-
   const now = new Date().toISOString()
   const { tags, keyframes } = buildInstantKeyframes(youtubeId, preferredTag)
-  const video: TravelVideo = {
+  return {
     id: createVideoId("instant", youtubeId),
     title: "Your Pasted YouTube Video",
     creator: "You",
@@ -338,56 +259,46 @@ export function createInstantWatchVideo({
     keyframes,
     tags,
   }
+}
 
-  const nextVideos = [video, ...loadInstantWatchVideos()]
-  saveInstantWatchVideos(nextVideos)
-  return video
+function createInstantWatchVideoFromId(id: string) {
+  if (!isInstantWatchVideoId(id)) {
+    return undefined
+  }
+
+  const youtubeId = id.replace(/^instant-/, "")
+  if (!extractYouTubeId(`https://www.youtube.com/watch?v=${youtubeId}`)) {
+    return undefined
+  }
+
+  const { tags, keyframes } = buildInstantKeyframes(youtubeId)
+  return {
+    id,
+    title: "Your Pasted YouTube Video",
+    creator: "You",
+    creatorChannelUrl: `https://www.youtube.com/watch?v=${youtubeId}`,
+    youtubeId,
+    thumbnail: getYouTubeThumbnailUrl(youtubeId),
+    durationSeconds: 220,
+    views: 0,
+    mapViews: 0,
+    likes: 0,
+    status: "published",
+    createdAt: new Date().toISOString(),
+    description: "An instant map route was generated so you can jump straight into the split-screen watch experience.",
+    locations: keyframes.map((point) => point.location),
+    keyframes,
+    tags,
+  } satisfies TravelVideo
 }
 
 export function updateLocalCreatorVideo(videoId: string, updates: Partial<TravelVideo>) {
-  if (!isLocalCreatorVideoId(videoId)) {
-    return null
-  }
-
-  const videos = loadLocalCreatorVideos()
-  const nextVideos = videos.map((video) => {
-    if (video.id !== videoId) {
-      return video
-    }
-
-    return {
-      ...video,
-      ...updates,
-    }
-  })
-
-  saveLocalCreatorVideos(nextVideos)
-  return nextVideos.find((video) => video.id === videoId) ?? null
+  return null
 }
 
 export function deleteLocalCreatorVideo(videoId: string) {
-  if (!isLocalCreatorVideoId(videoId)) {
-    return false
-  }
-
-  const videos = loadLocalCreatorVideos()
-  const nextVideos = videos.filter((video) => video.id !== videoId)
-
-  if (nextVideos.length === videos.length) {
-    return false
-  }
-
-  saveLocalCreatorVideos(nextVideos)
-  return true
+  return false
 }
 
 export function syncVideoRouteMetadata(videoId: string, keyframes: VideoKeyframe[]) {
-  if (!isLocalCreatorVideoId(videoId)) {
-    return
-  }
-
-  updateLocalCreatorVideo(videoId, {
-    keyframes,
-    locations: keyframes.map((point) => point.location),
-  })
 }

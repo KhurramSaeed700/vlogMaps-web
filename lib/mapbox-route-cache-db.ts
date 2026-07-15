@@ -3,6 +3,8 @@ import "server-only"
 import { getSqlClient, isDatabaseConfigured } from "@/lib/database"
 
 export interface CachedDirectionsPayload {
+  code?: string
+  message?: string
   routes?: Array<{
     distance?: number
     duration?: number
@@ -10,6 +12,14 @@ export interface CachedDirectionsPayload {
       coordinates?: unknown
       type?: string
     }
+    legs?: Array<{
+      steps?: Array<{
+        geometry?: {
+          coordinates?: unknown
+          type?: string
+        }
+      }>
+    }>
   }>
 }
 

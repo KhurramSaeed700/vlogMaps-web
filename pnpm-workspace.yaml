@@ -1,3 +1,24 @@
+allowBuilds:
+  '@prisma/engines': true
+  prisma: true
+  sharp: true
+minimumReleaseAgeExclude:
+  - '@clerk/backend@3.7.0'
+  - '@clerk/nextjs@7.5.2'
+  - '@clerk/react@6.9.1'
+  - '@clerk/shared@4.17.1'
+  - mapbox-gl@3.24.1
 onlyBuiltDependencies:
   - '@clerk/shared'
   - sharp
+overrides:
+  '@hono/node-server': 1.19.13
+  brace-expansion: 2.0.3
+  glob: 10.5.0
+  hono: 4.12.25
+  lodash: 4.18.1
+  minimatch: 9.0.7
+  picomatch: 2.3.2
+  postcss: 8.5.15
+  protocol-buffers-schema: 3.6.1
+  yaml: 2.8.3

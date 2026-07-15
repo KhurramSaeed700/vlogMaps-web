@@ -6,7 +6,7 @@ import "mapbox-gl/dist/mapbox-gl.css"
 import { Crosshair, ExternalLink, Loader2, Redo2, Search, Undo2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { mapboxAccessToken } from "@/lib/mapbox"
+import { hasMapboxAccessToken, mapboxAccessToken } from "@/lib/mapbox"
 import { getInterpolatedPointAtTime, type CreatorMapPoint } from "@/lib/creator-points"
 import type { CreatorTripEndpoint, CreatorTripRoute } from "@/lib/creator-trip-route"
 import { getTimestampLegKey, type CreatorRouteShapePoint, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
@@ -17,7 +17,7 @@ const mapStyleOptions = [
   { id: "streets", label: "Streets", style: "mapbox://styles/mapbox/streets-v12" },
   { id: "terrain", label: "Terrain", style: "mapbox://styles/mapbox/outdoors-v12" },
 ] as const
-const editorRouteLayerIds = ["editor-route-hit", "editor-route-trail", "editor-route"] as const
+const editorRouteLayerIds = ["editor-route-hit", "editor-route-flight", "editor-route-direct", "editor-route"] as const
 const editorTripRouteLayerIds = ["editor-trip-route-hit", "editor-trip-route", "editor-trip-route-casing"] as const
 const editorTimestampPointSourceId = "editor-timestamp-points"
 const editorTimestampPointLayerIds = [
@@ -28,6 +28,7 @@ const editorTimestampPointLayerIds = [
 const markerHighlightDurationMs = 1000
 const pointTimestampMarkerColor = "#ea580c"
 const stopTimestampMarkerColor = "#0f766e"
+const flightTimestampMarkerColor = "#0284c7"
 const editorTravelerMarkerColor = "#ef4444"
 const editorTravelerMarkerScale = 1.12
 const editorTimestampRouteWidth = 5
@@ -53,10 +54,7 @@ const editorTravelerTrackingStopZoomTransitionSeconds = 2
 const editorTravelerTrackingStopZoomBoost = 1.55
 const editorTravelerTrackingLoadingMinMs = 450
 const editorTravelerTrackingLoadingFallbackMs = 6500
-const editorTrailMaxDirectDistanceKm = 30
-const editorTrailMinRouteDetourKm = 5
-const editorTrailDetourRatio = 3
-const editorTrailSnapDistanceKm = 0.5
+const editorTravelerTrackingTargetRefreshMs = 120
 const mapKeyboardZoomDelta = 1
 const mapKeyboardZoomDurationMs = 240
 
@@ -66,60 +64,15 @@ function isMapStyleOptionId(value: unknown): value is MapStyleOptionId {
   return typeof value === "string" && mapStyleOptions.some((option) => option.id === value)
 }
 
-function getMapViewStorageKey(key: string) {
-  return `vlogmaps:map-view:${key}`
-}
-
-function getMapStyleStorageKey(key: string) {
-  return `vlogmaps:map-style:${key}`
-}
-
 function readStoredMapView(key?: string): Partial<PersistedMapView> | null {
-  if (!key || typeof window === "undefined") {
-    return null
-  }
-
-  try {
-    const raw = window.localStorage.getItem(getMapViewStorageKey(key))
-    return raw ? (JSON.parse(raw) as Partial<PersistedMapView>) : null
-  } catch {
-    return null
-  }
+  return null
 }
 
 function loadPersistedMapStyle(key?: string): MapStyleOptionId | null {
-  if (!key || typeof window === "undefined") {
-    return null
-  }
-
-  try {
-    const rawStyle = window.localStorage.getItem(getMapStyleStorageKey(key))
-    if (isMapStyleOptionId(rawStyle)) {
-      return rawStyle
-    }
-  } catch {
-    // The full map view can still provide a usable style fallback.
-  }
-
-  const storedView = readStoredMapView(key)
-  if (!storedView) {
-    return null
-  }
-
-  return isMapStyleOptionId(storedView.style) ? storedView.style : null
+  return null
 }
 
-function savePersistedMapStyle(key: string | undefined, style: MapStyleOptionId) {
-  if (!key || typeof window === "undefined") {
-    return
-  }
-
-  try {
-    window.localStorage.setItem(getMapStyleStorageKey(key), style)
-  } catch {
-    // Map style persistence is a convenience only.
-  }
-}
+function savePersistedMapStyle(_key: string | undefined, _style: MapStyleOptionId) {}
 
 function loadPersistedMapView(key?: string): PersistedMapView | null {
   if (!key || typeof window === "undefined") {
@@ -160,20 +113,13 @@ function loadPersistedMapView(key?: string): PersistedMapView | null {
   }
 }
 
-function savePersistedMapView(key: string | undefined, view: PersistedMapView) {
-  if (!key || typeof window === "undefined") {
-    return
-  }
-
-  try {
-    window.localStorage.setItem(getMapViewStorageKey(key), JSON.stringify(view))
-    savePersistedMapStyle(key, view.style)
-  } catch {
-    // Map view persistence is a convenience only.
-  }
-}
+function savePersistedMapView(_key: string | undefined, _view: PersistedMapView) {}
 
 function getTimestampMarkerColor(pointType?: CreatorMapPoint["pointType"]) {
+  if (pointType === "flight") {
+    return flightTimestampMarkerColor
+  }
+
   return pointType === "stop" ? stopTimestampMarkerColor : pointTimestampMarkerColor
 }
 
@@ -256,6 +202,7 @@ interface TimestampRouteSegment {
   totalDistance: number
   isStationary?: boolean
   isFallback?: boolean
+  routeKind?: "road" | "direct" | "flight"
 }
 
 interface TimestampRouteSegmentInput {
@@ -267,6 +214,7 @@ interface TimestampRouteSegmentInput {
   endCoordinate: RouteCoordinate
   isStationary?: boolean
   isFallback?: boolean
+  routeKind?: "road" | "direct" | "flight"
 }
 
 type RouteShapeTarget =
@@ -408,7 +356,8 @@ function orderEditorRouteLayers(map: mapboxgl.Map) {
   const hasTripRoute = map.getLayer("editor-trip-route")
   const hasTripCasing = map.getLayer("editor-trip-route-casing")
   const hasTimestampRoute = map.getLayer("editor-route")
-  const hasTimestampTrailRoute = map.getLayer("editor-route-trail")
+  const hasTimestampDirectRoute = map.getLayer("editor-route-direct")
+  const hasTimestampFlightRoute = map.getLayer("editor-route-flight")
 
   if (hasTripRoute && hasTimestampRoute) {
     map.moveLayer("editor-trip-route", "editor-route")
@@ -424,8 +373,12 @@ function orderEditorRouteLayers(map: mapboxgl.Map) {
     map.moveLayer("editor-route")
   }
 
-  if (hasTimestampTrailRoute) {
-    map.moveLayer("editor-route-trail")
+  if (hasTimestampDirectRoute) {
+    map.moveLayer("editor-route-direct")
+  }
+
+  if (hasTimestampFlightRoute) {
+    map.moveLayer("editor-route-flight")
   }
 
   if (map.getLayer("editor-trip-route-hit")) {
@@ -699,43 +652,6 @@ function getRouteProgressWindowCoordinates(
   return coordinates
 }
 
-function getRouteDistanceKm(coordinates: RouteCoordinate[]) {
-  if (coordinates.length < 2) {
-    return 0
-  }
-
-  return coordinates.slice(1).reduce((distance, coordinate, index) => {
-    return distance + haversineDistance(coordinates[index], coordinate)
-  }, 0)
-}
-
-function shouldRenderLegAsTrail(leg: TimestampRouteSegmentInput) {
-  if (leg.isFallback || leg.coordinates.length < 2) {
-    return true
-  }
-
-  const firstRouteCoordinate = leg.coordinates[0]
-  const lastRouteCoordinate = leg.coordinates[leg.coordinates.length - 1]
-  if (!firstRouteCoordinate || !lastRouteCoordinate) {
-    return true
-  }
-
-  const directDistance = haversineDistance(leg.startCoordinate, leg.endCoordinate)
-  if (directDistance > editorTrailMaxDirectDistanceKm) {
-    return false
-  }
-
-  const routeDistance = getRouteDistanceKm(leg.coordinates)
-  const startSnapDistance = haversineDistance(leg.startCoordinate, firstRouteCoordinate)
-  const endSnapDistance = haversineDistance(lastRouteCoordinate, leg.endCoordinate)
-  const hasLargeDetour =
-    routeDistance >= directDistance * editorTrailDetourRatio &&
-    routeDistance - directDistance >= editorTrailMinRouteDetourKm
-  const isFarFromRoad = Math.max(startSnapDistance, endSnapDistance) >= editorTrailSnapDistanceKm
-
-  return hasLargeDetour || isFarFromRoad
-}
-
 function getStopEndTime(point: CreatorMapPoint, nextPoint: CreatorMapPoint) {
   if (point.pointType !== "stop") {
     return null
@@ -750,13 +666,26 @@ function getStopEndTime(point: CreatorMapPoint, nextPoint: CreatorMapPoint) {
 
 function buildTimestampRouteSegments(legs: TimestampRouteSegmentInput[]) {
   return legs.map((leg) => {
-    if (shouldRenderLegAsTrail(leg)) {
+    if (leg.routeKind === "flight") {
+      return [
+        createTimestampRouteSegment({
+          legKey: leg.legKey,
+          fromTime: leg.fromTime,
+          toTime: leg.toTime,
+          routeKind: "flight",
+          coordinates: [leg.startCoordinate, leg.endCoordinate],
+        }),
+      ] satisfies TimestampRouteSegment[]
+    }
+
+    if (leg.routeKind === "direct" || leg.isFallback) {
       return [
         createTimestampRouteSegment({
           legKey: leg.legKey,
           fromTime: leg.fromTime,
           toTime: leg.toTime,
           isFallback: true,
+          routeKind: "direct",
           isStationary: leg.isStationary,
           coordinates: [leg.startCoordinate, leg.endCoordinate],
         }),
@@ -768,6 +697,7 @@ function buildTimestampRouteSegments(legs: TimestampRouteSegmentInput[]) {
         legKey: leg.legKey,
         fromTime: leg.fromTime,
         toTime: leg.toTime,
+        routeKind: "road",
         isStationary: leg.isStationary,
         coordinates: leg.coordinates,
       }),
@@ -857,7 +787,9 @@ export function MapboxLocationPicker({
   persistentViewKey,
   className = "h-full w-full",
 }: MapboxLocationPickerProps) {
-  mapboxgl.accessToken = mapboxAccessToken
+  if (hasMapboxAccessToken) {
+    mapboxgl.accessToken = mapboxAccessToken
+  }
 
   const persistedViewRef = useRef<PersistedMapView | null | undefined>(undefined)
   if (persistedViewRef.current === undefined) {
@@ -888,6 +820,8 @@ export function MapboxLocationPicker({
   const trackingCameraCenterRef = useRef<RouteCoordinate | null>(null)
   const trackingCameraZoomRef = useRef<number | null>(null)
   const trackingFrameTimeRef = useRef<number | null>(null)
+  const trackingTargetZoomRef = useRef<number | null>(null)
+  const trackingTargetZoomCalculatedAtRef = useRef<number | null>(null)
   const trackingSpeedSampleRef = useRef<{ coordinate: RouteCoordinate; time: number } | null>(null)
   const trackingSpeedKmhRef = useRef(0)
   const trackingStopZoomRef = useRef<TrackingStopZoomState | null>(null)
@@ -1085,6 +1019,8 @@ export function MapboxLocationPicker({
     trackingCameraCenterRef.current = null
     trackingCameraZoomRef.current = null
     trackingFrameTimeRef.current = null
+    trackingTargetZoomRef.current = null
+    trackingTargetZoomCalculatedAtRef.current = null
     trackingSpeedSampleRef.current = null
     trackingSpeedKmhRef.current = 0
     trackingStopZoomRef.current = null
@@ -1102,6 +1038,7 @@ export function MapboxLocationPicker({
       const element = routeProgressMarkerRef.current.getElement()
       element.style.pointerEvents = "none"
       element.style.zIndex = "5"
+      element.style.willChange = "transform"
       element.title = "Current traveler location"
       return
     }
@@ -1293,6 +1230,8 @@ export function MapboxLocationPicker({
     trackingCameraCenterRef.current = [center.lng, center.lat]
     trackingCameraZoomRef.current = map.getZoom()
     trackingFrameTimeRef.current = null
+    trackingTargetZoomRef.current = null
+    trackingTargetZoomCalculatedAtRef.current = null
 
     const animate = (frameTime: number) => {
       trackingAnimationFrameRef.current = null
@@ -1347,13 +1286,22 @@ export function MapboxLocationPicker({
           targetDistanceKm > 25 ? 0.45 : 0.24,
         )
         const nextCenter = interpolateRouteCoordinate(currentCenter, targetCoordinate, centerSmoothing)
-        updateTrackingSpeed(targetCoordinate, progressTime ?? 0)
-        const targetZoom = clampNumber(
-          getTravelerTrackingZoom(activeMap, progressTime ?? 0),
-          Math.max(activeMap.getMinZoom(), editorTravelerTrackingMinZoom),
-          Math.min(activeMap.getMaxZoom(), editorTravelerTrackingCloseMaxZoom),
-        )
         const currentZoom = trackingCameraZoomRef.current ?? activeMap.getZoom()
+        const lastTargetZoomCalculatedAt = trackingTargetZoomCalculatedAtRef.current
+        if (
+          trackingTargetZoomRef.current === null ||
+          lastTargetZoomCalculatedAt === null ||
+          frameTime - lastTargetZoomCalculatedAt >= editorTravelerTrackingTargetRefreshMs
+        ) {
+          updateTrackingSpeed(targetCoordinate, progressTime ?? 0)
+          trackingTargetZoomRef.current = clampNumber(
+            getTravelerTrackingZoom(activeMap, progressTime ?? 0),
+            Math.max(activeMap.getMinZoom(), editorTravelerTrackingMinZoom),
+            Math.min(activeMap.getMaxZoom(), editorTravelerTrackingCloseMaxZoom),
+          )
+          trackingTargetZoomCalculatedAtRef.current = frameTime
+        }
+        const targetZoom = trackingTargetZoomRef.current ?? currentZoom
 
         if (trackingLoadingStartedAtRef.current !== null && !trackingLoadingHasCenteredRef.current) {
           trackingLoadingHasCenteredRef.current = true
@@ -1951,7 +1899,7 @@ export function MapboxLocationPicker({
     const routeFeature = buildRouteFeatureCollection(
       segments.map((segment) => ({
         coordinates: segment.coordinates,
-        properties: { legKey: segment.legKey, routeKind: segment.isFallback ? "trail" : "road" },
+        properties: { legKey: segment.legKey, routeKind: segment.routeKind ?? (segment.isFallback ? "direct" : "road") },
       })),
     )
     const existingSource = map.getSource("editor-route") as mapboxgl.GeoJSONSource | undefined
@@ -1976,7 +1924,7 @@ export function MapboxLocationPicker({
           "line-join": "round",
           "line-cap": "round",
         },
-        filter: ["!=", ["get", "routeKind"], "trail"],
+        filter: ["==", ["get", "routeKind"], "road"],
         paint: {
           "line-color": "#f97316",
           "line-width": editorTimestampRouteWidth,
@@ -1984,32 +1932,56 @@ export function MapboxLocationPicker({
         },
       })
     } else {
-      map.setFilter("editor-route", ["!=", ["get", "routeKind"], "trail"])
+      map.setFilter("editor-route", ["==", ["get", "routeKind"], "road"])
       map.setPaintProperty("editor-route", "line-width", editorTimestampRouteWidth)
     }
 
-    if (!map.getLayer("editor-route-trail")) {
+    if (!map.getLayer("editor-route-direct")) {
       shouldOrderLayers = true
       map.addLayer({
-        id: "editor-route-trail",
+        id: "editor-route-direct",
         type: "line",
         source: "editor-route",
         layout: {
           "line-join": "round",
           "line-cap": "round",
         },
-        filter: ["==", ["get", "routeKind"], "trail"],
+        filter: ["==", ["get", "routeKind"], "direct"],
         paint: {
-          "line-color": "#f97316",
+          "line-color": "#0ea5e9",
           "line-width": editorTimestampRouteWidth,
           "line-opacity": 0.96,
           "line-dasharray": [1, 1.4],
         },
       })
     } else {
-      map.setFilter("editor-route-trail", ["==", ["get", "routeKind"], "trail"])
-      map.setPaintProperty("editor-route-trail", "line-width", editorTimestampRouteWidth)
-      map.setPaintProperty("editor-route-trail", "line-dasharray", [1, 1.4])
+      map.setFilter("editor-route-direct", ["==", ["get", "routeKind"], "direct"])
+      map.setPaintProperty("editor-route-direct", "line-width", editorTimestampRouteWidth)
+      map.setPaintProperty("editor-route-direct", "line-dasharray", [1, 1.4])
+    }
+
+    if (!map.getLayer("editor-route-flight")) {
+      shouldOrderLayers = true
+      map.addLayer({
+        id: "editor-route-flight",
+        type: "line",
+        source: "editor-route",
+        layout: {
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        filter: ["==", ["get", "routeKind"], "flight"],
+        paint: {
+          "line-color": flightTimestampMarkerColor,
+          "line-width": editorTimestampRouteWidth,
+          "line-opacity": 0.96,
+          "line-dasharray": [1.4, 0.8],
+        },
+      })
+    } else {
+      map.setFilter("editor-route-flight", ["==", ["get", "routeKind"], "flight"])
+      map.setPaintProperty("editor-route-flight", "line-width", editorTimestampRouteWidth)
+      map.setPaintProperty("editor-route-flight", "line-dasharray", [1.4, 0.8])
     }
 
     if (!map.getLayer("editor-route-hit")) {
@@ -2183,16 +2155,18 @@ export function MapboxLocationPicker({
       return
     }
 
-    fetchRoutedLegsForKeyframes(routePoints).then((legs) => {
-      if (routeRequestIdRef.current !== routeRequestId || mapInstanceRef.current !== map) {
-        return
-      }
+    fetchRoutedLegsForKeyframes(routePoints)
+      .then((legs) => {
+        if (routeRequestIdRef.current !== routeRequestId || mapInstanceRef.current !== map) {
+          return
+        }
 
       const routeSegments = legs.flatMap((leg, index) => {
         const currentPoint = currentPoints[index]
         const nextPoint = currentPoints[index + 1]
         const legKey = getTimestampLegKey(currentPoint.id, nextPoint.id)
         const stopEndTime = getStopEndTime(currentPoint, nextPoint)
+        const isFlightLeg = currentPoint.pointType === "flight" || nextPoint.pointType === "flight"
         const segments: TimestampRouteSegment[] = []
 
         if (stopEndTime !== null && stopEndTime > currentPoint.time) {
@@ -2220,7 +2194,13 @@ export function MapboxLocationPicker({
                 toTime: nextPoint.time,
                 isStationary: false,
                 isFallback: leg.isFallback,
-                coordinates: leg.coordinates,
+                routeKind: isFlightLeg ? "flight" : leg.routeKind,
+                coordinates: isFlightLeg
+                  ? [
+                      [currentPoint.lng, currentPoint.lat],
+                      [nextPoint.lng, nextPoint.lat],
+                    ]
+                  : leg.coordinates,
                 startCoordinate: [currentPoint.lng, currentPoint.lat],
                 endCoordinate: [nextPoint.lng, nextPoint.lat],
               },
@@ -2231,16 +2211,28 @@ export function MapboxLocationPicker({
         return segments
       })
 
-      runWhenMapStyleReady(map, () => {
+        runWhenMapStyleReady(map, () => {
+          if (routeRequestIdRef.current !== routeRequestId || mapInstanceRef.current !== map) {
+            return
+          }
+
+          timestampRouteSegmentsRef.current = routeSegments
+          updateRouteLayer(map, routeSegments)
+          syncRouteProgress(map, false)
+        })
+      })
+      .catch(() => {
         if (routeRequestIdRef.current !== routeRequestId || mapInstanceRef.current !== map) {
           return
         }
 
-        timestampRouteSegmentsRef.current = routeSegments
-        updateRouteLayer(map, routeSegments)
-        syncRouteProgress(map, false)
+        timestampRouteSegmentsRef.current = []
+        runWhenMapStyleReady(map, () => {
+          if (routeRequestIdRef.current === routeRequestId && mapInstanceRef.current === map) {
+            updateRouteLayer(map, [])
+          }
+        })
       })
-    })
   }
 
   const drawTripRoute = (map: mapboxgl.Map) => {
@@ -2487,6 +2479,11 @@ export function MapboxLocationPicker({
   }
 
   useEffect(() => {
+    if (!hasMapboxAccessToken) {
+      setIsLoaded(true)
+      return
+    }
+
     if (!mapRef.current || mapInstanceRef.current) {
       return
     }
@@ -2908,6 +2905,17 @@ export function MapboxLocationPicker({
   return (
     <div className={`relative overflow-hidden ${className}`}>
       <div ref={mapRef} className="h-full w-full" />
+
+      {!hasMapboxAccessToken && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-100 p-4 text-center text-slate-700">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Mapbox is not configured</p>
+            <p className="mt-1 max-w-sm text-xs">
+              Add NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN to .env.local and restart the dev server.
+            </p>
+          </div>
+        </div>
+      )}
 
       {trackingLoadingState && (
         <div

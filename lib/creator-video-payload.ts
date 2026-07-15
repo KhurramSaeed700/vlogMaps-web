@@ -1,105 +1,145 @@
+import { z } from "zod"
 import type { CreatorVideoState } from "@/lib/creator-video-state"
-import type { TravelVideo, VideoKeyframe } from "@/lib/demo-data"
+import type { TravelVideo } from "@/lib/demo-data"
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
-}
+const youtubeIdPattern = /^[a-zA-Z0-9_-]{11}$/
+const maxCreatorPoints = 300
+const maxRouteShapePoints = 2500
+const maxTimestampRouteLegs = 300
+const maxStringArrayItems = 40
 
-function readString(value: unknown, fallback = "") {
-  return typeof value === "string" ? value : fallback
-}
+const safeText = (max: number) => z.string().trim().max(max)
+const nonNegativeFiniteNumber = z.number().finite().min(0)
+const latitude = z.number().finite().min(-90).max(90)
+const longitude = z.number().finite().min(-180).max(180)
 
-function readNumber(value: unknown, fallback = 0) {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback
-}
+const routeShapePointSchema = z.object({
+  lat: latitude,
+  lng: longitude,
+})
 
-function readStringArray(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
-}
+const videoKeyframeSchema = z
+  .object({
+    time: nonNegativeFiniteNumber,
+    stopEndTime: nonNegativeFiniteNumber.optional(),
+    lat: latitude,
+    lng: longitude,
+    location: safeText(255).default("Saved location"),
+    description: safeText(1000).default(""),
+    pointType: z.enum(["point", "stop", "flight"]).default("point"),
+  })
+  .transform((point) => ({
+    ...point,
+    stopEndTime: point.pointType === "stop" && point.stopEndTime && point.stopEndTime > point.time ? point.stopEndTime : undefined,
+  }))
 
-function readKeyframes(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [] as VideoKeyframe[]
+const creatorPointSchema = videoKeyframeSchema.and(
+  z.object({
+    id: safeText(160),
+  }),
+)
+
+const tripLocationSchema = z.object({
+  lat: latitude,
+  lng: longitude,
+  name: safeText(255).optional(),
+})
+
+const tripRouteSchema = z.object({
+  start: tripLocationSchema.nullable(),
+  end: tripLocationSchema.nullable(),
+})
+
+const routeShapesSchema = z
+  .object({
+    trip: z.array(routeShapePointSchema).max(maxRouteShapePoints),
+    timestampLegs: z.record(safeText(180), z.array(routeShapePointSchema).max(maxRouteShapePoints)),
+  })
+  .superRefine((routeShapes, context) => {
+    const legEntries = Object.entries(routeShapes.timestampLegs)
+    if (legEntries.length > maxTimestampRouteLegs) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["timestampLegs"],
+        message: `Timestamp route legs must not exceed ${maxTimestampRouteLegs}.`,
+      })
+    }
+
+    const totalShapePoints = routeShapes.trip.length + legEntries.reduce((total, [, points]) => total + points.length, 0)
+    if (totalShapePoints > maxRouteShapePoints) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["timestampLegs"],
+        message: `Route shape points must not exceed ${maxRouteShapePoints}.`,
+      })
+    }
+  })
+
+const creatorVideoStateSchema = z.object({
+  points: z.array(creatorPointSchema).max(maxCreatorPoints),
+  tripRoute: tripRouteSchema,
+  routeShapes: routeShapesSchema,
+})
+
+const travelVideoSchema = z.object({
+  id: safeText(160).min(1),
+  title: safeText(500).min(1),
+  creator: safeText(255).default("Creator"),
+  creatorChannelUrl: safeText(500).url().or(z.literal("")).default(""),
+  youtubeId: z.string().trim().regex(youtubeIdPattern, "YouTube video id must be 11 characters."),
+  thumbnail: safeText(500).url().or(z.literal("")).default(""),
+  durationSeconds: nonNegativeFiniteNumber.default(0).transform(Math.round),
+  views: nonNegativeFiniteNumber.default(0).transform(Math.round),
+  mapViews: nonNegativeFiniteNumber.default(0).transform(Math.round),
+  likes: nonNegativeFiniteNumber.default(0).transform(Math.round),
+  status: z.enum(["draft", "published"]).default("draft"),
+  createdAt: safeText(64).default(() => new Date().toISOString()),
+  description: safeText(5000).default(""),
+  locations: z.array(safeText(255)).max(maxStringArrayItems).default([]),
+  keyframes: z.array(videoKeyframeSchema).max(maxCreatorPoints).default([]),
+  tags: z.array(safeText(80)).max(maxStringArrayItems).default([]),
+})
+
+export function formatValidationError(error: z.ZodError) {
+  const firstIssue = error.issues[0]
+  if (!firstIssue) {
+    return "Invalid payload."
   }
 
-  return value.flatMap((item): VideoKeyframe[] => {
-    if (!isPlainObject(item)) {
-      return []
-    }
-
-    const time = readNumber(item.time, Number.NaN)
-    const lat = readNumber(item.lat, Number.NaN)
-    const lng = readNumber(item.lng, Number.NaN)
-    if (!Number.isFinite(time) || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return []
-    }
-
-    const pointType = item.pointType === "stop" ? "stop" : "point"
-    const stopEndTime =
-      pointType === "stop" && typeof item.stopEndTime === "number" && item.stopEndTime > time
-        ? item.stopEndTime
-        : undefined
-
-    return [
-      {
-        time,
-        stopEndTime,
-        lat,
-        lng,
-        location: readString(item.location, "Saved location"),
-        description: readString(item.description, ""),
-        pointType,
-      },
-    ]
-  })
+  const path = firstIssue.path.length ? `${firstIssue.path.join(".")}: ` : ""
+  return `${path}${firstIssue.message}`
 }
 
 export function parseTravelVideoPayload(value: unknown) {
-  if (!isPlainObject(value)) {
-    return null
+  const result = travelVideoSchema.safeParse(value)
+  if (!result.success) {
+    return {
+      success: false as const,
+      error: formatValidationError(result.error),
+    }
   }
-
-  const id = readString(value.id).trim()
-  const youtubeId = readString(value.youtubeId).trim()
-  const title = readString(value.title).trim()
-
-  if (!id || !youtubeId || !title) {
-    return null
-  }
-
-  const keyframes = readKeyframes(value.keyframes)
-  const status = value.status === "published" ? "published" : "draft"
 
   return {
-    id,
-    title,
-    creator: readString(value.creator, "Creator"),
-    creatorChannelUrl: readString(value.creatorChannelUrl, `https://www.youtube.com/watch?v=${youtubeId}`),
-    youtubeId,
-    thumbnail: readString(value.thumbnail),
-    durationSeconds: Math.max(0, Math.round(readNumber(value.durationSeconds))),
-    views: Math.max(0, Math.round(readNumber(value.views))),
-    mapViews: Math.max(0, Math.round(readNumber(value.mapViews))),
-    likes: Math.max(0, Math.round(readNumber(value.likes))),
-    status,
-    createdAt: readString(value.createdAt, new Date().toISOString()),
-    description: readString(value.description),
-    locations: readStringArray(value.locations),
-    keyframes,
-    tags: readStringArray(value.tags),
-  } satisfies TravelVideo
+    success: true as const,
+    data: result.data satisfies TravelVideo,
+  }
 }
 
 export function parseCreatorVideoStatePayload(value: unknown) {
-  if (!isPlainObject(value) || !Array.isArray(value.points) || !isPlainObject(value.tripRoute) || !isPlainObject(value.routeShapes)) {
-    return null
+  const result = creatorVideoStateSchema.safeParse(value)
+  if (!result.success) {
+    return {
+      success: false as const,
+      error: formatValidationError(result.error),
+    }
   }
 
-  const state: CreatorVideoState = {
-    points: value.points as CreatorVideoState["points"],
-    tripRoute: value.tripRoute as unknown as CreatorVideoState["tripRoute"],
-    routeShapes: value.routeShapes as unknown as CreatorVideoState["routeShapes"],
+  return {
+    success: true as const,
+    data: result.data satisfies CreatorVideoState,
   }
+}
 
-  return state
+export function isValidYouTubeVideoId(value: string) {
+  return youtubeIdPattern.test(value)
 }

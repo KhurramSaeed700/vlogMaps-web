@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react"
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
 import { MapPin } from "lucide-react"
-import { mapboxAccessToken } from "@/lib/mapbox"
+import { hasMapboxAccessToken, mapboxAccessToken } from "@/lib/mapbox"
 
 interface MapPreviewProps {
   keyframes?: Array<{
@@ -16,11 +16,14 @@ interface MapPreviewProps {
 }
 
 export function MapPreview({ keyframes = [], className = "w-full h-32" }: MapPreviewProps) {
-  mapboxgl.accessToken = mapboxAccessToken
+  if (hasMapboxAccessToken) {
+    mapboxgl.accessToken = mapboxAccessToken
+  }
+
   const mapRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!mapRef.current || keyframes.length === 0) return
+    if (!hasMapboxAccessToken || !mapRef.current || keyframes.length === 0) return
 
     const map = new mapboxgl.Map({
       container: mapRef.current,
@@ -87,6 +90,17 @@ export function MapPreview({ keyframes = [], className = "w-full h-32" }: MapPre
         <div className="text-center text-gray-500">
           <MapPin className="h-6 w-6 mx-auto mb-1" />
           <p className="text-xs">No route data</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!hasMapboxAccessToken) {
+    return (
+      <div className={`${className} bg-gray-100 rounded-lg flex items-center justify-center`}>
+        <div className="text-center text-gray-500">
+          <MapPin className="h-6 w-6 mx-auto mb-1" />
+          <p className="text-xs">Mapbox token missing</p>
         </div>
       </div>
     )

@@ -1,7 +1,6 @@
 import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
-import { getCreatorVideoFromDb, isCreatorVideosDbConfigured } from "@/lib/creator-videos-db"
-import { getTravelVideoById } from "@/lib/demo-data"
+import { getCreatorVideoFromDb, isCreatorVideoOwnedByUser, isCreatorVideosDbConfigured } from "@/lib/creator-videos-db"
 
 export const dynamic = "force-dynamic"
 
@@ -13,14 +12,6 @@ interface RouteContext {
 
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params
-  const catalogVideo = getTravelVideoById(id)
-  if (catalogVideo) {
-    return NextResponse.json({
-      configured: isCreatorVideosDbConfigured(),
-      video: catalogVideo,
-    })
-  }
-
   const { userId } = await auth()
   const cloudVideo = await getCreatorVideoFromDb(id, userId)
   if (!cloudVideo) {
@@ -28,13 +19,19 @@ export async function GET(_request: Request, context: RouteContext) {
       {
         configured: isCreatorVideosDbConfigured(),
         video: null,
+        viewerCanEdit: false,
+        editHref: null,
       },
       { status: 404 },
     )
   }
 
+  const viewerCanEdit = await isCreatorVideoOwnedByUser(id, userId)
+
   return NextResponse.json({
     configured: isCreatorVideosDbConfigured(),
     video: cloudVideo,
+    viewerCanEdit,
+    editHref: viewerCanEdit ? `/creator/video/${encodeURIComponent(cloudVideo.id)}/edit` : null,
   })
 }

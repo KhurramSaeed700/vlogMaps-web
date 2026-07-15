@@ -8,8 +8,6 @@ import {
   type LucideIcon,
 } from "lucide-react"
 
-const preferenceStorageKey = "travelmap:home-preference"
-
 export const preferenceOptions = [
   { id: "all", label: "All", icon: Compass },
   { id: "road-trips", label: "Road Trips", icon: MapPin },
@@ -28,26 +26,7 @@ export type PreferenceId = (typeof preferenceOptions)[number]["id"]
 export const homeSkeletonCardCount = 10
 
 export function getSavedPreference() {
-  if (typeof window === "undefined") {
-    return null
-  }
-
-  try {
-    const savedPreference = window.localStorage.getItem(preferenceStorageKey) as PreferenceId | null
-    return savedPreference && preferenceOptions.some((option) => option.id === savedPreference) ? savedPreference : null
-  } catch {
-    return null
-  }
+  return null
 }
 
-export function saveSelectedPreference(preference: PreferenceId) {
-  if (typeof window === "undefined") {
-    return
-  }
-
-  try {
-    window.localStorage.setItem(preferenceStorageKey, preference)
-  } catch {
-    // The page should keep working when browser storage is blocked.
-  }
-}
+export function saveSelectedPreference(_preference: PreferenceId) {}

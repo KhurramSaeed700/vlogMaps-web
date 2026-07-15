@@ -1,38 +1,72 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { WatchExperience } from "@/components/viewer/watch-experience"
 import { Card, CardContent } from "@/components/ui/card"
 import { fetchCloudVideoById } from "@/lib/creator-videos-cloud-client"
 import { getTravelVideoByIdClient } from "@/lib/creator-videos"
 import { hydrateTravelVideo, toHydratedTravelVideo, type HydratedTravelVideo } from "@/lib/youtube-client"
 
+interface WatchVideoState {
+  video: HydratedTravelVideo
+  viewerCanEdit: boolean
+  editHref: string | null
+}
+
 export function WatchPageClient({ id }: { id: string }) {
-  const [video, setVideo] = useState<HydratedTravelVideo | null | undefined>(undefined)
+  const router = useRouter()
+  const [videoState, setVideoState] = useState<WatchVideoState | null | undefined>(undefined)
 
   useEffect(() => {
     const baseVideo = getTravelVideoByIdClient(id)
     let isMounted = true
-    setVideo(baseVideo ? toHydratedTravelVideo(baseVideo) : undefined)
+    setVideoState(
+      baseVideo
+        ? {
+            video: toHydratedTravelVideo(baseVideo),
+            viewerCanEdit: false,
+            editHref: null,
+          }
+        : undefined,
+    )
 
     const resolveVideo = async () => {
-      const cloudResponse = await fetchCloudVideoById(id).catch(() => ({ video: null }))
+      const cloudResponse = await fetchCloudVideoById(id).catch(() => ({
+        video: null,
+        viewerCanEdit: false,
+        editHref: null,
+      }))
       const resolvedVideo = cloudResponse.video ?? baseVideo
+      const viewerCanEdit = Boolean(cloudResponse.viewerCanEdit)
+      const editHref = cloudResponse.editHref ?? null
 
       if (!resolvedVideo) {
         if (isMounted) {
-          setVideo(null)
+          setVideoState(null)
         }
         return
       }
 
+      if (cloudResponse.video && cloudResponse.video.id !== id) {
+        router.replace(`/watch/${cloudResponse.video.id}`)
+      }
+
       if (isMounted) {
-        setVideo(toHydratedTravelVideo(resolvedVideo))
+        setVideoState({
+          video: toHydratedTravelVideo(resolvedVideo),
+          viewerCanEdit,
+          editHref,
+        })
       }
 
       const hydratedVideo = await hydrateTravelVideo(resolvedVideo)
       if (isMounted) {
-        setVideo(hydratedVideo)
+        setVideoState({
+          video: hydratedVideo,
+          viewerCanEdit,
+          editHref,
+        })
       }
     }
 
@@ -41,9 +75,9 @@ export function WatchPageClient({ id }: { id: string }) {
     return () => {
       isMounted = false
     }
-  }, [id])
+  }, [id, router])
 
-  if (video === undefined) {
+  if (videoState === undefined) {
     return (
       <div className="min-h-screen bg-black p-6">
         <Card>
@@ -53,7 +87,7 @@ export function WatchPageClient({ id }: { id: string }) {
     )
   }
 
-  if (video === null) {
+  if (videoState === null) {
     return (
       <div className="min-h-screen bg-black p-6">
           <Card>
@@ -65,5 +99,11 @@ export function WatchPageClient({ id }: { id: string }) {
     )
   }
 
-  return <WatchExperience video={video} />
+  return (
+    <WatchExperience
+      video={videoState.video}
+      viewerCanEdit={videoState.viewerCanEdit}
+      editHref={videoState.editHref}
+    />
+  )
 }

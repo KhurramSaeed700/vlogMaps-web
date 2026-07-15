@@ -5,12 +5,14 @@ import { createPortal } from "react-dom"
 import Link from "next/link"
 import * as Dialog from "@radix-ui/react-dialog"
 import * as Popover from "@radix-ui/react-popover"
-import { ArrowLeftRight, ArrowUp, Keyboard, MapPin, Pause, Pencil, Trash2, UploadCloud, X } from "lucide-react"
+import { ArrowDownUp, ArrowLeftRight, ArrowUp, Keyboard, MapPin, Pause, Pencil, Plane, Trash2, UploadCloud, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { MapboxLocationPicker } from "@/components/maps/mapbox-location-picker"
 import { YouTubePlayer } from "@/components/media/youtube-player"
+import { getAirportCodeLocation } from "@/lib/airport-codes"
 import {
   emptyCreatorTripRoute,
   loadCreatorTripRoute,
@@ -72,15 +74,17 @@ interface EditorShortcutState {
   addTimestampPoint: (pointType: CreatorMapPointType) => void
   cancelPointEdit: () => void
   setStopEndTime: () => void
+  startFlightPoint: () => void
   startStopRecording: () => void
 }
 
-const resumeAutoplayDelaySeconds = 2.5
-const resumeCountdownTickSeconds = 0.1
+const resumeAutoplayDelaySeconds = 2
+const resumeCountdownTickSeconds = 1
 const editorTimeRenderStepSeconds = 0.25
 const editorShortcutGroups = [
   { keys: "Q", action: "Add point" },
   { keys: "W", action: "Add stop or finish stop" },
+  { keys: "F", action: "Add flight airport" },
   { keys: "Esc", action: "Cancel pending point or stop" },
   { keys: "Space / K", action: "Play or pause video" },
   { keys: "J", action: "Seek back 10 seconds" },
@@ -112,15 +116,23 @@ function createDraftPoint(point?: CreatorMapPoint): DraftPoint {
     lng: point.lng,
     location: point.location,
     description: point.description,
-    pointType: point.pointType === "stop" ? "stop" : "point",
+    pointType: point.pointType === "stop" || point.pointType === "flight" ? point.pointType : "point",
   }
 }
 
 function getDraftLocation(pointType: CreatorMapPointType, time: number) {
+  if (pointType === "flight") {
+    return `Airport at ${formatDuration(time)}`
+  }
+
   return pointType === "stop" ? `Stop at ${formatDuration(time)}` : `Point at ${formatDuration(time)}`
 }
 
 function getDraftDescription(pointType: CreatorMapPointType) {
+  if (pointType === "flight") {
+    return "Flight airport captured from the creator editor."
+  }
+
   return pointType === "stop"
     ? "Stop captured from the creator editor."
     : "Route point captured from the creator editor."
@@ -128,8 +140,56 @@ function getDraftDescription(pointType: CreatorMapPointType) {
 
 function getDisplayTimestampName(point: CreatorMapPoint) {
   const name = point.location.trim()
-  const pointType = point.pointType === "stop" ? "stop" : "point"
+  const pointType = point.pointType === "stop" || point.pointType === "flight" ? point.pointType : "point"
   return name && name !== getDraftLocation(pointType, point.time) ? name : ""
+}
+
+function normalizeAirportCode(value: string) {
+  return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4)
+}
+
+function getTimestampAccentClass(pointType?: CreatorMapPointType) {
+  if (pointType === "flight") {
+    return "bg-sky-600"
+  }
+
+  return pointType === "stop" ? "bg-teal-700" : "bg-orange-600"
+}
+
+interface TimestampDisplayRow {
+  key: string
+  point: CreatorMapPoint
+  landingPoint?: CreatorMapPoint
+}
+
+function getFlightAirportCode(point: CreatorMapPoint) {
+  return normalizeAirportCode(point.location) || "Airport"
+}
+
+function buildTimestampDisplayRows(points: CreatorMapPoint[]) {
+  const rows: TimestampDisplayRow[] = []
+
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index]
+    const nextPoint = points[index + 1]
+
+    if (point.pointType === "flight" && nextPoint?.pointType === "flight") {
+      rows.push({
+        key: `${point.id}:${nextPoint.id}`,
+        point,
+        landingPoint: nextPoint,
+      })
+      index += 1
+      continue
+    }
+
+    rows.push({
+      key: point.id,
+      point,
+    })
+  }
+
+  return rows
 }
 
 function shouldIgnorePlaybackShortcut(target: EventTarget | null) {
@@ -168,9 +228,16 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   const [draftPoint, setDraftPoint] = useState<DraftPoint | null>(null)
   const [isAwaitingMapPlacement, setIsAwaitingMapPlacement] = useState(false)
   const [isTripRouteDialogOpen, setIsTripRouteDialogOpen] = useState(false)
+  const [isTimestampSortAscending, setIsTimestampSortAscending] = useState(true)
   const [headerActionsElement, setHeaderActionsElement] = useState<HTMLElement | null>(null)
   const [showScrollTop, setShowScrollTop] = useState(false)
+  const [isLoadingSavedState, setIsLoadingSavedState] = useState(true)
   const [isRecordingStop, setIsRecordingStop] = useState(false)
+  const [isRecordingFlight, setIsRecordingFlight] = useState(false)
+  const [isResolvingAirportCode, setIsResolvingAirportCode] = useState(false)
+  const [airportCodeMessage, setAirportCodeMessage] = useState("")
+  const [flightLandingCode, setFlightLandingCode] = useState("")
+  const [saveMessage, setSaveMessage] = useState("")
   const [isUploadingVideo, setIsUploadingVideo] = useState(false)
   const [uploadMessage, setUploadMessage] = useState("")
 
@@ -209,6 +276,8 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     setIsPlaying(false)
     setResumeCountdown(null)
     setIsTripRouteDialogOpen(false)
+    setIsLoadingSavedState(true)
+    setSaveMessage("")
     setUploadMessage("")
   }, [commitCurrentTime, video.id, video.keyframes])
 
@@ -225,6 +294,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     const requestId = remoteLoadRequestRef.current + 1
     remoteLoadRequestRef.current = requestId
     const controller = new AbortController()
+    setIsLoadingSavedState(true)
 
     loadCreatorVideoState(video.id, controller.signal)
       .then((response) => {
@@ -232,31 +302,43 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
           return
         }
 
+        const localState = {
+          points: loadCreatorPoints(video.id, video.keyframes),
+          tripRoute: loadCreatorTripRoute(video.id),
+          routeShapes: loadCreatorRouteShapes(video.id),
+        }
+
         if (response?.state) {
-          setPoints(response.state.points)
-          setTripRoute(response.state.tripRoute)
-          setRouteShapes(response.state.routeShapes)
-          saveCreatorPoints(video.id, response.state.points)
-          saveCreatorTripRoute(video.id, response.state.tripRoute)
-          saveCreatorRouteShapes(video.id, response.state.routeShapes)
+          const shouldKeepLocalPoints = localState.points.length > 0 && response.state.points.length === 0
+          const nextState = shouldKeepLocalPoints ? localState : response.state
+
+          setPoints(nextState.points)
+          setTripRoute(nextState.tripRoute)
+          setRouteShapes(nextState.routeShapes)
+          saveCreatorPoints(video.id, nextState.points)
+          saveCreatorTripRoute(video.id, nextState.tripRoute)
+          saveCreatorRouteShapes(video.id, nextState.routeShapes)
           syncVideoRouteMetadata(
             video.id,
-            response.state.points.map(({ id, ...point }) => point),
+            nextState.points.map(({ id, ...point }) => point),
           )
+          if (shouldKeepLocalPoints) {
+            queueRemoteStateSave(video.id, nextState)
+          }
           return
         }
 
         if (response?.configured) {
-          const localState = {
-            points: loadCreatorPoints(video.id, video.keyframes),
-            tripRoute: loadCreatorTripRoute(video.id),
-            routeShapes: loadCreatorRouteShapes(video.id),
-          }
           queueRemoteStateSave(video.id, localState)
         }
       })
       .catch(() => {
         // Local storage remains the fallback when auth, network, or database config is unavailable.
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && remoteLoadRequestRef.current === requestId) {
+          setIsLoadingSavedState(false)
+        }
       })
 
     return () => controller.abort()
@@ -274,7 +356,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     }
 
     const timer = window.setTimeout(() => {
-      const nextCountdown = Math.max(0, Math.round((resumeCountdown - resumeCountdownTickSeconds) * 10) / 10)
+      const nextCountdown = Math.max(0, resumeCountdown - resumeCountdownTickSeconds)
 
       if (nextCountdown <= 0) {
         setResumeCountdown(null)
@@ -283,7 +365,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
       }
 
       setResumeCountdown(nextCountdown)
-    }, 100)
+    }, 1000)
 
     return () => window.clearTimeout(timer)
   }, [resumeCountdown])
@@ -309,10 +391,10 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     () => new Map(sortedPoints.map((point, index) => [point.id, index + 1])),
     [sortedPoints],
   )
-  const displayedPoints = useMemo(
-    () => sortedPoints.map((point, index) => ({ point, pointNumber: index + 1 })),
-    [sortedPoints],
-  )
+  const displayedRows = useMemo(() => {
+    const rows = buildTimestampDisplayRows(sortedPoints)
+    return isTimestampSortAscending ? rows : [...rows].reverse()
+  }, [isTimestampSortAscending, sortedPoints])
   const activeTimelinePointId = useMemo(() => {
     let activePointId: string | null = null
 
@@ -344,8 +426,22 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     const nextSave = remoteSaveQueueRef.current
       .catch(() => undefined)
       .then(() => saveCreatorVideoState(videoId, state))
-      .then(() => undefined)
-      .catch(() => undefined)
+      .then((response) => {
+        if (!response?.configured) {
+          setSaveMessage("")
+          return
+        }
+
+        if (!response.saved) {
+          setSaveMessage("Saved in this browser, but cloud autosave failed.")
+          return
+        }
+
+        setSaveMessage("")
+      })
+      .catch(() => {
+        setSaveMessage("Saved in this browser, but cloud autosave failed.")
+      })
 
     remoteSaveQueueRef.current = nextSave
   }
@@ -561,12 +657,124 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
       stopEndTime: undefined,
       lat: null,
       lng: null,
-      location: getDraftLocation(pointType, timestamp),
+      location: pointType === "flight" ? "" : getDraftLocation(pointType, timestamp),
       description: getDraftDescription(pointType),
       pointType,
     })
     setIsAwaitingMapPlacement(true)
   }
+
+  const startFlightPoint = () => {
+    addTimestampPoint("flight")
+    setAirportCodeMessage("")
+    setFlightLandingCode("")
+    setIsRecordingFlight(true)
+    setIsPlaying(false)
+  }
+
+  const resolveAirportCodeLocation = async (airportCode: string) => {
+    const knownAirport = getAirportCodeLocation(airportCode)
+    if (knownAirport) {
+      return {
+        code: airportCode,
+        name: knownAirport.name,
+        lat: knownAirport.lat,
+        lng: knownAirport.lng,
+      }
+    }
+
+    const response = await fetch(`/api/location-search?q=${encodeURIComponent(`${airportCode} airport`)}`, {
+      cache: "no-store",
+    })
+
+    if (!response.ok) {
+      return null
+    }
+
+    const body = (await response.json()) as { features?: Array<{ center?: [number, number]; place_name?: string }> }
+    const feature = body.features?.find((nextFeature) => Array.isArray(nextFeature.center) && nextFeature.center.length >= 2)
+    if (!feature?.center) {
+      return null
+    }
+
+    return {
+      code: airportCode,
+      name: feature.place_name || `${airportCode} airport`,
+      lat: feature.center[1],
+      lng: feature.center[0],
+    }
+  }
+
+  const saveFlightAirportCode = async (flightPointRole: "takeoff" | "landing") => {
+    if (!draftPoint || draftPoint.pointType !== "flight") {
+      return
+    }
+
+    const airportCode = normalizeAirportCode(flightPointRole === "takeoff" ? draftPoint.location : flightLandingCode)
+    if (!airportCode) {
+      setAirportCodeMessage(`Enter a ${flightPointRole} airport code first.`)
+      return
+    }
+
+    setIsResolvingAirportCode(true)
+    setAirportCodeMessage("")
+
+    try {
+      const airport = await resolveAirportCodeLocation(airportCode)
+      if (!airport) {
+        setAirportCodeMessage("Could not resolve that airport code. Click the map to place it.")
+        return
+      }
+
+      const timestamp =
+        flightPointRole === "landing" ? Math.max(currentTimeRef.current, draftPoint.time + 0.5) : draftPoint.time
+      recordMapEditSnapshot()
+      const nextPoints = upsertCreatorPoint(video.id, points, {
+        ...draftPoint,
+        id: flightPointRole === "takeoff" ? draftPoint.id : undefined,
+        time: timestamp,
+        location: airport.code,
+        description: airport.name,
+        lat: airport.lat,
+        lng: airport.lng,
+        pointType: "flight",
+      })
+
+      persistPoints(nextPoints)
+
+      if (flightPointRole === "takeoff" && isRecordingFlight) {
+        const savedTakeoffPoint =
+          nextPoints.find(
+            (point) =>
+              point.pointType === "flight" &&
+              point.location === airport.code &&
+              Math.abs(point.time - timestamp) < 0.001,
+          ) ?? null
+
+        setDraftPoint(
+          savedTakeoffPoint
+            ? createDraftPoint(savedTakeoffPoint)
+            : { ...draftPoint, location: airport.code, lat: airport.lat, lng: airport.lng },
+        )
+        setIsAwaitingMapPlacement(false)
+        setIsPlaying(true)
+        setAirportCodeMessage("Takeoff saved. Enter the landing airport when the flight lands.")
+        return
+      }
+
+      setDraftPoint(null)
+      setIsAwaitingMapPlacement(false)
+      setIsRecordingFlight(false)
+      setFlightLandingCode("")
+      setAirportCodeMessage("")
+    } catch {
+      setAirportCodeMessage("Could not resolve that airport code. Click the map to place it.")
+    } finally {
+      setIsResolvingAirportCode(false)
+    }
+  }
+
+  const resolveDraftAirportCode = () => saveFlightAirportCode("takeoff")
 
   const savePointFromMap = (value: { lat: number; lng: number }) => {
     if (!draftPoint) {
@@ -605,8 +813,14 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     persistPoints(nextPoints)
     setDraftPoint(null)
     setIsAwaitingMapPlacement(false)
-    setIsPlaying(false)
-    setResumeCountdown(resumeAutoplayDelaySeconds)
+    setAirportCodeMessage("")
+    if (nextDraft.pointType === "flight") {
+      setIsPlaying(true)
+      setResumeCountdown(null)
+    } else {
+      setIsPlaying(false)
+      setResumeCountdown(resumeAutoplayDelaySeconds)
+    }
   }
 
   const beginEditPoint = (point: CreatorMapPoint) => {
@@ -615,6 +829,8 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     setDraftPoint(createDraftPoint(point))
     setIsAwaitingMapPlacement(true)
     setIsRecordingStop(false)
+    setIsRecordingFlight(false)
+    setFlightLandingCode("")
   }
 
   const saveDraftPointEdits = () => {
@@ -695,7 +911,12 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
         ...currentDraft,
         pointType,
         stopEndTime: pointType === "stop" ? currentDraft.stopEndTime : undefined,
-        location: currentDraft.location.trim() ? currentDraft.location : getDraftLocation(pointType, currentDraft.time),
+        location:
+          pointType === "flight"
+            ? normalizeAirportCode(currentDraft.location)
+            : currentDraft.location.trim()
+              ? currentDraft.location
+              : getDraftLocation(pointType, currentDraft.time),
         description: currentDraft.description.trim() ? currentDraft.description : getDraftDescription(pointType),
       }
     })
@@ -703,9 +924,14 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
 
   const cancelPointEdit = () => {
     setResumeCountdown(null)
+    setAirportCodeMessage("")
     setDraftPoint(null)
     setIsAwaitingMapPlacement(false)
     setIsRecordingStop(false)
+    setIsRecordingFlight(false)
+    setFlightLandingCode("")
+    setIsRecordingFlight(false)
+    setFlightLandingCode("")
   }
 
   const playFromMapTimestamp = (point: CreatorMapPoint) => {
@@ -721,13 +947,16 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     setIsRecordingStop(false)
   }
 
-  const deletePoint = (id: string) => {
-    const nextPoints = points.filter((point) => point.id !== id)
+  const deleteTimestampRow = (row: TimestampDisplayRow) => {
+    const pointIdsToDelete = new Set([row.point.id, row.landingPoint?.id].filter(Boolean))
+    const nextPoints = points.filter((point) => !pointIdsToDelete.has(point.id))
     persistPoints(nextPoints)
-    if (draftPoint?.id === id) {
+    if (draftPoint?.id && pointIdsToDelete.has(draftPoint.id)) {
       setDraftPoint(null)
       setIsAwaitingMapPlacement(false)
       setIsRecordingStop(false)
+      setIsRecordingFlight(false)
+      setFlightLandingCode("")
     }
   }
 
@@ -812,6 +1041,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
       addTimestampPoint,
       cancelPointEdit,
       setStopEndTime,
+      startFlightPoint,
       startStopRecording,
     }
   })
@@ -866,6 +1096,12 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
         }
 
         shortcutState.startStopRecording()
+        return
+      }
+
+      if (event.code === "KeyF") {
+        event.preventDefault()
+        shortcutState.startFlightPoint()
       }
     }
 
@@ -925,9 +1161,11 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
     return (
       <div
         className={`mx-2 mb-3 space-y-2 rounded-md border px-3 py-2 text-sm ${
-          draftPoint.pointType === "stop"
-            ? "border-teal-200 bg-teal-50 text-teal-950"
-            : "border-orange-200 bg-orange-50 text-orange-950"
+          draftPoint.pointType === "flight"
+            ? "border-sky-200 bg-sky-50 text-sky-950"
+            : draftPoint.pointType === "stop"
+              ? "border-teal-200 bg-teal-50 text-teal-950"
+              : "border-orange-200 bg-orange-50 text-orange-950"
         }`}
       >
         <div className="flex items-center justify-between gap-3">
@@ -938,19 +1176,42 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
           Click the map to update this timestamp location. Current video time: {formatDuration(currentTime)}.
         </p>
         <label className="block space-y-1">
-          <span className="text-xs font-semibold opacity-80">Timestamp name</span>
-          <Input
-            value={draftPoint.location}
-            onChange={(event) =>
-              setDraftPoint((currentDraft) =>
-                currentDraft ? { ...currentDraft, location: event.target.value } : currentDraft,
-              )
-            }
-            placeholder={draftPoint.pointType === "stop" ? "Stop name" : "Point name"}
-            className="h-8 border-white/70 bg-white text-slate-950 shadow-none"
-          />
+          <span className="text-xs font-semibold opacity-80">
+            {draftPoint.pointType === "flight" ? "Airport code" : "Timestamp name"}
+          </span>
+          <span className={draftPoint.pointType === "flight" ? "grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]" : "block"}>
+            <Input
+              value={draftPoint.location}
+              onChange={(event) =>
+                setDraftPoint((currentDraft) =>
+                  currentDraft
+                    ? {
+                        ...currentDraft,
+                        location:
+                          currentDraft.pointType === "flight"
+                            ? normalizeAirportCode(event.target.value)
+                            : event.target.value,
+                      }
+                    : currentDraft,
+                )
+              }
+              placeholder={draftPoint.pointType === "flight" ? "LHE" : draftPoint.pointType === "stop" ? "Stop name" : "Point name"}
+              className="h-8 border-white/70 bg-white text-slate-950 shadow-none"
+            />
+            {draftPoint.pointType === "flight" && (
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 bg-sky-600 text-white hover:bg-sky-700"
+                disabled={isResolvingAirportCode}
+                onClick={resolveDraftAirportCode}
+              >
+                {isResolvingAirportCode ? "Finding..." : "Use code"}
+              </Button>
+            )}
+          </span>
         </label>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <Button
             type="button"
             size="sm"
@@ -979,13 +1240,31 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
             <Pause className="mr-2 h-4 w-4" />
             Stop
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={draftPoint.pointType === "flight" ? "default" : "outline"}
+            className={
+              draftPoint.pointType === "flight"
+                ? "h-8 bg-sky-600 text-white hover:bg-sky-700"
+                : "h-8 border-sky-200 bg-white text-sky-700 hover:bg-sky-50"
+            }
+            onClick={() => updateDraftPointType("flight")}
+          >
+            <Plane className="mr-2 h-4 w-4" />
+            Flight
+          </Button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
             size="sm"
             className={`h-8 text-white ${
-              draftPoint.pointType === "stop" ? "bg-teal-700 hover:bg-teal-800" : "bg-orange-600 hover:bg-orange-700"
+              draftPoint.pointType === "flight"
+                ? "bg-sky-600 hover:bg-sky-700"
+                : draftPoint.pointType === "stop"
+                  ? "bg-teal-700 hover:bg-teal-800"
+                  : "bg-orange-600 hover:bg-orange-700"
             }`}
             onClick={saveDraftPointEdits}
           >
@@ -1097,7 +1376,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
               <div className="flex items-center gap-3 rounded-full bg-slate-950/80 px-4 py-2 text-white shadow-lg ring-1 ring-white/20 backdrop-blur-sm">
                 <span className="text-xs font-semibold uppercase tracking-wide text-white/70">Autoplay in</span>
                 <span className="flex h-9 w-9 items-center justify-center rounded-full bg-orange-600 text-lg font-bold leading-none">
-                  {resumeCountdown.toFixed(1)}
+                  {Math.ceil(resumeCountdown)}
                 </span>
               </div>
             </div>
@@ -1110,10 +1389,16 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
           </div>
         )}
 
+        {saveMessage && (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900" aria-live="polite">
+            {saveMessage}
+          </div>
+        )}
+
         <div className="flex flex-col">
           <div className="p-3 lg:p-4">
             <section className="space-y-2">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.5rem] gap-2">
                 <Button
                   size="sm"
                   className="h-8 px-3 font-semibold bg-orange-600 text-white hover:bg-orange-700"
@@ -1142,8 +1427,18 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                   onClick={isRecordingStop ? setStopEndTime : startStopRecording}
                 >
                   <Pause className="mr-2 h-4 w-4" />
-                  <span>{isRecordingStop ? "Set Stop" : "Add Stop"}</span>
+                  <span>{isRecordingStop ? "End Stop" : "Add Stop"}</span>
                   <kbd className="ml-1 text-[10px] font-medium leading-none text-white/55">[W]</kbd>
+                </Button>
+                <Button
+                  type="button"
+                  size="icon"
+                  className="h-8 w-10 bg-sky-600 text-white hover:bg-sky-700"
+                  onClick={startFlightPoint}
+                  aria-label="Add flight airport"
+                  title="Add flight airport"
+                >
+                  <Plane className="h-4 w-4" />
                 </Button>
               </div>
               {latestPointStopCandidate && latestPointStopCandidateNumber && !draftPoint && !isRecordingStop && (
@@ -1169,9 +1464,21 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-semibold text-slate-950">Timestamps</h2>
-                  <Badge variant="secondary">{sortedPoints.length}</Badge>
+                  <Badge variant="secondary">{displayedRows.length}</Badge>
                 </div>
                 <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8"
+                    aria-label={isTimestampSortAscending ? "Sort timestamps descending" : "Sort timestamps ascending"}
+                    title={isTimestampSortAscending ? "Newest first" : "Oldest first"}
+                    onClick={() => setIsTimestampSortAscending((currentValue) => !currentValue)}
+                  >
+                    <ArrowDownUp className="mr-2 h-4 w-4" />
+                    {isTimestampSortAscending ? "Oldest first" : "Newest first"}
+                  </Button>
                   <Dialog.Root open={isTripRouteDialogOpen} onOpenChange={setIsTripRouteDialogOpen}>
                     <Dialog.Trigger asChild>
                       <Button variant="ghost" size="sm">
@@ -1243,50 +1550,142 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                 </div>
               </div>
 
-              {draftPoint && !draftPoint.id && (
+              {draftPoint && !draftPoint.id && !isRecordingStop && (
                 <div
-                  className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-sm ${
-                    draftPoint.pointType === "stop" ? "bg-teal-50 text-teal-950" : "bg-orange-50 text-orange-900"
+                  className={`w-full rounded-md px-3 py-2 text-sm ${
+                    draftPoint.pointType === "flight"
+                      ? "bg-sky-50 text-sky-950"
+                      : draftPoint.pointType === "stop"
+                        ? "bg-teal-50 text-teal-950"
+                        : "bg-orange-50 text-orange-900"
                   }`}
                 >
-                  <span className="font-medium">
-                    {isRecordingStop
-                      ? draftPoint.lat === null || draftPoint.lng === null
-                        ? "Click map to place stop"
-                        : "Stop recording"
-                      : draftPoint.pointType === "stop"
-                        ? "Pending stop"
-                        : "Pending point"}
-                  </span>
-                  <span>
-                    {isRecordingStop
-                      ? `${formatDuration(draftPoint.time)} - ${formatDuration(currentTime)}`
-                      : formatDuration(draftPoint.time)}
-                  </span>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium">
+                      {draftPoint.pointType === "flight"
+                        ? "Pending flight segment"
+                        : draftPoint.pointType === "stop"
+                          ? "Pending stop"
+                          : "Pending point"}
+                    </span>
+                    <span>{formatDuration(draftPoint.time)}</span>
+                  </div>
+                  {draftPoint.pointType === "flight" && (
+                    <div className="mt-2 space-y-2">
+                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <label className="min-w-0 space-y-1">
+                          <span className="text-xs font-semibold opacity-80">Takeoff airport</span>
+                          <Input
+                            value={draftPoint.location}
+                            onChange={(event) =>
+                              setDraftPoint((currentDraft) =>
+                                currentDraft ? { ...currentDraft, location: normalizeAirportCode(event.target.value) } : currentDraft,
+                              )
+                            }
+                            placeholder="Departure code, e.g. LHE"
+                            className="h-8 border-white/70 bg-white text-slate-950 shadow-none"
+                          />
+                        </label>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="self-end h-8 bg-sky-600 text-white hover:bg-sky-700"
+                          disabled={isResolvingAirportCode}
+                          onClick={() => saveFlightAirportCode("takeoff")}
+                        >
+                          {isResolvingAirportCode ? "Finding..." : "Use takeoff"}
+                        </Button>
+                      </div>
+
+                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <label className="min-w-0 space-y-1">
+                          <span className="text-xs font-semibold opacity-80">Landing airport</span>
+                          <Input
+                            value={flightLandingCode}
+                            onChange={(event) => setFlightLandingCode(normalizeAirportCode(event.target.value))}
+                            placeholder="Arrival code, e.g. IST"
+                            className="h-8 border-white/70 bg-white text-slate-950 shadow-none"
+                          />
+                        </label>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="self-end h-8 bg-sky-600 text-white hover:bg-sky-700"
+                          disabled={isResolvingAirportCode}
+                          onClick={() => saveFlightAirportCode("landing")}
+                        >
+                          {isResolvingAirportCode ? "Finding..." : "Use landing"}
+                        </Button>
+                      </div>
+
+                      <p className="text-xs opacity-75">
+                        {airportCodeMessage || "Save takeoff first, let the video play, then save landing when the flight lands."}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {sortedPoints.length === 0 ? (
+              {isLoadingSavedState && sortedPoints.length === 0 ? (
+                <div className="space-y-2 py-2" aria-live="polite" aria-label="Loading saved timestamps">
+                  {Array.from({ length: 3 }, (_, index) => (
+                    <div key={`timestamp-skeleton-${index}`} className="grid grid-cols-[1.5rem_minmax(0,1fr)_2rem_2rem] items-center gap-2 px-2 py-2.5">
+                      <Skeleton className="h-5 w-5 rounded-full" />
+                      <div className="min-w-0 space-y-2">
+                        <Skeleton className="h-4 w-24" />
+                        <Skeleton className="h-3 w-4/5" />
+                      </div>
+                      <Skeleton className="h-8 w-8 rounded-md" />
+                      <Skeleton className="h-8 w-8 rounded-md" />
+                    </div>
+                  ))}
+                </div>
+              ) : sortedPoints.length === 0 ? (
                 <p className="py-4 text-sm text-slate-500">No points yet.</p>
               ) : (
                 <div className="divide-y divide-slate-200 overflow-x-hidden">
-                  {displayedPoints.map(({ point, pointNumber }) => {
-                    const isSelected = draftPoint?.id === point.id
-                    const isCurrentTimestamp = activeTimelinePointId === point.id
+                  {displayedRows.map((row, rowIndex) => {
+                    const { point, landingPoint } = row
+                    const pointNumber = rowIndex + 1
+                    const isSelected = draftPoint?.id === point.id || draftPoint?.id === landingPoint?.id
+                    const isCurrentTimestamp =
+                      activeTimelinePointId === point.id ||
+                      activeTimelinePointId === landingPoint?.id ||
+                      Boolean(
+                        landingPoint &&
+                          currentTime >= point.time &&
+                          currentTime <= landingPoint.time,
+                      )
                     const timestampName = getDisplayTimestampName(point)
                     const rowClassName = [
                       "min-w-0 border-l-4 transition-colors",
                       isCurrentTimestamp
                         ? "border-blue-500 bg-blue-50"
                         : isSelected
-                          ? point.pointType === "stop"
-                            ? "border-teal-600 bg-teal-50"
-                            : "border-orange-500 bg-orange-50"
+                          ? point.pointType === "flight"
+                            ? "border-sky-500 bg-sky-50"
+                            : point.pointType === "stop"
+                              ? "border-teal-600 bg-teal-50"
+                              : "border-orange-500 bg-orange-50"
                           : "border-transparent",
                     ].join(" ")
+                    const timestampRange =
+                      point.pointType === "flight" && landingPoint
+                        ? `${formatDuration(point.time)}-${formatDuration(landingPoint.time)}`
+                        : point.pointType === "stop" && typeof point.stopEndTime === "number"
+                          ? `${formatDuration(point.time)}-${formatDuration(point.stopEndTime)}`
+                          : formatDuration(point.time)
+                    const timestampDescription =
+                      point.pointType === "flight"
+                        ? landingPoint
+                          ? `Flight - ${getFlightAirportCode(point)} -> ${getFlightAirportCode(landingPoint)}`
+                          : `Flight takeoff - ${getFlightAirportCode(point)}`
+                        : point.pointType === "stop"
+                          ? "Stop point"
+                          : `${timestampName ? `${timestampName} - ` : ""}${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`
 
                     return (
-                      <div key={point.id} className={rowClassName}>
+                      <div key={row.key} className={rowClassName}>
                         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem_2rem] items-center gap-2 px-2 py-2.5">
                           <button
                             type="button"
@@ -1294,9 +1693,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                             onClick={() => playFromMapTimestamp(point)}
                           >
                             <span
-                              className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold leading-none text-white ${
-                                point.pointType === "stop" ? "bg-teal-700" : "bg-orange-600"
-                              }`}
+                              className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold leading-none text-white ${getTimestampAccentClass(point.pointType)}`}
                             >
                               {pointNumber}
                             </span>
@@ -1305,15 +1702,9 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                                 isCurrentTimestamp ? "bg-blue-600 text-white" : "text-slate-950"
                               }`}
                             >
-                              {point.pointType === "stop" && typeof point.stopEndTime === "number"
-                                ? `${formatDuration(point.time)}-${formatDuration(point.stopEndTime)}`
-                                : formatDuration(point.time)}
+                              {timestampRange}
                             </span>
-                            <p className="truncate text-xs text-slate-500">
-                              {point.pointType === "stop" ? "Stop - " : ""}
-                              {timestampName ? `${timestampName} - ` : ""}
-                              {point.lat.toFixed(5)}, {point.lng.toFixed(5)}
-                            </p>
+                            <p className="truncate text-xs text-slate-500">{timestampDescription}</p>
                           </button>
 
                           <Button
@@ -1331,7 +1722,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                             size="icon"
                             className="h-8 w-8 text-red-600 hover:text-red-700"
                             aria-label={`Delete timestamp ${pointNumber}`}
-                            onClick={() => deletePoint(point.id)}
+                            onClick={() => deleteTimestampRow(row)}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>

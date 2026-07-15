@@ -39,6 +39,7 @@ export function HomeHeader({
     isSignedIn: Boolean(isSignedIn),
     user,
   })
+  const isDarkMode = isThemeMounted && resolvedTheme === "dark"
   const creatorCtaHref = isApprovedCreator ? "/creator/dashboard" : "/creator/apply"
   const creatorCtaLabel = isApprovedCreator ? "Creator Dashboard" : "Become a creator"
   const creatorCtaAriaLabel = isApprovedCreator ? "Go to creator dashboard" : "Open creator mode"
@@ -74,14 +75,42 @@ export function HomeHeader({
           </Button>
         </form>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
+          {!isLoaded ? (
+            <div className="h-9 w-[72px] sm:h-10" aria-hidden="true" />
+          ) : isSignedIn ? (
+            <>
+              {!isCheckingCreatorAccess && (
+                <Link href={creatorCtaHref} className="hidden shrink-0 sm:block" aria-label={creatorCtaAriaLabel}>
+                  <Button variant="outline" size="sm" className="h-9 whitespace-nowrap rounded-full px-5 font-semibold">
+                    {creatorCtaLabel}
+                  </Button>
+                </Link>
+              )}
+              <UserButton
+                signInUrl="/auth/login"
+                appearance={{
+                  elements: {
+                    avatarBox: "h-9 w-9",
+                  },
+                }}
+              />
+            </>
+          ) : (
+            <Link href="/auth/login" className="block">
+              <Button variant="ghost" size="sm" className="rounded-full px-3 sm:h-10 sm:px-4">
+                Sign In
+              </Button>
+            </Link>
+          )}
+
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <Button
                 type="button"
                 variant="outline"
                 size="icon"
-                className="h-9 w-9 rounded-full border-border bg-background text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground sm:h-10 sm:w-10"
+                className="h-9 w-9 min-w-9 shrink-0 rounded-full border-border bg-background p-0 text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground"
                 aria-label="Open settings menu"
                 title="Settings"
               >
@@ -125,22 +154,42 @@ export function HomeHeader({
                   Appearance
                 </div>
                 <DropdownMenu.Item
-                  className={menuItemClass}
+                  asChild
                   disabled={!isThemeMounted}
-                  onSelect={() => setTheme("light")}
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    setTheme(isDarkMode ? "light" : "dark")
+                  }}
                 >
-                  <Sun className="h-4 w-4 text-muted-foreground" />
-                  <span className="flex-1">Light mode</span>
-                  {isThemeMounted && resolvedTheme === "light" && <Check className="h-4 w-4" />}
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  className={menuItemClass}
-                  disabled={!isThemeMounted}
-                  onSelect={() => setTheme("dark")}
-                >
-                  <Moon className="h-4 w-4 text-muted-foreground" />
-                  <span className="flex-1">Dark mode</span>
-                  {isThemeMounted && resolvedTheme === "dark" && <Check className="h-4 w-4" />}
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isDarkMode}
+                    className="flex w-full cursor-pointer select-none items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm text-popover-foreground outline-none transition-colors hover:bg-accent focus:bg-accent focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+                    disabled={!isThemeMounted}
+                  >
+                    {isDarkMode ? (
+                      <Moon className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <Sun className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <span className="flex-1">
+                      Dark mode
+                      <span className="ml-2 text-xs text-muted-foreground">{isDarkMode ? "On" : "Off"}</span>
+                    </span>
+                    <span
+                      className={`relative h-5 w-9 rounded-full border transition-colors ${
+                        isDarkMode ? "border-primary bg-primary" : "border-border bg-muted"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      <span
+                        className={`absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-background shadow-sm transition-transform ${
+                          isDarkMode ? "translate-x-4" : "translate-x-0.5"
+                        }`}
+                      />
+                    </span>
+                  </button>
                 </DropdownMenu.Item>
 
                 {isLoaded && isSignedIn && !isCheckingCreatorAccess && (
@@ -158,34 +207,6 @@ export function HomeHeader({
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
-
-          {!isLoaded ? (
-            <div className="h-9 w-[72px] sm:h-10" aria-hidden="true" />
-          ) : isSignedIn ? (
-            <>
-              {!isCheckingCreatorAccess && (
-                <Link href={creatorCtaHref} className="hidden sm:block" aria-label={creatorCtaAriaLabel}>
-                  <Button variant="outline" size="sm" className="rounded-full px-4 font-semibold">
-                    {creatorCtaLabel}
-                  </Button>
-                </Link>
-              )}
-              <UserButton
-                signInUrl="/auth/login"
-                appearance={{
-                  elements: {
-                    avatarBox: "h-9 w-9",
-                  },
-                }}
-              />
-            </>
-          ) : (
-            <Link href="/auth/login" className="block">
-              <Button variant="ghost" size="sm" className="rounded-full px-3 sm:h-10 sm:px-4">
-                Sign In
-              </Button>
-            </Link>
-          )}
         </div>
       </div>
 

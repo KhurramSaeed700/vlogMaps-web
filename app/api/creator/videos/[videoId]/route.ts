@@ -1,6 +1,6 @@
-import { auth } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
-import { deleteCreatorVideoFromDb, isCreatorVideosDbConfigured } from "@/lib/creator-videos-db"
+import { deleteCreatorVideoFromDb, getOwnedCreatorVideoFromDb, isCreatorVideosDbConfigured } from "@/lib/creator-videos-db"
+import { CreatorAuthorizationError, requireApprovedCreator } from "@/lib/server-creator-auth"
 
 export const dynamic = "force-dynamic"
 
@@ -10,10 +10,41 @@ interface RouteContext {
   }>
 }
 
+function creatorVideoRouteErrorResponse(error: unknown) {
+  if (error instanceof CreatorAuthorizationError) {
+    return NextResponse.json({ error: error.message }, { status: error.status })
+  }
+
+  return NextResponse.json({ error: "Unable to authorize creator." }, { status: 500 })
+}
+
+export async function GET(_request: Request, context: RouteContext) {
+  let creator
+  try {
+    creator = await requireApprovedCreator()
+  } catch (error) {
+    return creatorVideoRouteErrorResponse(error)
+  }
+
+  if (!isCreatorVideosDbConfigured()) {
+    return NextResponse.json({ configured: false, video: null })
+  }
+
+  const { videoId } = await context.params
+  const video = await getOwnedCreatorVideoFromDb(videoId, creator.ownerUserIds)
+
+  return NextResponse.json({
+    configured: true,
+    video,
+  }, { status: video ? 200 : 404 })
+}
+
 export async function DELETE(_request: Request, context: RouteContext) {
-  const { userId } = await auth()
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  let creator
+  try {
+    creator = await requireApprovedCreator()
+  } catch (error) {
+    return creatorVideoRouteErrorResponse(error)
   }
 
   if (!isCreatorVideosDbConfigured()) {
@@ -21,7 +52,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   const { videoId } = await context.params
-  const deleted = await deleteCreatorVideoFromDb(videoId, userId)
+  const deleted = await deleteCreatorVideoFromDb(videoId, creator.ownerUserIds)
 
   return NextResponse.json({
     configured: true,

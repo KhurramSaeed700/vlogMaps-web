@@ -14,6 +14,7 @@ interface ContentPageShellProps {
   contentClassName?: string
   pageClassName?: string
   headerActionsId?: string
+  showThemeToggle?: boolean
   showIntro?: boolean
   framedContent?: boolean
   children: ReactNode
@@ -29,6 +30,7 @@ export function ContentPageShell({
   contentClassName = "",
   pageClassName = "min-h-screen bg-background",
   headerActionsId,
+  showThemeToggle = true,
   showIntro = true,
   framedContent = true,
   children,
@@ -45,7 +47,7 @@ export function ContentPageShell({
           <TravelMapLogo />
           <div className="flex items-center gap-2">
             {headerActionsId ? <div id={headerActionsId} className="flex items-center gap-2" /> : null}
-            <ThemeToggle />
+            {showThemeToggle ? <ThemeToggle /> : null}
             <Link href={backHref} className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground">
               <ArrowLeft className="h-4 w-4" />
               {backLabel}

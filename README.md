@@ -1,29 +1,16 @@
-# TravelMap
+# VlogMaps
 
-TravelMap is a travel-video web app where viewers watch YouTube trips alongside a synchronized interactive map. Creators can add timestamped route points, stops, trip routes, and route shapes so a journey can be replayed geographically while the video plays.
+VlogMaps lets people watch YouTube travel videos with a map that follows the journey. Viewers can open a trip, watch the video, and see the route, stops, and timestamped locations move alongside it.
 
-## Features
+Creators can add their own YouTube videos, mark locations on the timeline, save drafts, and publish mapped travel videos for the public catalog.
 
-- YouTube video playback with synchronized map movement.
-- Public watch pages for published travel videos.
-- Creator dashboard for managing videos, previews, and publishing status.
-- Creator editor for capturing timestamp points and stops from the video timeline.
-- Mapbox-powered location picking, route previews, and viewer maps.
-- Clerk authentication and creator access checks.
-- Neon Postgres persistence through Prisma for videos, keyframes, users, and editor state.
-- Browser localStorage fallback for creator drafts when cloud persistence is unavailable.
+## What You Can Do
 
-## Tech Stack
-
-- Next.js App Router
-- React
-- TypeScript
-- Tailwind CSS
-- Clerk
-- Mapbox
-- YouTube Data API
-- Neon Postgres
-- Prisma Client with the Neon adapter
+- Watch featured travel videos with synchronized maps.
+- Paste a YouTube link and open an instant watch page.
+- Sign in and apply for creator access.
+- As an approved creator, add videos, timestamp stops, draw routes, save drafts, and publish.
+- Use Mapbox search and directions to make route editing easier.
 
 ## Getting Started
 
@@ -33,9 +20,21 @@ Install dependencies:
 pnpm install
 ```
 
-Create `.env.local` from `.env.example` and fill in the required values:
+Create `.env.local` from `.env.example`:
 
 ```bash
+cp .env.example .env.local
+```
+
+On Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+Fill in the values you need:
+
+```env
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
 CLERK_SECRET_KEY=
 
@@ -43,85 +42,86 @@ NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN=
 MAPBOX_ACCESS_TOKEN=
 
 YOUTUBE_DATA_API_KEY=
-
 DATABASE_URL=
 ```
 
-Generate Prisma Client after installing dependencies or changing the Prisma schema:
+Generate Prisma Client:
 
 ```bash
 pnpm db:generate
 ```
 
-Start the development server:
+Start the app:
 
 ```bash
 pnpm dev
 ```
 
-The app runs at `http://localhost:3000`.
+Open [http://localhost:3000](http://localhost:3000).
 
-## Database
+## Environment Variables
 
-The production data model is defined in `prisma/schema.prisma`.
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are used for sign-in and creator authorization.
 
-Important tables:
+`NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` is used by browser map views. Without it, map panels show a setup message instead of crashing.
 
-- `users`: app users and Clerk identity mapping.
-- `creator_profiles`: creator channel metadata and verification state.
-- `videos`: app-facing video records, YouTube IDs, status, metrics, tags, and metadata.
-- `video_keyframes`: timestamped map points and stops for each video.
-- `video_editor_states`: editor-only route state such as points JSON, trip route, and route shapes.
-- `video_views`: video and map view tracking.
-- `user_favorites`: saved videos.
-- `creator_applications`: creator application submissions.
+`MAPBOX_ACCESS_TOKEN` is used by server API routes for directions and location search. Use a restricted Mapbox token in production.
 
-Creator video records are stored in `videos`, timestamp points are stored in `video_keyframes`, and editor state is stored in `video_editor_states`. The actual video files are not stored by TravelMap; YouTube hosts and serves the video content.
+`YOUTUBE_DATA_API_KEY` is used for richer YouTube metadata. The app can fall back to YouTube oEmbed for basic metadata.
 
-## Prisma
+`DATABASE_URL` enables saved creator videos, editor state, published cloud videos, and approved creator checks.
 
-Useful commands:
+This is a Next.js web app, so Expo or React Native variable names such as `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, and `RNMAPBOX_MAPS_DOWNLOAD_TOKEN` are not used here.
+
+## Using The App
+
+### Watch A Video
+
+1. Open the home page.
+2. Pick a featured video, or paste a YouTube link into the search bar.
+3. The watch page opens with the YouTube player and map side by side.
+4. As the video plays, the map follows the saved timestamp points and route.
+
+### Use Creator Tools
+
+1. Sign in with Clerk.
+2. Open the creator menu and apply for creator access.
+3. Once your account is approved in the database, open the creator dashboard.
+4. Add a YouTube video.
+5. Use the editor to capture timestamped map points, stops, trip routes, and route shapes.
+6. Save as a draft or publish it to the public catalog.
+
+Creator API routes require an approved creator account on the server. Client-side UI guards are only for user experience; they are not the source of truth.
+
+## Useful Commands
 
 ```bash
+pnpm dev
+pnpm build
 pnpm db:generate
 pnpm db:pull
-```
-
-Use `db:generate` after schema changes. Use `db:pull` only when intentionally introspecting the current Neon database schema into Prisma.
-
-## Creator Workflow
-
-1. A creator adds or opens a YouTube video in the creator workspace.
-2. The editor loads the video and map tools.
-3. The creator captures timestamped map points and stops while watching.
-4. Draft state is saved locally first and synced to Neon when cloud persistence is configured.
-5. Published videos appear in the public catalog and can be viewed on `/watch/[id]`.
-
-## Project Structure
-
-- `app/`: Next.js App Router pages and API routes.
-- `components/home`: public catalog and home page UI.
-- `components/viewer`: split video/map watch experience.
-- `components/creator`: creator dashboard, workspace, access guard, and route editor.
-- `components/maps`: Mapbox surfaces, previews, and location tools.
-- `components/media`: shared YouTube player components.
-- `components/app-shell`: shared layout and brand chrome.
-- `components/auth`: Clerk wrappers and auth loading states.
-- `components/ui`: reusable UI primitives.
-- `lib/`: data access, YouTube helpers, creator state helpers, map utilities, and Prisma setup.
-- `prisma/`: Prisma schema and migrations.
-- `scripts/`: database setup and seed SQL helpers.
-
-## Verification
-
-Run the TypeScript check:
-
-```bash
 pnpm exec tsc --noEmit
+pnpm audit --audit-level moderate
 ```
 
-Build for production:
+`pnpm dev` runs the local app.
 
-```bash
-pnpm build
+`pnpm build` checks the production build.
+
+`pnpm db:generate` refreshes Prisma Client after dependency or schema changes.
+
+`pnpm db:pull` introspects the configured database into Prisma. Use it only when you intentionally want to update the schema from the database.
+
+## Troubleshooting
+
+If `pnpm dev` says another Next dev server is already running, stop the listed PID:
+
+```powershell
+taskkill /PID <pid> /F
 ```
+
+If maps do not render, check `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` in `.env.local`, then restart `pnpm dev`.
+
+If creator saves fail, check `DATABASE_URL`, run `pnpm db:generate`, and make sure the signed-in user is approved as a creator in the database.
+
+If YouTube metadata is incomplete, add `YOUTUBE_DATA_API_KEY`.

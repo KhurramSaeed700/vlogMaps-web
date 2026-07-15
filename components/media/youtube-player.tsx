@@ -164,7 +164,7 @@ export function YouTubePlayer({
   const seekFeedbackTimeoutRef = useRef<number | null>(null)
   const seekHoldDelayTimeoutRef = useRef<number | null>(null)
   const seekHoldIntervalRef = useRef<number | null>(null)
-  const activeSeekHoldKeyRef = useRef<"KeyJ" | "KeyL" | null>(null)
+  const activeSeekHoldKeyRef = useRef<"KeyJ" | "KeyL" | "ArrowLeft" | "ArrowRight" | null>(null)
   const onReadyRef = useRef(onReady)
   const onTimeChangeRef = useRef(onTimeChange)
   const onPlayingChangeRef = useRef(onPlayingChange)
@@ -389,7 +389,17 @@ export function YouTubePlayer({
     showSeekFeedback(offsetSeconds < 0 ? "backward" : "forward", Math.abs(offsetSeconds))
   }
 
-  const seekByKeyboardOffset = (keyCode: "KeyJ" | "KeyL") => {
+  const seekByKeyboardOffset = (keyCode: "KeyJ" | "KeyL" | "ArrowLeft" | "ArrowRight") => {
+    if (keyCode === "ArrowLeft") {
+      seekBySeconds(-5)
+      return
+    }
+
+    if (keyCode === "ArrowRight") {
+      seekBySeconds(5)
+      return
+    }
+
     seekBySeconds(keyCode === "KeyJ" ? -10 : 10)
   }
 
@@ -554,7 +564,7 @@ export function YouTubePlayer({
 
       if (
         !allowKeyboard ||
-        !["KeyJ", "KeyK", "KeyL"].includes(event.code) ||
+        !["ArrowLeft", "ArrowRight", "KeyJ", "KeyK", "KeyL"].includes(event.code) ||
         event.shiftKey ||
         event.altKey ||
         event.ctrlKey ||
@@ -566,7 +576,7 @@ export function YouTubePlayer({
 
       event.preventDefault()
 
-      if (event.code === "KeyJ" || event.code === "KeyL") {
+      if (event.code === "ArrowLeft" || event.code === "ArrowRight" || event.code === "KeyJ" || event.code === "KeyL") {
         if (event.repeat || activeSeekHoldKeyRef.current === event.code) {
           return
         }

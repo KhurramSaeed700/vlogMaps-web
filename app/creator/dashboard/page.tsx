@@ -1,8 +1,9 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { type FormEvent, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
+import { useRouter } from "next/navigation"
 import { RedirectToSignIn, UserButton, useUser } from "@clerk/nextjs"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import { CheckCircle2, Edit, Eye, MapPin, MoreHorizontal, Plus, Search, Trash2, TrendingUp, UploadCloud, Youtube } from "lucide-react"
@@ -13,12 +14,9 @@ import { CreatorAccessGuard } from "@/components/creator/creator-access-guard"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
 import { ThemeToggle } from "@/components/app-shell/theme-toggle"
 import { formatCompactNumber, formatDuration, type TravelVideo } from "@/lib/demo-data"
-import { clearCreatorPoints, loadCreatorPoints } from "@/lib/creator-points"
 import {
   buildCreatorVideoStateSnapshot,
-  deleteLocalCreatorVideo,
-  getAllCreatorVideosClient,
-  isLocalCreatorVideoId,
+  createLocalCreatorVideo,
   mergeTravelVideos,
   withSyncedVideoState,
 } from "@/lib/creator-videos"
@@ -27,42 +25,112 @@ import {
   fetchCreatorCloudVideos,
   uploadCreatorVideoToCloud,
 } from "@/lib/creator-videos-cloud-client"
+import { migrateLegacyCreatorStorageToDatabase } from "@/lib/legacy-creator-storage-migration"
 
 function CreatorDashboardContent() {
+  const router = useRouter()
   const { user } = useUser()
   const [searchQuery, setSearchQuery] = useState("")
+  const [youtubeUrl, setYoutubeUrl] = useState("")
   const [allCreatorVideos, setAllCreatorVideos] = useState<TravelVideo[]>([])
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
   const [syncingVideoId, setSyncingVideoId] = useState<string | null>(null)
+  const [isCreatingVideo, setIsCreatingVideo] = useState(false)
   const [cloudVideoIds, setCloudVideoIds] = useState<Set<string>>(() => new Set())
   const [cloudConfigured, setCloudConfigured] = useState<boolean | null>(null)
   const [syncMessage, setSyncMessage] = useState("")
 
   useEffect(() => {
-    const localVideos = getAllCreatorVideosClient()
-    setAllCreatorVideos(localVideos)
-
     let isMounted = true
-    fetchCreatorCloudVideos()
-      .then((response) => {
+
+    const loadCreatorVideos = async () => {
+      try {
+        const response = await fetchCreatorCloudVideos()
         if (!isMounted) {
           return
         }
 
         setCloudConfigured(response.configured)
         setCloudVideoIds(new Set(response.videos.map((video) => video.id)))
-        setAllCreatorVideos(mergeTravelVideos(localVideos, response.videos))
-      })
-      .catch(() => {
+        setAllCreatorVideos(response.videos)
+        setSyncMessage(response.error ?? "")
+
+        if (!response.configured || response.error) {
+          return
+        }
+
+        const migration = await migrateLegacyCreatorStorageToDatabase()
+        if (!isMounted || migration.attempted === 0) {
+          return
+        }
+
+        if (migration.failed === 0 && migration.migrated > 0) {
+          const refreshedResponse = await fetchCreatorCloudVideos()
+          if (isMounted) {
+            setCloudConfigured(refreshedResponse.configured)
+            setCloudVideoIds(new Set(refreshedResponse.videos.map((video) => video.id)))
+            setAllCreatorVideos(refreshedResponse.videos)
+          }
+        }
+      } catch {
         if (isMounted) {
           setCloudConfigured(false)
+          setSyncMessage("Unable to load creator videos from the database.")
         }
-      })
+      }
+    }
+
+    loadCreatorVideos()
 
     return () => {
       isMounted = false
     }
   }, [])
+
+  const handleCreateVideo = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (isCreatingVideo) {
+      return
+    }
+
+    try {
+      setIsCreatingVideo(true)
+      setSyncMessage("Opening and syncing video...")
+
+      const video = await createLocalCreatorVideo({ youtubeUrl })
+      const state = buildCreatorVideoStateSnapshot(video)
+      const uploadVideo = withSyncedVideoState(video, state, video.status)
+      const uploadResponse = await uploadCreatorVideoToCloud(uploadVideo, state)
+
+      if (!uploadResponse.configured) {
+        setCloudConfigured(false)
+        setSyncMessage("Database is not configured. Add DATABASE_URL, restart the app, and try again.")
+        return
+      }
+
+      if (uploadResponse.error) {
+        setSyncMessage(uploadResponse.error)
+        return
+      }
+
+      if (!uploadResponse.saved || !uploadResponse.video) {
+        setSyncMessage("Unable to save this video to the database.")
+        return
+      }
+
+      const savedVideo = uploadResponse.video
+      setCloudConfigured(true)
+      setCloudVideoIds((currentIds) => new Set(currentIds).add(savedVideo.id))
+      setAllCreatorVideos((currentVideos) => mergeTravelVideos(currentVideos, [savedVideo]))
+      setYoutubeUrl("")
+      router.push(`/creator/video/${savedVideo.id}/edit`)
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? error.message : "Unable to create a creator video from that URL.")
+    } finally {
+      setIsCreatingVideo(false)
+    }
+  }
 
   const handleUploadVideo = async (video: TravelVideo) => {
     if (syncingVideoId) {
@@ -80,6 +148,11 @@ function CreatorDashboardContent() {
       if (!response.configured) {
         setCloudConfigured(false)
         setSyncMessage("Cloud database is not configured yet. Add DATABASE_URL in Vercel, then upload again.")
+        return
+      }
+
+      if (response.error) {
+        setSyncMessage(response.error)
         return
       }
 
@@ -107,13 +180,11 @@ function CreatorDashboardContent() {
     setDeletingVideoId(videoId)
     setSyncMessage("")
 
-    const deletedLocalVideo = deleteLocalCreatorVideo(videoId)
     const shouldDeleteCloudVideo = cloudVideoIds.has(videoId)
     const cloudDeleteResponse = shouldDeleteCloudVideo ? await deleteCreatorVideoFromCloud(videoId) : null
     const deletedCloudVideo = Boolean(cloudDeleteResponse?.deleted)
 
-    if (deletedLocalVideo || deletedCloudVideo) {
-      clearCreatorPoints(videoId)
+    if (deletedCloudVideo) {
       setAllCreatorVideos((currentVideos) => currentVideos.filter((video) => video.id !== videoId))
       setCloudVideoIds((currentIds) => {
         const nextIds = new Set(currentIds)
@@ -125,6 +196,10 @@ function CreatorDashboardContent() {
     if (shouldDeleteCloudVideo && cloudDeleteResponse && !cloudDeleteResponse.configured) {
       setCloudConfigured(false)
       setSyncMessage("Cloud database is not configured, so only the local copy was removed.")
+    }
+
+    if (cloudDeleteResponse?.error) {
+      setSyncMessage(cloudDeleteResponse.error)
     }
 
     setDeletingVideoId(null)
@@ -155,12 +230,18 @@ function CreatorDashboardContent() {
         <div className="mx-auto flex max-w-screen-2xl items-center justify-between gap-2 px-3 py-2.5 sm:px-6 sm:py-3 lg:px-8">
           <TravelMapLogo className="gap-2" textClassName="hidden sm:inline" />
 
-          <div className="flex items-center gap-2">
-            <span className="rounded-full border border-border bg-card px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground sm:text-[11px]">
+          <div className="flex items-center gap-3">
+            <span className="h-9 shrink-0 whitespace-nowrap rounded-full border border-border bg-card px-4 text-[11px] font-semibold uppercase leading-9 tracking-wide text-muted-foreground">
               Creator Dashboard
             </span>
+            <UserButton
+              appearance={{
+                elements: {
+                  avatarBox: "h-9 w-9",
+                },
+              }}
+            />
             <ThemeToggle />
-            <UserButton />
           </div>
         </div>
       </header>
@@ -178,13 +259,27 @@ function CreatorDashboardContent() {
             </div>
           </div>
 
-          <Link href="/creator/video/new" className="w-full sm:w-auto">
-            <Button className="h-9 w-full rounded-lg px-4 sm:h-10 sm:w-auto">
+          <form onSubmit={handleCreateVideo} className="grid w-full gap-2 sm:grid-cols-[minmax(18rem,28rem)_auto] lg:w-auto">
+            <div className="relative min-w-0">
+              <Youtube className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="url"
+                value={youtubeUrl}
+                onChange={(event) => setYoutubeUrl(event.target.value)}
+                placeholder="Paste YouTube URL"
+                disabled={isCreatingVideo}
+                className="h-10 rounded-lg pl-9 shadow-none"
+              />
+            </div>
+            <Button
+              type="submit"
+              disabled={isCreatingVideo || youtubeUrl.trim().length === 0}
+              className="h-10 rounded-lg px-4"
+            >
               <Plus className="mr-2 h-4 w-4" />
-              <span className="sm:hidden">New video</span>
-              <span className="hidden sm:inline">Paste YouTube URL</span>
+              {isCreatingVideo ? "Adding..." : "Add Video"}
             </Button>
-          </Link>
+          </form>
         </div>
 
         <div className="mb-4 grid grid-cols-2 gap-2 sm:mb-6 sm:gap-3 lg:grid-cols-5">
@@ -259,22 +354,22 @@ function CreatorDashboardContent() {
           </Card>
         </div>
 
-        <section className="space-y-5">
-          <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-xl font-semibold tracking-tight text-foreground">Video Library</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
+        <section className="space-y-3">
+          <div className="rounded-lg border border-border bg-card px-3 py-2.5 shadow-sm sm:px-4">
+            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold tracking-tight text-foreground sm:text-lg">Video Library</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
                   Showing {creatorVideos.length} of {allCreatorVideos.length} videos.
                 </p>
               </div>
-              <div className="relative w-full lg:max-w-sm">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <div className="relative w-full sm:max-w-xs">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Search videos"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-10 rounded-lg pl-9 shadow-none"
+                  className="h-8 rounded-md pl-8 text-sm shadow-none"
                 />
               </div>
             </div>
@@ -307,9 +402,10 @@ function CreatorDashboardContent() {
                 {creatorVideos.map((video) => {
                   const isCloudVideo = cloudVideoIds.has(video.id)
                   const isLiveVideo = video.status === "published"
-                  const canDeleteVideo = isLocalCreatorVideoId(video.id) || isCloudVideo
+                  const canEditVideo = video.viewerCanEdit !== false
+                  const canDeleteVideo = isCloudVideo && canEditVideo
                   const isSyncingThisVideo = syncingVideoId === video.id
-                  const keyframeCount = loadCreatorPoints(video.id, video.keyframes).length
+                  const keyframeCount = video.keyframes.length
 
                   return (
                     <Card
@@ -371,12 +467,14 @@ function CreatorDashboardContent() {
                               <span className="hidden sm:inline">{isSyncingThisVideo ? "Uploading" : "Upload"}</span>
                             </Button>
                           )}
-                          <Link href={`/creator/video/${video.id}/edit`} className="min-w-0 flex-1">
-                            <Button variant="outline" size="sm" className="h-10 w-full rounded-lg">
-                              <Edit className="mr-1 h-4 w-4" />
-                              Edit
-                            </Button>
-                          </Link>
+                          {canEditVideo && (
+                            <Link href={`/creator/video/${video.id}/edit`} className="min-w-0 flex-1">
+                              <Button variant="outline" size="sm" className="h-10 w-full rounded-lg">
+                                <Edit className="mr-1 h-4 w-4" />
+                                Edit
+                              </Button>
+                            </Link>
+                          )}
                           <Link href={`/watch/${video.id}`} className="min-w-0 flex-1">
                             <Button variant="outline" size="sm" className="h-10 w-full rounded-lg">
                               <Eye className="mr-1 h-4 w-4" />
@@ -400,15 +498,17 @@ function CreatorDashboardContent() {
                                 sideOffset={8}
                                 className="z-50 w-44 rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-lg"
                               >
-                                <DropdownMenu.Item asChild>
-                                  <Link
-                                    href={`/creator/video/${video.id}/edit`}
-                                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-popover-foreground outline-none hover:bg-accent focus:bg-accent"
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                    Quick edit
-                                  </Link>
-                                </DropdownMenu.Item>
+                                {canEditVideo && (
+                                  <DropdownMenu.Item asChild>
+                                    <Link
+                                      href={`/creator/video/${video.id}/edit`}
+                                      className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-popover-foreground outline-none hover:bg-accent focus:bg-accent"
+                                    >
+                                      <Edit className="h-4 w-4" />
+                                      Quick edit
+                                    </Link>
+                                  </DropdownMenu.Item>
+                                )}
                                 <DropdownMenu.Item
                                   disabled={!canDeleteVideo || deletingVideoId === video.id}
                                   onSelect={() => {

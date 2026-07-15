@@ -2,44 +2,45 @@
 
 import { useEffect, useState } from "react"
 import { useUser } from "@clerk/nextjs"
+import { useRouter } from "next/navigation"
 import { ContentPageShell } from "@/components/app-shell/content-page-shell"
 import { CreatorAccessGuard } from "@/components/creator/creator-access-guard"
 import { CreatorVideoEditor } from "@/components/creator/creator-video-editor"
-import { isCreatorEmail } from "@/lib/creator-access"
-import { fetchCloudVideoById } from "@/lib/creator-videos-cloud-client"
-import { getTravelVideoByIdClient } from "@/lib/creator-videos"
+import { fetchCreatorCloudVideoById } from "@/lib/creator-videos-cloud-client"
 import type { TravelVideo } from "@/lib/demo-data"
 
 const creatorEditorHeaderActionsId = "creator-editor-header-actions"
 
 export function CreatorVideoEditorPage({ id }: { id: string }) {
+  const router = useRouter()
   const { isLoaded: isUserLoaded, user } = useUser()
   const [video, setVideo] = useState<TravelVideo | null | undefined>(undefined)
-  const email = user?.primaryEmailAddress?.emailAddress ?? null
   const isVideoReady = video !== undefined && video !== null
-  const shouldUseEditorLayout = isVideoReady && isUserLoaded && isCreatorEmail(email)
+  const shouldUseEditorLayout = isVideoReady && isUserLoaded
 
   useEffect(() => {
-    const localVideo = getTravelVideoByIdClient(id)
     let isMounted = true
-    setVideo(localVideo ?? undefined)
+    setVideo(undefined)
 
-    fetchCloudVideoById(id)
+    fetchCreatorCloudVideoById(id)
       .then((response) => {
         if (isMounted) {
-          setVideo(response.video ?? localVideo ?? null)
+          if (response.video && response.video.id !== id) {
+            router.replace(`/creator/video/${response.video.id}/edit`)
+          }
+          setVideo(response.video ?? null)
         }
       })
       .catch(() => {
         if (isMounted) {
-          setVideo(localVideo ?? null)
+          setVideo(null)
         }
       })
 
     return () => {
       isMounted = false
     }
-  }, [id])
+  }, [id, router])
 
   return (
     <ContentPageShell
@@ -48,7 +49,7 @@ export function CreatorVideoEditorPage({ id }: { id: string }) {
         shouldUseEditorLayout
           ? "Paste a video, open the player, capture timestamps, and pair each moment with a location on the map."
           : video === null
-            ? "This creator video could not be found in your local creator workspace."
+            ? "This creator video could not be found in your database-backed creator workspace."
             : "Checking access and preparing the video workspace."
       }
       backHref={video === null ? "/creator/video/new" : "/creator/dashboard"}
@@ -61,6 +62,7 @@ export function CreatorVideoEditorPage({ id }: { id: string }) {
       }
       showIntro={false}
       framedContent={false}
+      showThemeToggle={false}
       headerActionsId={shouldUseEditorLayout ? creatorEditorHeaderActionsId : undefined}
     >
       <CreatorAccessGuard

@@ -1,4 +1,6 @@
-import { mapboxAccessToken } from "@/lib/mapbox"
+import "server-only"
+
+import { getServerMapboxAccessToken } from "@/lib/mapbox-server"
 import type { Coordinate, LocationSearchContext, LocationSearchResult, LocationSearchSource } from "@/lib/location-search/types"
 import { compactParts, getQueryVariants, isValidCoordinate } from "@/lib/location-search/query-utils"
 import { fetchLocationSearchJson } from "@/lib/location-search/providers/fetch-json"
@@ -23,7 +25,6 @@ interface MapboxResponse {
   features?: MapboxFeature[]
 }
 
-const mapboxServerAccessToken = process.env.MAPBOX_ACCESS_TOKEN || mapboxAccessToken
 const mapboxTypes = "country,region,postcode,district,place,locality,neighborhood,street,address,poi"
 
 function mapMapboxFeature(feature: MapboxFeature, source: LocationSearchSource): LocationSearchResult[] {
@@ -60,7 +61,7 @@ async function fetchMapboxFeatureCollection(url: URL, source: LocationSearchSour
 async function fetchMapboxGeocoding(query: string, context: LocationSearchContext) {
   const url = new URL("https://api.mapbox.com/search/geocode/v6/forward")
   url.searchParams.set("q", query)
-  url.searchParams.set("access_token", mapboxServerAccessToken)
+  url.searchParams.set("access_token", getServerMapboxAccessToken())
   url.searchParams.set("limit", "8")
   url.searchParams.set("types", mapboxTypes)
   url.searchParams.set("autocomplete", "true")
@@ -85,7 +86,7 @@ async function fetchMapboxStructuredAddress(context: LocationSearchContext) {
   const url = new URL("https://api.mapbox.com/search/geocode/v6/forward")
   url.searchParams.set("address_line1", parsedAddress.primary)
   url.searchParams.set("place", parsedAddress.place)
-  url.searchParams.set("access_token", mapboxServerAccessToken)
+  url.searchParams.set("access_token", getServerMapboxAccessToken())
   url.searchParams.set("limit", "5")
   url.searchParams.set("types", mapboxTypes)
   url.searchParams.set("autocomplete", "false")
@@ -108,7 +109,7 @@ async function fetchMapboxStructuredAddress(context: LocationSearchContext) {
 async function fetchMapboxSearchBoxForward(query: string, context: LocationSearchContext) {
   const url = new URL("https://api.mapbox.com/search/searchbox/v1/forward")
   url.searchParams.set("q", query)
-  url.searchParams.set("access_token", mapboxServerAccessToken)
+  url.searchParams.set("access_token", getServerMapboxAccessToken())
   url.searchParams.set("limit", "8")
   url.searchParams.set("types", mapboxTypes)
   url.searchParams.set("auto_complete", "true")

@@ -122,6 +122,27 @@
   }
 }
 
+@keyframes route-intro-countdown-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.route-intro-countdown-fill {
+  animation-name: route-intro-countdown-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-intro-countdown-fill {
+    animation-timing-function: steps(20, end);
+  }
+}
+
 @layer base {
   * {
     @apply border-border;

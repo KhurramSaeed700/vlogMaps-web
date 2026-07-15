@@ -8,10 +8,15 @@ export function isCreatorVideoStateDbConfigured() {
   return isDatabaseConfigured()
 }
 
-export async function loadCreatorVideoStateFromDb(videoId: string, ownerUserId: string) {
-  return getCreatorVideoStateFromDb(videoId, ownerUserId)
+export async function loadCreatorVideoStateFromDb(videoId: string, ownerUserIds: string[]) {
+  return getCreatorVideoStateFromDb(videoId, ownerUserIds)
 }
 
-export async function saveCreatorVideoStateToDb(videoId: string, ownerUserId: string, state: CreatorVideoState) {
-  return saveCreatorVideoStateForVideoId(videoId, ownerUserId, state)
+export async function saveCreatorVideoStateToDb(
+  videoId: string,
+  ownerUserId: string,
+  ownerUserIds: string[],
+  state: CreatorVideoState,
+) {
+  return saveCreatorVideoStateForVideoId(videoId, ownerUserId, ownerUserIds, state)
 }
