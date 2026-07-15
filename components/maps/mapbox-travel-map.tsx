@@ -598,14 +598,6 @@ function getRouteDistanceKm(coordinates: RouteCoordinate[]) {
   }, 0)
 }
 
-function alignRouteLegToKeyframes(leg: RoutedLeg, startCoordinate: RouteCoordinate, endCoordinate: RouteCoordinate) {
-  const coordinates: RouteCoordinate[] = []
-  appendRouteCoordinate(coordinates, startCoordinate)
-  leg.coordinates.forEach((coordinate) => appendRouteCoordinate(coordinates, coordinate))
-  appendRouteCoordinate(coordinates, endCoordinate)
-  return coordinates
-}
-
 function normalizeRoutedLegsForManualKeyframes(legs: RoutedLeg[], keyframes: Keyframe[]) {
   return legs.map((leg, index) => {
     const startKeyframe = keyframes[index]
@@ -626,11 +618,12 @@ function normalizeRoutedLegsForManualKeyframes(legs: RoutedLeg[], keyframes: Key
       }
     }
 
-    if (leg.routeKind === "direct") {
+    if (leg.coordinates.length < 2) {
       return {
         ...leg,
         isFallback: true,
-        coordinates: [startCoordinate, endCoordinate],
+        routeKind: "road" as const,
+        coordinates: [],
       }
     }
 
@@ -638,7 +631,7 @@ function normalizeRoutedLegsForManualKeyframes(legs: RoutedLeg[], keyframes: Key
       ...leg,
       isFallback: false,
       routeKind: "road" as const,
-      coordinates: alignRouteLegToKeyframes(leg, startCoordinate, endCoordinate),
+      coordinates: leg.coordinates,
     }
   })
 }
@@ -695,25 +688,29 @@ function expandLegsForStopDurations(legs: RoutedLeg[], keyframes: Keyframe[]) {
   })
 }
 
-function buildDirectRoutedLegs(keyframes: Keyframe[]) {
+function buildPendingRoutedLegs(keyframes: Keyframe[]) {
   if (keyframes.length < 2) {
     return [] as RoutedLeg[]
   }
 
-  return keyframes.slice(0, -1).map((keyframe, index) => ({
-    fromTime: keyframe.time,
-    toTime: keyframes[index + 1].time,
-    isFallback: true,
-    isStationary: keyframe.pointType === "stop",
-    routeKind:
-      keyframe.pointType === "flight" || keyframes[index + 1].pointType === "flight"
-        ? "flight" as const
-        : "direct" as const,
-    coordinates: [
-      [keyframe.lng, keyframe.lat],
-      [keyframes[index + 1].lng, keyframes[index + 1].lat],
-    ] as RouteCoordinate[],
-  }))
+  return keyframes.slice(0, -1).map((keyframe, index) => {
+    const nextKeyframe = keyframes[index + 1]
+    const isFlight = keyframe.pointType === "flight" || nextKeyframe.pointType === "flight"
+
+    return {
+      fromTime: keyframe.time,
+      toTime: nextKeyframe.time,
+      isFallback: true,
+      isStationary: keyframe.pointType === "stop",
+      routeKind: isFlight ? "flight" as const : "road" as const,
+      coordinates: isFlight
+        ? ([
+            [keyframe.lng, keyframe.lat],
+            [nextKeyframe.lng, nextKeyframe.lat],
+          ] as RouteCoordinate[])
+        : [],
+    }
+  })
 }
 
 function interpolateAlongLeg(leg: PositionedRoutedLeg, progress: number): RouteCoordinate {
@@ -864,6 +861,10 @@ function getRouteCoordinateAtTime(legs: PositionedRoutedLeg[], currentTime: numb
 
   const segmentDuration = Math.max(matchingLeg.toTime - matchingLeg.fromTime, 1)
   const progress = (currentTime - matchingLeg.fromTime) / segmentDuration
+
+  if (matchingLeg.coordinates.length === 0) {
+    return null
+  }
 
   if (matchingLeg.isStationary) {
     return currentTime >= matchingLeg.toTime
@@ -1914,7 +1915,7 @@ export function MapboxTravelMap({
 
   useEffect(() => {
     let isMounted = true
-    const pendingLegs = buildDirectRoutedLegs(safeKeyframes)
+    const pendingLegs = buildPendingRoutedLegs(safeKeyframes)
 
     if (routableKeyframes.length < 2) {
       setIsRouteResolving(false)
@@ -2676,7 +2677,7 @@ export function MapboxTravelMap({
       map.setFilter("route", ["==", ["get", "routeKind"], "road"])
     }
 
-    const nonRoadFilter: mapboxgl.Expression = ["in", ["get", "routeKind"], ["literal", ["direct", "flight"]]]
+    const nonRoadFilter: mapboxgl.Expression = ["==", ["get", "routeKind"], "flight"]
     if (!map.getLayer("route-non-road-outline")) {
       map.addLayer({
         id: "route-non-road-outline",

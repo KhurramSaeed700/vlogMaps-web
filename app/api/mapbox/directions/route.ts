@@ -15,7 +15,7 @@ const directionsCacheTtlMs = 1000 * 60 * 60 * 24
 const maxDirectionsCacheEntries = 1000
 const directionsFetchTimeoutMs = 8000
 const directionsDbCacheTimeoutMs = 1500
-const directionsRouteAlgorithmVersion = "road-v3"
+const directionsRouteAlgorithmVersion = "road-v4-shortest-per-leg"
 const allowedProfiles = new Set(["driving", "driving-traffic", "walking", "cycling"])
 const allowedRoutePreferences = new Set(["fastest", "shortest"])
 const maxWaypointCount = 23
@@ -143,29 +143,20 @@ function createDirectionsResponse(payload: DirectionsPayload) {
 }
 
 function rankDirectionsRoutes(routes: NonNullable<DirectionsPayload["routes"]>, routePreference: string) {
-  const routeDistances = routes.map((route) => route.distance ?? Number.POSITIVE_INFINITY)
-  const shortestDistance = Math.min(...routeDistances)
-
   return routes
     .map((route, index) => ({ route, index }))
     .sort((left, right) => {
       if (routePreference === "shortest") {
         const leftDistance = left.route.distance ?? Number.POSITIVE_INFINITY
         const rightDistance = right.route.distance ?? Number.POSITIVE_INFINITY
-        const leftNearShortest = leftDistance <= shortestDistance * 1.08 + 1500
-        const rightNearShortest = rightDistance <= shortestDistance * 1.08 + 1500
-
-        if (leftNearShortest !== rightNearShortest) {
-          return leftNearShortest ? -1 : 1
+        if (leftDistance !== rightDistance) {
+          return leftDistance - rightDistance
         }
 
-        const leftScore = leftDistance + left.index * 1200
-        const rightScore = rightDistance + right.index * 1200
-        if (leftScore !== rightScore) {
-          return leftScore - rightScore
-        }
-
-        return left.index - right.index
+        const durationDifference =
+          (left.route.duration ?? Number.POSITIVE_INFINITY) -
+          (right.route.duration ?? Number.POSITIVE_INFINITY)
+        return durationDifference || left.index - right.index
       }
 
       const durationDifference =
@@ -243,8 +234,8 @@ export async function GET(request: NextRequest) {
 
   url.searchParams.set("geometries", "geojson")
   url.searchParams.set("overview", "full")
-  url.searchParams.set("steps", "true")
-  url.searchParams.set("alternatives", waypointCoordinates.length === 0 ? "true" : "false")
+  url.searchParams.set("steps", "false")
+  url.searchParams.set("alternatives", "true")
 
   try {
     const controller = new AbortController()

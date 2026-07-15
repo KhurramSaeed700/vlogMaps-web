@@ -17,7 +17,7 @@ const mapStyleOptions = [
   { id: "streets", label: "Streets", style: "mapbox://styles/mapbox/streets-v12" },
   { id: "terrain", label: "Terrain", style: "mapbox://styles/mapbox/outdoors-v12" },
 ] as const
-const editorRouteLayerIds = ["editor-route-hit", "editor-route-flight", "editor-route-direct", "editor-route"] as const
+const editorRouteLayerIds = ["editor-route-hit", "editor-route-flight", "editor-route"] as const
 const editorTripRouteLayerIds = ["editor-trip-route-hit", "editor-trip-route", "editor-trip-route-casing"] as const
 const editorTimestampPointSourceId = "editor-timestamp-points"
 const editorTimestampPointLayerIds = [
@@ -202,7 +202,7 @@ interface TimestampRouteSegment {
   totalDistance: number
   isStationary?: boolean
   isFallback?: boolean
-  routeKind?: "road" | "direct" | "flight"
+  routeKind?: "road" | "flight"
 }
 
 interface TimestampRouteSegmentInput {
@@ -214,7 +214,7 @@ interface TimestampRouteSegmentInput {
   endCoordinate: RouteCoordinate
   isStationary?: boolean
   isFallback?: boolean
-  routeKind?: "road" | "direct" | "flight"
+  routeKind?: "road" | "flight"
 }
 
 type RouteShapeTarget =
@@ -356,7 +356,6 @@ function orderEditorRouteLayers(map: mapboxgl.Map) {
   const hasTripRoute = map.getLayer("editor-trip-route")
   const hasTripCasing = map.getLayer("editor-trip-route-casing")
   const hasTimestampRoute = map.getLayer("editor-route")
-  const hasTimestampDirectRoute = map.getLayer("editor-route-direct")
   const hasTimestampFlightRoute = map.getLayer("editor-route-flight")
 
   if (hasTripRoute && hasTimestampRoute) {
@@ -371,10 +370,6 @@ function orderEditorRouteLayers(map: mapboxgl.Map) {
 
   if (hasTimestampRoute) {
     map.moveLayer("editor-route")
-  }
-
-  if (hasTimestampDirectRoute) {
-    map.moveLayer("editor-route-direct")
   }
 
   if (hasTimestampFlightRoute) {
@@ -678,18 +673,8 @@ function buildTimestampRouteSegments(legs: TimestampRouteSegmentInput[]) {
       ] satisfies TimestampRouteSegment[]
     }
 
-    if (leg.routeKind === "direct" || leg.isFallback) {
-      return [
-        createTimestampRouteSegment({
-          legKey: leg.legKey,
-          fromTime: leg.fromTime,
-          toTime: leg.toTime,
-          isFallback: true,
-          routeKind: "direct",
-          isStationary: leg.isStationary,
-          coordinates: [leg.startCoordinate, leg.endCoordinate],
-        }),
-      ] satisfies TimestampRouteSegment[]
+    if (leg.coordinates.length < 2) {
+      return [] satisfies TimestampRouteSegment[]
     }
 
     return [
@@ -1899,7 +1884,7 @@ export function MapboxLocationPicker({
     const routeFeature = buildRouteFeatureCollection(
       segments.map((segment) => ({
         coordinates: segment.coordinates,
-        properties: { legKey: segment.legKey, routeKind: segment.routeKind ?? (segment.isFallback ? "direct" : "road") },
+        properties: { legKey: segment.legKey, routeKind: segment.routeKind ?? "road" },
       })),
     )
     const existingSource = map.getSource("editor-route") as mapboxgl.GeoJSONSource | undefined
@@ -1934,30 +1919,6 @@ export function MapboxLocationPicker({
     } else {
       map.setFilter("editor-route", ["==", ["get", "routeKind"], "road"])
       map.setPaintProperty("editor-route", "line-width", editorTimestampRouteWidth)
-    }
-
-    if (!map.getLayer("editor-route-direct")) {
-      shouldOrderLayers = true
-      map.addLayer({
-        id: "editor-route-direct",
-        type: "line",
-        source: "editor-route",
-        layout: {
-          "line-join": "round",
-          "line-cap": "round",
-        },
-        filter: ["==", ["get", "routeKind"], "direct"],
-        paint: {
-          "line-color": "#0ea5e9",
-          "line-width": editorTimestampRouteWidth,
-          "line-opacity": 0.96,
-          "line-dasharray": [1, 1.4],
-        },
-      })
-    } else {
-      map.setFilter("editor-route-direct", ["==", ["get", "routeKind"], "direct"])
-      map.setPaintProperty("editor-route-direct", "line-width", editorTimestampRouteWidth)
-      map.setPaintProperty("editor-route-direct", "line-dasharray", [1, 1.4])
     }
 
     if (!map.getLayer("editor-route-flight")) {
@@ -2286,13 +2247,9 @@ export function MapboxLocationPicker({
         return
       }
 
-      const routedCoordinates =
-        legs[0]?.coordinates && legs[0].coordinates.length >= 2
-          ? legs[0].coordinates
-          : ([
-              [routeStart.lng, routeStart.lat],
-              [routeEnd.lng, routeEnd.lat],
-            ] as RouteCoordinate[])
+      const routedCoordinates = legs[0]?.coordinates && legs[0].coordinates.length >= 2
+        ? legs[0].coordinates
+        : []
 
       runWhenMapStyleReady(map, () => {
         if (pendingTripRouteKeyRef.current !== routeKey || mapInstanceRef.current !== map) {
