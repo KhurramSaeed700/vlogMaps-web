@@ -14,6 +14,7 @@ const directionsCache = new Map<string, { expiresAt: number; payload: Directions
 const directionsCacheTtlMs = 1000 * 60 * 60 * 24
 const maxDirectionsCacheEntries = 1000
 const directionsFetchTimeoutMs = 8000
+const directionsDbCacheTimeoutMs = 1500
 const directionsRouteAlgorithmVersion = "road-v3"
 const allowedProfiles = new Set(["driving", "driving-traffic", "walking", "cycling"])
 const allowedRoutePreferences = new Set(["fastest", "shortest"])
@@ -43,6 +44,23 @@ function createDirectionsCacheKey({
   return createHash("sha256")
     .update([directionsRouteAlgorithmVersion, profile, routePreference, start, ...waypoints, end].join("|"))
     .digest("hex")
+}
+
+async function resolveWithin<T>(promise: Promise<T>, fallback: T, timeoutMs: number) {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timeout = setTimeout(() => resolve(fallback), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
+  }
 }
 
 function readDirectionsCache(key: string) {
@@ -205,7 +223,11 @@ export async function GET(request: NextRequest) {
     return createDirectionsResponse(cachedPayload)
   }
 
-  const dbCachedPayload = await readDirectionsPayloadFromDb(cacheKey)
+  const dbCachedPayload = await resolveWithin(
+    readDirectionsPayloadFromDb(cacheKey),
+    null,
+    directionsDbCacheTimeoutMs,
+  )
   if (dbCachedPayload) {
     writeDirectionsCache(cacheKey, dbCachedPayload)
     return createDirectionsResponse(dbCachedPayload)
@@ -243,16 +265,20 @@ export async function GET(request: NextRequest) {
       if (payload?.code === "NoRoute") {
         const noRoutePayload: DirectionsPayload = { ...payload, routes: [] }
         writeDirectionsCache(cacheKey, noRoutePayload)
-        await writeDirectionsPayloadToDb(
-          cacheKey,
-          {
-            start: startCoordinate,
-            end: endCoordinate,
-            waypoints: waypointCoordinates,
-            profile,
-            routePreference,
-          },
-          noRoutePayload,
+        await resolveWithin(
+          writeDirectionsPayloadToDb(
+            cacheKey,
+            {
+              start: startCoordinate,
+              end: endCoordinate,
+              waypoints: waypointCoordinates,
+              profile,
+              routePreference,
+            },
+            noRoutePayload,
+          ),
+          undefined,
+          directionsDbCacheTimeoutMs,
         )
         return createDirectionsResponse(noRoutePayload)
       }
@@ -269,16 +295,20 @@ export async function GET(request: NextRequest) {
     }
 
     writeDirectionsCache(cacheKey, payload)
-    await writeDirectionsPayloadToDb(
-      cacheKey,
-      {
-        start: startCoordinate,
-        end: endCoordinate,
-        waypoints: waypointCoordinates,
-        profile,
-        routePreference,
-      },
-      payload,
+    await resolveWithin(
+      writeDirectionsPayloadToDb(
+        cacheKey,
+        {
+          start: startCoordinate,
+          end: endCoordinate,
+          waypoints: waypointCoordinates,
+          profile,
+          routePreference,
+        },
+        payload,
+      ),
+      undefined,
+      directionsDbCacheTimeoutMs,
     )
     return createDirectionsResponse(payload)
   } catch {

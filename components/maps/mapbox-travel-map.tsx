@@ -1600,7 +1600,6 @@ export function MapboxTravelMap({
   const [isSearching, setIsSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [mapError, setMapError] = useState<string | null>(null)
-  const [routeError, setRouteError] = useState<string | null>(null)
   const [routedLegs, setRoutedLegs] = useState<RoutedLeg[]>([])
   const [isRouteResolving, setIsRouteResolving] = useState(false)
   const [isMapOverlayWide, setIsMapOverlayWide] = useState(false)
@@ -1919,7 +1918,6 @@ export function MapboxTravelMap({
 
     if (routableKeyframes.length < 2) {
       setIsRouteResolving(false)
-      setRouteError(null)
       setRoutedLegs(pendingLegs)
 
       return () => {
@@ -1928,20 +1926,17 @@ export function MapboxTravelMap({
     }
 
     setIsRouteResolving(true)
-    setRouteError(null)
-    setRoutedLegs([])
+    setRoutedLegs(pendingLegs)
 
     fetchRoutedLegsForKeyframes(routableKeyframes)
       .then((nextLegs) => {
         if (isMounted) {
-          setRouteError(null)
           setRoutedLegs(nextLegs)
         }
       })
       .catch(() => {
         if (isMounted) {
-          setRoutedLegs([])
-          setRouteError("Road directions could not be loaded. The map will retry when the route changes or the page reloads.")
+          setRoutedLegs(pendingLegs)
         }
       })
       .finally(() => {
@@ -4054,11 +4049,11 @@ export function MapboxTravelMap({
         className="pointer-events-none absolute left-0 top-0 h-80 w-80 opacity-0"
       />
 
-      {(mapError || routeError) && (
+      {mapError && (
         <div className="absolute inset-x-4 bottom-4 z-20">
           <div className="flex items-center justify-between gap-4 bg-white/95 p-3 text-sm text-slate-700 shadow-lg backdrop-blur-sm">
-            <span>{mapError || routeError}</span>
-            {hasMapboxAccessToken && mapError && (
+            <span>{mapError}</span>
+            {hasMapboxAccessToken && (
               <Button variant="secondary" size="sm" onClick={fitToRoute}>
                 Fit route
               </Button>

@@ -583,6 +583,6 @@ export async function fetchRoutedLegsForKeyframes(
     legIndex = chunkEndLegIndex + 1
   }
 
-  await Promise.all(requests)
+  await Promise.allSettled(requests)
   return legs
 }
