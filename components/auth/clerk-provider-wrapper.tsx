@@ -8,10 +8,45 @@ interface ClerkProviderWrapperProps {
   children: React.ReactNode
 }
 
+const simpleLoginAppearance = {
+  baseTheme: undefined,
+  variables: {
+    colorPrimary: "#dc2626",
+    colorBackground: "#ffffff",
+    colorForeground: "#18181b",
+    colorMutedForeground: "#71717a",
+    colorInput: "#ffffff",
+    colorInputForeground: "#18181b",
+    borderRadius: "0.5rem",
+  },
+  elements: {
+    rootBox: "w-full",
+    cardBox: "w-full border-0 bg-transparent shadow-none",
+    card: "w-full bg-transparent p-0 shadow-none",
+    header: "hidden",
+    socialButtonsBlockButton:
+      "border border-zinc-300 bg-[#ffffff] text-zinc-900 shadow-none hover:bg-zinc-50",
+    dividerLine: "bg-zinc-200",
+    dividerText: "text-zinc-500",
+    formFieldLabel: "text-zinc-800",
+    formFieldInput:
+      "border border-zinc-300 bg-[#ffffff] text-zinc-950 shadow-none placeholder:text-zinc-400 focus:border-red-500 focus:ring-1 focus:ring-red-500",
+    formButtonPrimary: "bg-red-600 text-white shadow-none hover:bg-red-700",
+    footerActionText: "text-zinc-600",
+    footerActionLink: "text-red-600 hover:text-red-700",
+    footerPages: "hidden",
+    footerPagesLink: "hidden",
+    footerPagesLinkBox: "hidden",
+    identityPreviewText: "text-zinc-900",
+    formResendCodeLink: "text-red-600",
+  },
+}
+
 export function ClerkProviderWrapper({ children }: ClerkProviderWrapperProps) {
   const pathname = usePathname()
   const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
   const needsClerk = pathname === "/" || pathname.startsWith("/auth") || pathname.startsWith("/creator")
+  const usesSimpleLoginAppearance = pathname.startsWith("/auth/login")
 
   if (!needsClerk) {
     return <>{children}</>
@@ -34,7 +69,7 @@ export function ClerkProviderWrapper({ children }: ClerkProviderWrapperProps) {
   return (
     <ClientClerkProvider
       publishableKey={publishableKey}
-      appearance={{
+      appearance={usesSimpleLoginAppearance ? simpleLoginAppearance : {
         baseTheme: undefined,
         variables: {
           colorPrimary: "#dc2626",

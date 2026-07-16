@@ -26,11 +26,12 @@ export default function LoginPage() {
   return (
     <AuthPageShell
       eyebrow="Welcome back"
-      title="Sign in to TravelMap"
-      description="Pick up your creator dashboard, saved routes, and interactive travel stories."
+      title="Sign in"
+      description="Continue to your TravelMap account."
+      variant="simple"
     >
       {!isLoaded ? (
-        <ClerkLoadState mode="sign-in" />
+        <ClerkLoadState mode="sign-in" variant="simple" />
       ) : !isSignedIn ? (
         <SignIn path="/auth/login" routing="path" signUpUrl="/auth/register" />
       ) : (

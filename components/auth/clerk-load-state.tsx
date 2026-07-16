@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card"
 
 interface ClerkLoadStateProps {
   mode: "sign-in" | "sign-up"
+  variant?: "default" | "simple"
 }
 
 function getHostedClerkUrl(mode: ClerkLoadStateProps["mode"]) {
@@ -27,7 +28,7 @@ function getHostedClerkUrl(mode: ClerkLoadStateProps["mode"]) {
   }
 }
 
-export function ClerkLoadState({ mode }: ClerkLoadStateProps) {
+export function ClerkLoadState({ mode, variant = "default" }: ClerkLoadStateProps) {
   const [hasTimedOut, setHasTimedOut] = useState(false)
   const hostedClerkUrl = useMemo(() => getHostedClerkUrl(mode), [mode])
   const label = mode === "sign-in" ? "sign in" : "sign up"
@@ -55,9 +56,9 @@ export function ClerkLoadState({ mode }: ClerkLoadStateProps) {
 
   if (!hasTimedOut) {
     return (
-      <Card>
-        <CardContent className="flex items-center gap-3 p-6 text-sm text-gray-600">
-          <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+      <Card className={variant === "simple" ? "border-zinc-200 bg-[#ffffff]" : undefined}>
+        <CardContent className="flex items-center gap-3 p-6 text-sm text-zinc-600">
+          <Loader2 className={`h-4 w-4 animate-spin ${variant === "simple" ? "text-red-600" : "text-blue-600"}`} />
           <span>Loading {label}...</span>
         </CardContent>
       </Card>

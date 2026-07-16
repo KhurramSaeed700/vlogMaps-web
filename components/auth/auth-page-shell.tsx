@@ -10,9 +10,33 @@ interface AuthPageShellProps {
   title: string
   description: string
   children: ReactNode
+  variant?: "showcase" | "simple"
 }
 
-export function AuthPageShell({ eyebrow, title, description, children }: AuthPageShellProps) {
+export function AuthPageShell({ eyebrow, title, description, children, variant = "showcase" }: AuthPageShellProps) {
+  if (variant === "simple") {
+    return (
+      <main className="min-h-screen bg-zinc-50 text-zinc-950">
+        <section className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-5 py-10 sm:px-6">
+          <TravelMapLogo
+            className="mb-8 justify-center"
+            markClassName="bg-red-600"
+            textClassName="text-zinc-950"
+          />
+
+          <div className="rounded-xl border border-zinc-200 bg-[#ffffff] p-5 shadow-sm sm:p-7">
+            <div className="mb-6 text-center">
+              <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+              <p className="mt-2 text-sm leading-6 text-zinc-600">{description}</p>
+            </div>
+
+            {children}
+          </div>
+        </section>
+      </main>
+    )
+  }
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#070707] text-white">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_18%,rgba(239,68,68,0.22),transparent_28%),radial-gradient(circle_at_80%_8%,rgba(14,165,233,0.14),transparent_26%),linear-gradient(135deg,#070707_0%,#111113_46%,#070707_100%)]" />
