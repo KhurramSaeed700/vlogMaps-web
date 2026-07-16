@@ -19,6 +19,13 @@ interface RoutableKeyframe {
   via?: RouteCoordinate[]
 }
 
+export function isFlightRouteLeg(
+  startPointType?: RoutableKeyframe["pointType"],
+  endPointType?: RoutableKeyframe["pointType"],
+) {
+  return startPointType === "flight" && endPointType === "flight"
+}
+
 interface DirectionsRoute {
   geometry?: {
     coordinates?: RouteCoordinate[]
@@ -328,13 +335,13 @@ export async function fetchRoutedLegsForKeyframes(
   }
 
   const legs = keyframes.slice(0, -1).map((keyframe, index) =>
-    keyframe.pointType === "flight" || keyframes[index + 1].pointType === "flight"
+    isFlightRouteLeg(keyframe.pointType, keyframes[index + 1].pointType)
       ? createFlightLeg(keyframe, keyframes[index + 1])
       : createRoadLeg(keyframe, keyframes[index + 1], { status: "no-route" }),
   )
   const requests = keyframes.slice(0, -1).map(async (keyframe, index) => {
     const nextKeyframe = keyframes[index + 1]
-    if (keyframe.pointType === "flight" || nextKeyframe.pointType === "flight") {
+    if (isFlightRouteLeg(keyframe.pointType, nextKeyframe.pointType)) {
       options.onLegResolved?.(index, legs[index])
       return
     }

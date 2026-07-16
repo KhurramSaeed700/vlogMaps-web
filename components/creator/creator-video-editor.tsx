@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { createPortal } from "react-dom"
 import Link from "next/link"
 import * as Dialog from "@radix-ui/react-dialog"
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { SplitViewResizer } from "@/components/ui/split-view-resizer"
 import { MapboxLocationPicker } from "@/components/maps/mapbox-location-picker"
 import { YouTubePlayer } from "@/components/media/youtube-player"
 import { getAirportCodeLocation } from "@/lib/airport-codes"
@@ -212,6 +213,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
   const remoteSaveQueueRef = useRef<Promise<void>>(Promise.resolve())
   const remoteLoadRequestRef = useRef(0)
   const editorScrollRef = useRef<HTMLElement | null>(null)
+  const splitViewRef = useRef<HTMLDivElement>(null)
   const currentTimeRef = useRef(0)
   const renderedCurrentTimeRef = useRef(0)
   const editorShortcutStateRef = useRef<EditorShortcutState | null>(null)
@@ -1162,10 +1164,10 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
       <div
         className={`mx-2 mb-3 space-y-2 rounded-md border px-3 py-2 text-sm ${
           draftPoint.pointType === "flight"
-            ? "border-sky-200 bg-sky-50 text-sky-950"
+            ? "border-sky-200 bg-sky-50 text-sky-950 dark:border-sky-400/30 dark:bg-sky-500/10 dark:text-sky-100"
             : draftPoint.pointType === "stop"
-              ? "border-teal-200 bg-teal-50 text-teal-950"
-              : "border-orange-200 bg-orange-50 text-orange-950"
+              ? "border-teal-200 bg-teal-50 text-teal-950 dark:border-teal-400/30 dark:bg-teal-500/10 dark:text-teal-100"
+              : "border-orange-200 bg-orange-50 text-orange-950 dark:border-orange-400/30 dark:bg-orange-500/10 dark:text-orange-100"
         }`}
       >
         <div className="flex items-center justify-between gap-3">
@@ -1196,7 +1198,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                 )
               }
               placeholder={draftPoint.pointType === "flight" ? "LHE" : draftPoint.pointType === "stop" ? "Stop name" : "Point name"}
-              className="h-8 border-white/70 bg-white text-slate-950 shadow-none"
+              className="h-8 border-white/70 bg-white text-slate-950 shadow-none dark:border-white/15 dark:bg-zinc-950 dark:text-zinc-100"
             />
             {draftPoint.pointType === "flight" && (
               <Button
@@ -1219,7 +1221,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
             className={
               draftPoint.pointType === "point"
                 ? "h-8 bg-orange-600 text-white hover:bg-orange-700"
-                : "h-8 border-orange-200 bg-white text-orange-700 hover:bg-orange-50"
+                : "h-8 border-orange-200 bg-white text-orange-700 hover:bg-orange-50 dark:border-orange-400/30 dark:bg-zinc-950/70 dark:text-orange-300 dark:hover:bg-orange-500/10"
             }
             onClick={() => updateDraftPointType("point")}
           >
@@ -1233,7 +1235,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
             className={
               draftPoint.pointType === "stop"
                 ? "h-8 bg-teal-700 text-white hover:bg-teal-800"
-                : "h-8 border-teal-200 bg-white text-teal-700 hover:bg-teal-50"
+                : "h-8 border-teal-200 bg-white text-teal-700 hover:bg-teal-50 dark:border-teal-400/30 dark:bg-zinc-950/70 dark:text-teal-300 dark:hover:bg-teal-500/10"
             }
             onClick={() => updateDraftPointType("stop")}
           >
@@ -1247,7 +1249,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
             className={
               draftPoint.pointType === "flight"
                 ? "h-8 bg-sky-600 text-white hover:bg-sky-700"
-                : "h-8 border-sky-200 bg-white text-sky-700 hover:bg-sky-50"
+                : "h-8 border-sky-200 bg-white text-sky-700 hover:bg-sky-50 dark:border-sky-400/30 dark:bg-zinc-950/70 dark:text-sky-300 dark:hover:bg-sky-500/10"
             }
             onClick={() => updateDraftPointType("flight")}
           >
@@ -1270,10 +1272,10 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
           >
             Save
           </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8 bg-white" onClick={saveDraftPointTimeFromVideo}>
+          <Button type="button" size="sm" variant="outline" className="h-8 bg-white dark:bg-zinc-950/70" onClick={saveDraftPointTimeFromVideo}>
             Set to current time
           </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8 bg-white" onClick={cancelPointEdit}>
+          <Button type="button" size="sm" variant="outline" className="h-8 bg-white dark:bg-zinc-950/70" onClick={cancelPointEdit}>
             Cancel
           </Button>
         </div>
@@ -1345,10 +1347,17 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
         </Popover.Portal>
       </Popover.Root>
 
-      <div className="grid min-h-[calc(100vh-73px)] bg-white xl:h-full xl:min-h-0 xl:grid-cols-[minmax(360px,0.88fr)_minmax(0,1.55fr)] xl:overflow-hidden">
+      <div
+        ref={splitViewRef}
+        className="relative flex min-h-[calc(100vh-73px)] flex-col bg-white xl:grid xl:h-full xl:min-h-0 xl:overflow-hidden"
+        style={{
+          "--split-view-left": "36%",
+          gridTemplateColumns: "minmax(0, var(--split-view-left)) minmax(0, 1fr)",
+        } as CSSProperties}
+      >
       <section
         ref={editorScrollRef}
-        className="relative flex min-h-0 flex-col overflow-y-auto border-b border-slate-200 xl:h-full xl:border-b-0 xl:border-r"
+        className="relative flex min-h-0 min-w-0 flex-col overflow-y-auto border-b border-slate-200 xl:h-full xl:border-b-0 xl:border-r"
       >
         <div
           className="relative w-full min-h-[360px] overflow-hidden bg-black xl:min-h-[390px] [&_iframe]:absolute [&_iframe]:inset-0 [&_iframe]:h-full [&_iframe]:w-full"
@@ -1460,10 +1469,10 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
               )}
             </section>
 
-            <section className="mt-3 space-y-2 border-t border-slate-200 pt-4">
+            <section className="mt-3 space-y-2 border-t border-slate-200 pt-4 dark:border-white/10">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-semibold text-slate-950">Timestamps</h2>
+                  <h2 className="text-sm font-semibold text-slate-950 dark:text-zinc-100">Timestamps</h2>
                   <Badge variant="secondary">{displayedRows.length}</Badge>
                 </div>
                 <div className="flex items-center gap-1">
@@ -1554,10 +1563,10 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                 <div
                   className={`w-full rounded-md px-3 py-2 text-sm ${
                     draftPoint.pointType === "flight"
-                      ? "bg-sky-50 text-sky-950"
+                      ? "bg-sky-50 text-sky-950 dark:bg-sky-500/10 dark:text-sky-100"
                       : draftPoint.pointType === "stop"
-                        ? "bg-teal-50 text-teal-950"
-                        : "bg-orange-50 text-orange-900"
+                        ? "bg-teal-50 text-teal-950 dark:bg-teal-500/10 dark:text-teal-100"
+                        : "bg-orange-50 text-orange-900 dark:bg-orange-500/10 dark:text-orange-100"
                   }`}
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -1641,9 +1650,9 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                   ))}
                 </div>
               ) : sortedPoints.length === 0 ? (
-                <p className="py-4 text-sm text-slate-500">No points yet.</p>
+                <p className="py-4 text-sm text-slate-500 dark:text-zinc-400">No points yet.</p>
               ) : (
-                <div className="divide-y divide-slate-200 overflow-x-hidden">
+                <div className="divide-y divide-slate-200 overflow-x-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:divide-white/10 dark:border-white/10 dark:bg-zinc-950/50 dark:shadow-black/20">
                   {displayedRows.map((row, rowIndex) => {
                     const { point, landingPoint } = row
                     const pointNumber = rowIndex + 1
@@ -1658,15 +1667,15 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                       )
                     const timestampName = getDisplayTimestampName(point)
                     const rowClassName = [
-                      "min-w-0 border-l-4 transition-colors",
+                      "min-w-0 border-l-4 transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.035]",
                       isCurrentTimestamp
-                        ? "border-blue-500 bg-blue-50"
+                        ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-500/10"
                         : isSelected
                           ? point.pointType === "flight"
-                            ? "border-sky-500 bg-sky-50"
+                            ? "border-sky-500 bg-sky-50 dark:border-sky-400 dark:bg-sky-500/10"
                             : point.pointType === "stop"
-                              ? "border-teal-600 bg-teal-50"
-                              : "border-orange-500 bg-orange-50"
+                              ? "border-teal-600 bg-teal-50 dark:border-teal-400 dark:bg-teal-500/10"
+                              : "border-orange-500 bg-orange-50 dark:border-orange-400 dark:bg-orange-500/10"
                           : "border-transparent",
                     ].join(" ")
                     const timestampRange =
@@ -1698,19 +1707,19 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                               {pointNumber}
                             </span>
                             <span
-                              className={`whitespace-nowrap rounded-md px-1.5 py-1 text-sm font-semibold transition-colors group-hover:bg-blue-100 group-hover:text-blue-800 group-focus-visible:bg-blue-100 group-focus-visible:text-blue-800 ${
-                                isCurrentTimestamp ? "bg-blue-600 text-white" : "text-slate-950"
+                              className={`whitespace-nowrap rounded-md px-1.5 py-1 text-sm font-semibold transition-colors group-hover:bg-blue-100 group-hover:text-blue-800 group-focus-visible:bg-blue-100 group-focus-visible:text-blue-800 dark:group-hover:bg-blue-500/15 dark:group-hover:text-blue-200 dark:group-focus-visible:bg-blue-500/15 dark:group-focus-visible:text-blue-200 ${
+                                isCurrentTimestamp ? "bg-blue-600 text-white dark:bg-blue-500 dark:text-white" : "text-slate-950 dark:text-zinc-100"
                               }`}
                             >
                               {timestampRange}
                             </span>
-                            <p className="truncate text-xs text-slate-500">{timestampDescription}</p>
+                            <p className="truncate text-xs text-slate-500 dark:text-zinc-400">{timestampDescription}</p>
                           </button>
 
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8 text-blue-700 hover:text-blue-800"
+                            className="h-8 w-8 text-blue-700 hover:bg-blue-50 hover:text-blue-800 dark:text-blue-300 dark:hover:bg-blue-500/10 dark:hover:text-blue-200"
                             aria-label={`Edit timestamp ${pointNumber}`}
                             onClick={() => beginEditPoint(point)}
                           >
@@ -1720,7 +1729,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8 text-red-600 hover:text-red-700"
+                            className="h-8 w-8 text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-300 dark:hover:bg-red-500/10 dark:hover:text-red-200"
                             aria-label={`Delete timestamp ${pointNumber}`}
                             onClick={() => deleteTimestampRow(row)}
                           >
@@ -1750,7 +1759,7 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
         )}
       </section>
 
-      <section className="relative min-h-[620px] overflow-hidden bg-slate-100 xl:h-full xl:min-h-0">
+      <section className="relative min-h-[620px] min-w-0 overflow-hidden bg-slate-100 xl:h-full xl:min-h-0">
         <MapboxLocationPicker
           value={draftPoint?.lat === null || draftPoint?.lng === null || !draftPoint ? null : { lat: draftPoint.lat, lng: draftPoint.lng }}
           points={sortedPoints}
@@ -1775,6 +1784,14 @@ export function CreatorVideoEditor({ video, headerActionsTargetId }: CreatorVide
           className="h-[64vh] min-h-[620px] xl:h-full xl:min-h-0"
         />
       </section>
+      <SplitViewResizer
+        containerRef={splitViewRef}
+        defaultValue={36}
+        min={30}
+        max={50}
+        label="Resize editor video and map panels"
+        className="hidden xl:flex"
+      />
       </div>
     </>
   )

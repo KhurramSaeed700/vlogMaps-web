@@ -10,7 +10,12 @@ import { hasMapboxAccessToken, mapboxAccessToken } from "@/lib/mapbox"
 import { getInterpolatedPointAtTime, type CreatorMapPoint } from "@/lib/creator-points"
 import type { CreatorTripEndpoint, CreatorTripRoute } from "@/lib/creator-trip-route"
 import { getTimestampLegKey, type CreatorRouteShapePoint, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
-import { fetchRoutedLegsForKeyframes, type RouteCoordinate } from "@/lib/mapbox-directions"
+import { fetchRoutedLegsForKeyframes, isFlightRouteLeg, type RouteCoordinate } from "@/lib/mapbox-directions"
+import {
+  createFlightAirplaneMarkerElement,
+  getRouteBearing,
+  updateFlightAirplaneMarkerElement,
+} from "@/components/maps/flight-airplane-marker"
 
 const mapStyleOptions = [
   { id: "satellite", label: "Satellite", style: "mapbox://styles/mapbox/satellite-streets-v12" },
@@ -452,6 +457,16 @@ function getActiveStationarySegment(segments: TimestampRouteSegment[], routeProg
   return segment?.isStationary ? segment : null
 }
 
+function getActiveFlightSegment(segments: TimestampRouteSegment[], routeProgressTime: number) {
+  return segments.find(
+    (segment) =>
+      segment.routeKind === "flight" &&
+      !segment.isStationary &&
+      routeProgressTime >= segment.fromTime &&
+      routeProgressTime <= segment.toTime,
+  ) ?? null
+}
+
 function getStopZoomAmount(segment: TimestampRouteSegment, routeProgressTime: number) {
   const duration = segment.toTime - segment.fromTime
   if (duration < 2.5) {
@@ -796,6 +811,7 @@ export function MapboxLocationPicker({
   const hoverRouteShapeMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const activeRouteShapeMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const routeProgressMarkerRef = useRef<mapboxgl.Marker | null>(null)
+  const flightAirplaneMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const hoverRouteShapeTargetRef = useRef<RouteShapeTarget | null>(null)
   const activeRouteShapeTargetRef = useRef<RouteShapeTarget | null>(null)
   const isRouteShapeMarkerHoveredRef = useRef(false)
@@ -1011,7 +1027,46 @@ export function MapboxLocationPicker({
     trackingStopZoomRef.current = null
   }
 
-  const setRouteProgressMarker = (map: mapboxgl.Map, coordinate: RouteCoordinate) => {
+  const setRouteProgressMarker = (
+    map: mapboxgl.Map,
+    coordinate: RouteCoordinate,
+    progressTime?: number | null,
+  ) => {
+    const flightSegment =
+      progressTime !== null && progressTime !== undefined && Number.isFinite(progressTime)
+        ? getActiveFlightSegment(timestampRouteSegmentsRef.current, progressTime)
+        : null
+
+    if (flightSegment) {
+      routeProgressMarkerRef.current?.getElement().style.setProperty("display", "none")
+
+      if (!flightAirplaneMarkerRef.current) {
+        flightAirplaneMarkerRef.current = new mapboxgl.Marker({
+          element: createFlightAirplaneMarkerElement(54),
+          anchor: "center",
+          rotationAlignment: "map",
+        })
+          .setLngLat(coordinate)
+          .addTo(map)
+        flightAirplaneMarkerRef.current.getElement().style.zIndex = "7"
+      }
+
+      const flightStart = flightSegment.coordinates[0]
+      const flightEnd = flightSegment.coordinates[flightSegment.coordinates.length - 1]
+      const duration = Math.max(flightSegment.toTime - flightSegment.fromTime, 0.001)
+      const progress = Math.min(Math.max((progressTime! - flightSegment.fromTime) / duration, 0), 1)
+      const airplaneMarker = flightAirplaneMarkerRef.current
+      airplaneMarker.getElement().style.display = ""
+      airplaneMarker.setLngLat(coordinate)
+      if (flightStart && flightEnd) {
+        airplaneMarker.setRotation(getRouteBearing(flightStart, flightEnd))
+      }
+      updateFlightAirplaneMarkerElement(airplaneMarker.getElement(), progress)
+      return
+    }
+
+    flightAirplaneMarkerRef.current?.getElement().style.setProperty("display", "none")
+
     if (!routeProgressMarkerRef.current) {
       routeProgressMarkerRef.current = new mapboxgl.Marker({
         color: editorTravelerMarkerColor,
@@ -1028,6 +1083,7 @@ export function MapboxLocationPicker({
       return
     }
 
+    routeProgressMarkerRef.current.getElement().style.display = ""
     routeProgressMarkerRef.current.setLngLat(coordinate)
   }
 
@@ -1259,7 +1315,7 @@ export function MapboxLocationPicker({
         const deltaSeconds = clampNumber((frameTime - previousFrameTime) / 1000, 0.001, 0.08)
         trackingFrameTimeRef.current = frameTime
 
-        setRouteProgressMarker(activeMap, targetCoordinate)
+        setRouteProgressMarker(activeMap, targetCoordinate, progressTime)
 
         const currentCenterRef = trackingCameraCenterRef.current
         const currentMapCenter = activeMap.getCenter()
@@ -1977,11 +2033,13 @@ export function MapboxLocationPicker({
 
     if (!progressCoordinate || !map.isStyleLoaded()) {
       routeProgressMarkerRef.current?.remove()
+      flightAirplaneMarkerRef.current?.remove()
       routeProgressMarkerRef.current = null
+      flightAirplaneMarkerRef.current = null
       return
     }
 
-    setRouteProgressMarker(map, progressCoordinate)
+    setRouteProgressMarker(map, progressCoordinate, routeProgressTimeRef.current)
 
     if (!shouldCenter || activeRouteShapeMarkerRef.current || isRouteShapeMarkerDraggingRef.current) {
       return
@@ -2127,7 +2185,7 @@ export function MapboxLocationPicker({
         const nextPoint = currentPoints[index + 1]
         const legKey = getTimestampLegKey(currentPoint.id, nextPoint.id)
         const stopEndTime = getStopEndTime(currentPoint, nextPoint)
-        const isFlightLeg = currentPoint.pointType === "flight" || nextPoint.pointType === "flight"
+        const isFlightLeg = isFlightRouteLeg(currentPoint.pointType, nextPoint.pointType)
         const segments: TimestampRouteSegment[] = []
 
         if (stopEndTime !== null && stopEndTime > currentPoint.time) {
@@ -2561,6 +2619,7 @@ export function MapboxLocationPicker({
       clearRouteShapeMarkers()
       activeMarkerRef.current?.remove()
       routeProgressMarkerRef.current?.remove()
+      flightAirplaneMarkerRef.current?.remove()
       tripStartMarkerRef.current?.remove()
       tripEndMarkerRef.current?.remove()
       removeRouteLayer(map)
@@ -2569,8 +2628,36 @@ export function MapboxLocationPicker({
       mapInstanceRef.current = null
       activeMarkerRef.current = null
       routeProgressMarkerRef.current = null
+      flightAirplaneMarkerRef.current = null
       tripStartMarkerRef.current = null
       tripEndMarkerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const container = mapRef.current
+    if (!container || typeof ResizeObserver === "undefined") {
+      return
+    }
+
+    let resizeFrame: number | null = null
+    const observer = new ResizeObserver(() => {
+      if (resizeFrame !== null) {
+        window.cancelAnimationFrame(resizeFrame)
+      }
+
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = null
+        mapInstanceRef.current?.resize()
+      })
+    })
+    observer.observe(container)
+
+    return () => {
+      observer.disconnect()
+      if (resizeFrame !== null) {
+        window.cancelAnimationFrame(resizeFrame)
+      }
     }
   }, [])
 

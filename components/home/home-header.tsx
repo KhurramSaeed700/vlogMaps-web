@@ -10,7 +10,9 @@ import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { preferenceOptions, type PreferenceId } from "@/components/home/home-preferences"
+import { NavigationSettingsSection } from "@/components/settings/navigation-settings-section"
 import { useCreatorAccess } from "@/lib/use-creator-access"
+import { useNavigationPreferences } from "@/lib/use-navigation-preferences"
 
 interface HomeHeaderProps {
   isPending: boolean
@@ -34,6 +36,8 @@ export function HomeHeader({
   const [isThemeMounted, setIsThemeMounted] = useState(false)
   const { resolvedTheme, setTheme } = useTheme()
   const { isLoaded, isSignedIn, user } = useUser()
+  const { preferences: navigationPreferences, updatePreferences: updateNavigationPreferences } =
+    useNavigationPreferences()
   const { isApprovedCreator, isCheckingCreatorAccess } = useCreatorAccess({
     isLoaded,
     isSignedIn: Boolean(isSignedIn),
@@ -121,7 +125,7 @@ export function HomeHeader({
               <DropdownMenu.Content
                 align="end"
                 sideOffset={10}
-                className="z-50 w-[min(calc(100vw-2rem),19rem)] rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-xl"
+                className="z-50 max-h-[calc(100dvh-5rem)] w-[min(calc(100vw-2rem),19rem)] overflow-y-auto rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-xl"
               >
                 <div className="px-2.5 pb-2 pt-1">
                   <p className="text-sm font-semibold text-foreground">Settings</p>
@@ -150,6 +154,13 @@ export function HomeHeader({
 
                 <DropdownMenu.Separator className="my-2 h-px bg-border" />
 
+                <NavigationSettingsSection
+                  preferences={navigationPreferences}
+                  onChange={updateNavigationPreferences}
+                />
+
+                <DropdownMenu.Separator className="my-2 h-px bg-border" />
+
                 <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                   Appearance
                 </div>
@@ -173,10 +184,7 @@ export function HomeHeader({
                     ) : (
                       <Sun className="h-4 w-4 text-muted-foreground" />
                     )}
-                    <span className="flex-1">
-                      Dark mode
-                      <span className="ml-2 text-xs text-muted-foreground">{isDarkMode ? "On" : "Off"}</span>
-                    </span>
+                    <span className="flex-1">{isDarkMode ? "Dark mode" : "Light mode"}</span>
                     <span
                       className={`relative h-5 w-9 rounded-full border transition-colors ${
                         isDarkMode ? "border-primary bg-primary" : "border-border bg-muted"

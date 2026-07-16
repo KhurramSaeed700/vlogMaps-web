@@ -1,14 +1,18 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import Link from "next/link"
-import { ArrowLeft, Pencil, Share2 } from "lucide-react"
+import { ArrowLeft, Pencil, Settings, Share2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { SplitViewResizer } from "@/components/ui/split-view-resizer"
 import { MapboxTravelMap } from "@/components/maps/mapbox-travel-map"
 import { YouTubePlayer } from "@/components/media/youtube-player"
+import { NavigationSettingsSection } from "@/components/settings/navigation-settings-section"
 import type { TravelVideo } from "@/lib/demo-data"
 import { getInterpolatedPointAtTime, loadCreatorPoints, type CreatorMapPoint } from "@/lib/creator-points"
 import { loadCreatorRouteShapes, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
+import { useNavigationPreferences } from "@/lib/use-navigation-preferences"
 import type { HydratedTravelVideo } from "@/lib/youtube-client"
 
 interface WatchExperienceProps {
@@ -21,6 +25,7 @@ const watchTimeRenderStepSeconds = 0.25
 
 export function WatchExperience({ video, viewerCanEdit = false, editHref = null }: WatchExperienceProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
+  const splitViewRef = useRef<HTMLDivElement>(null)
   const feedbackTimeoutRef = useRef<number | null>(null)
   const currentTimeRef = useRef(0)
   const renderedCurrentTimeRef = useRef(0)
@@ -31,6 +36,8 @@ export function WatchExperience({ video, viewerCanEdit = false, editHref = null 
   const [seekRequest, setSeekRequest] = useState<{ id: number; time: number } | null>(null)
   const [isSharing, setIsSharing] = useState(false)
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null)
+  const { preferences: navigationPreferences, updatePreferences: updateNavigationPreferences } =
+    useNavigationPreferences()
 
   useEffect(() => {
     setRoutePoints(loadCreatorPoints(video.id, video.keyframes))
@@ -155,6 +162,37 @@ export function WatchExperience({ video, viewerCanEdit = false, editHref = null 
                 </Button>
               </Link>
             )}
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Open navigation settings"
+                  title="Navigation settings"
+                  className="h-9 w-9 text-white hover:bg-white/20 sm:h-10 sm:w-10 [&_svg]:size-5"
+                >
+                  <Settings className="h-5 w-5" />
+                </Button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="end"
+                  sideOffset={8}
+                  className="z-[70] max-h-[calc(100dvh-4rem)] w-[min(calc(100vw-2rem),20rem)] overflow-y-auto rounded-lg border border-white/15 bg-slate-950 p-2 text-white shadow-2xl"
+                >
+                  <div className="px-2.5 pb-2 pt-1">
+                    <p className="text-sm font-semibold text-white">Navigation settings</p>
+                    <p className="mt-0.5 text-xs text-white/55">Control how the map returns to your journey.</p>
+                  </div>
+                  <NavigationSettingsSection
+                    preferences={navigationPreferences}
+                    onChange={updateNavigationPreferences}
+                    tone="dark"
+                  />
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
             <Button
               type="button"
               variant="ghost"
@@ -180,7 +218,14 @@ export function WatchExperience({ video, viewerCanEdit = false, editHref = null 
         </div>
       )}
 
-      <div className="flex min-h-0 w-full flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div
+        ref={splitViewRef}
+        className="relative flex min-h-0 w-full flex-1 flex-col lg:grid"
+        style={{
+          "--split-view-left": "46%",
+          gridTemplateColumns: "minmax(0, var(--split-view-left)) minmax(0, 1fr)",
+        } as CSSProperties}
+      >
         <div className="relative z-10 shrink-0 overflow-hidden bg-black lg:h-full lg:min-h-0">
           <div className="relative aspect-video w-full overflow-hidden bg-gray-950 lg:h-full lg:aspect-auto">
             <YouTubePlayer
@@ -208,10 +253,21 @@ export function WatchExperience({ video, viewerCanEdit = false, editHref = null 
             liveCurrentTimeRef={currentTimeRef}
             isPlaying={isPlaying}
             followZoomPreferenceKey={video.id}
+            autoResumeTracking={navigationPreferences.autoResumeTracking}
+            trackingResumeDelayMs={navigationPreferences.resumeDelaySeconds * 1000}
             onLocationClick={(keyframe) => jumpToKeyframe(keyframe.time)}
             className="h-full w-full"
           />
         </div>
+
+        <SplitViewResizer
+          containerRef={splitViewRef}
+          defaultValue={46}
+          min={35}
+          max={65}
+          label="Resize video and map panels"
+          className="hidden lg:flex"
+        />
       </div>
     </div>
   )
