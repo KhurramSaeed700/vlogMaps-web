@@ -66,6 +66,8 @@ function normalizeCreatorPoint(videoId: string, point: CreatorMapPoint) {
     ...point,
     pointType: getCreatorPointType(point),
     stopEndTime: normalizedStopEndTime,
+    flightId: point.pointType === "flight" ? point.flightId : undefined,
+    flightPhase: point.pointType === "flight" ? point.flightPhase : undefined,
     id: point.id || createPointId(videoId, point.time, point.lat, point.lng),
   }
 }
@@ -77,9 +79,7 @@ export function loadCreatorPoints(videoId: string, fallback: VideoKeyframe[]) {
       const parsedPoints = rawPoints ? (JSON.parse(rawPoints) as unknown) : null
       if (Array.isArray(parsedPoints)) {
         const savedPoints = parsedPoints.filter(isCreatorMapPoint).map((point) => normalizeCreatorPoint(videoId, point))
-        if (savedPoints.length > 0) {
-          return sortCreatorPoints(savedPoints)
-        }
+        return sortCreatorPoints(savedPoints)
       }
     } catch {
       window.localStorage.removeItem(creatorPointsStorageKey(videoId))
@@ -114,6 +114,8 @@ export function upsertCreatorPoint(videoId: string, points: CreatorMapPoint[], p
       pointType === "stop" && typeof point.stopEndTime === "number" && point.stopEndTime > point.time
         ? point.stopEndTime
         : undefined,
+    flightId: pointType === "flight" ? point.flightId : undefined,
+    flightPhase: pointType === "flight" ? point.flightPhase : undefined,
     id: point.id || createPointId(videoId, point.time, point.lat, point.lng),
   }
 

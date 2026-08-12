@@ -8,6 +8,7 @@ export interface HydratedTravelVideo extends TravelVideo {
   hasLiveLikeCount: boolean
   hasLiveViewCount: boolean
   isMetadataLoading: boolean
+  publishedAt: string | null
 }
 
 function withFallbackFlags(video: TravelVideo, isMetadataLoading = false): HydratedTravelVideo {
@@ -16,6 +17,7 @@ function withFallbackFlags(video: TravelVideo, isMetadataLoading = false): Hydra
     hasLiveLikeCount: false,
     hasLiveViewCount: false,
     isMetadataLoading,
+    publishedAt: null,
   }
 }
 
@@ -37,6 +39,7 @@ function mergeVideoWithMetadata(video: TravelVideo, metadata: ResolvedYouTubeMet
     hasLiveLikeCount: metadata.likes !== null,
     hasLiveViewCount: metadata.views !== null,
     isMetadataLoading: false,
+    publishedAt: metadata.publishedAt,
   }
 }
 

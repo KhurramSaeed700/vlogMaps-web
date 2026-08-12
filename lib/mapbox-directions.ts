@@ -16,6 +16,7 @@ interface RoutableKeyframe {
   lat: number
   lng: number
   pointType?: "point" | "stop" | "flight"
+  flightPhase?: "takeoff" | "landing"
   via?: RouteCoordinate[]
 }
 
@@ -24,6 +25,111 @@ export function isFlightRouteLeg(
   endPointType?: RoutableKeyframe["pointType"],
 ) {
   return startPointType === "flight" && endPointType === "flight"
+}
+
+const airportGroundTransferMaxDistanceKm = 8
+const earthRadiusKm = 6371
+const flightPathTargetSegmentKm = 160
+const flightPathMinSegments = 16
+const flightPathMaxSegments = 128
+
+function toCartesian([lng, lat]: RouteCoordinate) {
+  const latitude = (lat * Math.PI) / 180
+  const longitude = (lng * Math.PI) / 180
+  const latitudeRadius = Math.cos(latitude)
+
+  return [
+    latitudeRadius * Math.cos(longitude),
+    latitudeRadius * Math.sin(longitude),
+    Math.sin(latitude),
+  ] as const
+}
+
+function unwrapLongitude(longitude: number, previousLongitude: number) {
+  let unwrappedLongitude = longitude
+  while (unwrappedLongitude - previousLongitude > 180) unwrappedLongitude -= 360
+  while (unwrappedLongitude - previousLongitude < -180) unwrappedLongitude += 360
+  return unwrappedLongitude
+}
+
+export function createGreatCircleFlightCoordinates(
+  start: RouteCoordinate,
+  end: RouteCoordinate,
+) {
+  const startVector = toCartesian(start)
+  const endVector = toCartesian(end)
+  const dotProduct = Math.min(
+    Math.max(
+      startVector[0] * endVector[0] +
+        startVector[1] * endVector[1] +
+        startVector[2] * endVector[2],
+      -1,
+    ),
+    1,
+  )
+  const angularDistance = Math.acos(dotProduct)
+  const segmentCount = Math.min(
+    Math.max(
+      Math.ceil((angularDistance * earthRadiusKm) / flightPathTargetSegmentKm),
+      flightPathMinSegments,
+    ),
+    flightPathMaxSegments,
+  )
+  const sinAngularDistance = Math.sin(angularDistance)
+  const coordinates: RouteCoordinate[] = [start]
+  let previousLongitude = start[0]
+
+  for (let index = 1; index <= segmentCount; index += 1) {
+    const progress = index / segmentCount
+    let longitude: number
+    let latitude: number
+
+    if (Math.abs(sinAngularDistance) < 0.000001) {
+      const endLongitude = unwrapLongitude(end[0], start[0])
+      longitude = start[0] + (endLongitude - start[0]) * progress
+      latitude = start[1] + (end[1] - start[1]) * progress
+    } else {
+      const startWeight = Math.sin((1 - progress) * angularDistance) / sinAngularDistance
+      const endWeight = Math.sin(progress * angularDistance) / sinAngularDistance
+      const x = startVector[0] * startWeight + endVector[0] * endWeight
+      const y = startVector[1] * startWeight + endVector[1] * endWeight
+      const z = startVector[2] * startWeight + endVector[2] * endWeight
+      const vectorLength = Math.hypot(x, y, z) || 1
+      longitude = (Math.atan2(y, x) * 180) / Math.PI
+      latitude = (Math.asin(Math.min(Math.max(z / vectorLength, -1), 1)) * 180) / Math.PI
+    }
+
+    longitude = unwrapLongitude(longitude, previousLongitude)
+    coordinates.push([longitude, latitude])
+    previousLongitude = longitude
+  }
+
+  return coordinates
+}
+
+function getCoordinateDistanceKm(start: RoutableKeyframe, end: RoutableKeyframe) {
+  const toRadians = (value: number) => (value * Math.PI) / 180
+  const startLat = toRadians(start.lat)
+  const endLat = toRadians(end.lat)
+  const deltaLat = endLat - startLat
+  const deltaLng = toRadians(end.lng - start.lng)
+  const haversine =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(startLat) * Math.cos(endLat) * Math.sin(deltaLng / 2) ** 2
+
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
+}
+
+export function isDirectPostFlightTransfer(start: RoutableKeyframe, end: RoutableKeyframe) {
+  // A nearby point immediately after landing is usually the terminal, gate, or airport lobby.
+  // Keep explicit creator-drawn shapes authoritative and leave longer onward trips road-routed.
+  return (
+    start.pointType === "flight" &&
+    start.flightPhase === "landing" &&
+    end.pointType !== "flight" &&
+    !start.via?.length &&
+    getCoordinateDistanceKm(start, end) <= airportGroundTransferMaxDistanceKm
+  )
 }
 
 interface DirectionsRoute {
@@ -313,12 +419,26 @@ function createRoadLeg(
 }
 
 function createFlightLeg(keyframe: RoutableKeyframe, nextKeyframe: RoutableKeyframe) {
+  const start: RouteCoordinate = [keyframe.lng, keyframe.lat]
+  const end: RouteCoordinate = [nextKeyframe.lng, nextKeyframe.lat]
+
+  return {
+    fromTime: keyframe.time,
+    toTime: nextKeyframe.time,
+    isFallback: false,
+    isStationary: false,
+    routeKind: "flight" as const,
+    coordinates: createGreatCircleFlightCoordinates(start, end),
+  } satisfies RoutedLeg
+}
+
+function createDirectPostFlightTransferLeg(keyframe: RoutableKeyframe, nextKeyframe: RoutableKeyframe) {
   return {
     fromTime: keyframe.time,
     toTime: nextKeyframe.time,
     isFallback: true,
     isStationary: false,
-    routeKind: "flight" as const,
+    routeKind: "road" as const,
     coordinates: [
       [keyframe.lng, keyframe.lat],
       [nextKeyframe.lng, nextKeyframe.lat],
@@ -334,14 +454,22 @@ export async function fetchRoutedLegsForKeyframes(
     return [] as RoutedLeg[]
   }
 
-  const legs = keyframes.slice(0, -1).map((keyframe, index) =>
-    isFlightRouteLeg(keyframe.pointType, keyframes[index + 1].pointType)
-      ? createFlightLeg(keyframe, keyframes[index + 1])
-      : createRoadLeg(keyframe, keyframes[index + 1], { status: "no-route" }),
-  )
-  const requests = keyframes.slice(0, -1).map(async (keyframe, index) => {
+  const legs = keyframes.slice(0, -1).map((keyframe, index) => {
     const nextKeyframe = keyframes[index + 1]
     if (isFlightRouteLeg(keyframe.pointType, nextKeyframe.pointType)) {
+      return createFlightLeg(keyframe, nextKeyframe)
+    }
+
+    return isDirectPostFlightTransfer(keyframe, nextKeyframe)
+      ? createDirectPostFlightTransferLeg(keyframe, nextKeyframe)
+      : createRoadLeg(keyframe, nextKeyframe, { status: "no-route" })
+  })
+  const requests = keyframes.slice(0, -1).map(async (keyframe, index) => {
+    const nextKeyframe = keyframes[index + 1]
+    if (
+      isFlightRouteLeg(keyframe.pointType, nextKeyframe.pointType) ||
+      isDirectPostFlightTransfer(keyframe, nextKeyframe)
+    ) {
       options.onLegResolved?.(index, legs[index])
       return
     }

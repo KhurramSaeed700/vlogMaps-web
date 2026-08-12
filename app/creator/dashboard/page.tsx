@@ -6,7 +6,8 @@ import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { RedirectToSignIn, UserButton, useUser } from "@clerk/nextjs"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
-import { CheckCircle2, Edit, Eye, MapPin, MoreHorizontal, Plus, Search, Trash2, TrendingUp, UploadCloud, Youtube } from "lucide-react"
+import { CheckCircle2, CloudOff, Edit, Eye, MapPin, MoreHorizontal, Plus, Trash2, TrendingUp, UploadCloud, Youtube } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -23,6 +24,7 @@ import {
 import {
   deleteCreatorVideoFromCloud,
   fetchCreatorCloudVideos,
+  unpublishCreatorVideoFromCloud,
   uploadCreatorVideoToCloud,
 } from "@/lib/creator-videos-cloud-client"
 import { migrateLegacyCreatorStorageToDatabase } from "@/lib/legacy-creator-storage-migration"
@@ -30,7 +32,6 @@ import { migrateLegacyCreatorStorageToDatabase } from "@/lib/legacy-creator-stor
 function CreatorDashboardContent() {
   const router = useRouter()
   const { user } = useUser()
-  const [searchQuery, setSearchQuery] = useState("")
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [allCreatorVideos, setAllCreatorVideos] = useState<TravelVideo[]>([])
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
@@ -39,6 +40,15 @@ function CreatorDashboardContent() {
   const [cloudVideoIds, setCloudVideoIds] = useState<Set<string>>(() => new Set())
   const [cloudConfigured, setCloudConfigured] = useState<boolean | null>(null)
   const [syncMessage, setSyncMessage] = useState("")
+
+  useEffect(() => {
+    if (!syncMessage) {
+      return
+    }
+
+    toast(syncMessage)
+    setSyncMessage("")
+  }, [syncMessage])
 
   useEffect(() => {
     let isMounted = true
@@ -53,7 +63,10 @@ function CreatorDashboardContent() {
         setCloudConfigured(response.configured)
         setCloudVideoIds(new Set(response.videos.map((video) => video.id)))
         setAllCreatorVideos(response.videos)
-        setSyncMessage(response.error ?? "")
+        setSyncMessage(
+          response.error ??
+            (response.configured ? "" : "Cloud database is not configured yet. Add DATABASE_URL in Vercel to sync creator videos."),
+        )
 
         if (!response.configured || response.error) {
           return
@@ -205,10 +218,47 @@ function CreatorDashboardContent() {
     setDeletingVideoId(null)
   }
 
-  const creatorVideos = useMemo(
-    () => allCreatorVideos.filter((video) => video.title.toLowerCase().includes(searchQuery.toLowerCase())),
-    [allCreatorVideos, searchQuery],
-  )
+  const handleUnpublishVideo = async (videoId: string, videoTitle: string) => {
+    if (syncingVideoId) {
+      return
+    }
+
+    const shouldUnpublish = window.confirm(
+      `Unpublish "${videoTitle}"? It will be removed from public pages but remain editable in your dashboard.`,
+    )
+    if (!shouldUnpublish) {
+      return
+    }
+
+    setSyncingVideoId(videoId)
+    setSyncMessage("")
+
+    try {
+      const response = await unpublishCreatorVideoFromCloud(videoId)
+
+      if (!response.configured) {
+        setCloudConfigured(false)
+        setSyncMessage("Cloud database is not configured, so this video could not be unpublished.")
+        return
+      }
+
+      if (response.error || !response.unpublished || !response.video) {
+        setSyncMessage(response.error || "Could not unpublish this video. Please try again.")
+        return
+      }
+
+      const unpublishedVideo = response.video
+      setCloudConfigured(true)
+      setAllCreatorVideos((currentVideos) => mergeTravelVideos(currentVideos, [unpublishedVideo]))
+      setSyncMessage(`Unpublished "${unpublishedVideo.title}". It is now a private draft.`)
+    } catch {
+      setSyncMessage("Could not unpublish this video. Check your connection and try again.")
+    } finally {
+      setSyncingVideoId(null)
+    }
+  }
+
+  const creatorVideos = allCreatorVideos
 
   const stats = useMemo(() => {
     const totalViews = allCreatorVideos.reduce((sum, video) => sum + video.views, 0)
@@ -354,33 +404,7 @@ function CreatorDashboardContent() {
           </Card>
         </div>
 
-        <section className="space-y-3">
-          <div className="rounded-lg border border-border bg-card px-3 py-2.5 shadow-sm sm:px-4">
-            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <h2 className="text-base font-semibold tracking-tight text-foreground sm:text-lg">Video Library</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  Showing {creatorVideos.length} of {allCreatorVideos.length} videos.
-                </p>
-              </div>
-              <div className="relative w-full sm:max-w-xs">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search videos"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-8 rounded-md pl-8 text-sm shadow-none"
-                />
-              </div>
-            </div>
-          </div>
-
-          {(syncMessage || cloudConfigured === false) && (
-            <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
-              {syncMessage || "Cloud database is not configured yet. Add DATABASE_URL in Vercel to sync creator videos."}
-            </div>
-          )}
-
+        <section>
           <div>
             {creatorVideos.length === 0 ? (
               <Card className="border-border bg-card shadow-sm">
@@ -507,6 +531,18 @@ function CreatorDashboardContent() {
                                       <Edit className="h-4 w-4" />
                                       Quick edit
                                     </Link>
+                                  </DropdownMenu.Item>
+                                )}
+                                {isLiveVideo && canEditVideo && (
+                                  <DropdownMenu.Item
+                                    disabled={Boolean(syncingVideoId)}
+                                    onSelect={() => {
+                                      void handleUnpublishVideo(video.id, video.title)
+                                    }}
+                                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-popover-foreground outline-none hover:bg-accent focus:bg-accent data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                                  >
+                                    <CloudOff className="h-4 w-4" />
+                                    {isSyncingThisVideo ? "Unpublishing..." : "Unpublish"}
                                   </DropdownMenu.Item>
                                 )}
                                 <DropdownMenu.Item

@@ -1,8 +1,8 @@
 export type Coordinate = [number, number]
 export type BoundingBox = [number, number, number, number]
-export type CountryCode = "pk"
+export type CountryCode = "pk" | "us"
 
-export type LocationSearchSource = "mapbox" | "mapbox-structured" | "mapbox-searchbox" | "photon" | "nominatim"
+export type LocationSearchSource = "coordinates" | "plus-code" | "mapbox" | "mapbox-structured" | "mapbox-searchbox" | "photon" | "nominatim"
 
 export interface ParsedAddress {
   raw: string
@@ -28,5 +28,6 @@ export interface LocationSearchResult {
   center: Coordinate
   bbox?: BoundingBox
   source: LocationSearchSource
+  feature_type?: string
   relevance?: number
 }

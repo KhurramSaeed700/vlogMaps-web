@@ -13,6 +13,7 @@ interface ContentPageShellProps {
   mainClassName?: string
   contentClassName?: string
   pageClassName?: string
+  headerLeadingActionsId?: string
   headerActionsId?: string
   showThemeToggle?: boolean
   showIntro?: boolean
@@ -29,6 +30,7 @@ export function ContentPageShell({
   mainClassName,
   contentClassName = "",
   pageClassName = "min-h-screen bg-background",
+  headerLeadingActionsId,
   headerActionsId,
   showThemeToggle = true,
   showIntro = true,
@@ -44,7 +46,12 @@ export function ContentPageShell({
     <div className={pageClassName}>
       <header className="border-b border-border bg-background/80 backdrop-blur-sm">
         <div className="container mx-auto flex items-center justify-between px-4 py-4">
-          <TravelMapLogo />
+          <div className="flex min-w-0 items-center gap-3">
+            <TravelMapLogo />
+            {headerLeadingActionsId ? (
+              <div id={headerLeadingActionsId} className="flex shrink-0 items-center" />
+            ) : null}
+          </div>
           <div className="flex items-center gap-2">
             {headerActionsId ? <div id={headerActionsId} className="flex items-center gap-2" /> : null}
             {showThemeToggle ? <ThemeToggle /> : null}

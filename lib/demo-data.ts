@@ -1,10 +1,13 @@
 import type { CreatorRouteShapes } from "@/lib/creator-route-shapes"
 
 export type VideoKeyframePointType = "point" | "stop" | "flight"
+export type VideoKeyframeFlightPhase = "takeoff" | "landing"
 
 export interface VideoKeyframe {
   time: number
   stopEndTime?: number
+  flightId?: string
+  flightPhase?: VideoKeyframeFlightPhase
   lat: number
   lng: number
   location: string

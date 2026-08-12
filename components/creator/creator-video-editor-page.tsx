@@ -10,6 +10,7 @@ import { fetchCreatorCloudVideoById } from "@/lib/creator-videos-cloud-client"
 import type { TravelVideo } from "@/lib/demo-data"
 
 const creatorEditorHeaderActionsId = "creator-editor-header-actions"
+const creatorEditorHeaderLeadingActionsId = "creator-editor-header-leading-actions"
 
 export function CreatorVideoEditorPage({ id }: { id: string }) {
   const router = useRouter()
@@ -63,6 +64,7 @@ export function CreatorVideoEditorPage({ id }: { id: string }) {
       showIntro={false}
       framedContent={false}
       showThemeToggle={false}
+      headerLeadingActionsId={shouldUseEditorLayout ? creatorEditorHeaderLeadingActionsId : undefined}
       headerActionsId={shouldUseEditorLayout ? creatorEditorHeaderActionsId : undefined}
     >
       <CreatorAccessGuard
@@ -72,7 +74,11 @@ export function CreatorVideoEditorPage({ id }: { id: string }) {
         {video === null ? (
           <p>Video not found.</p>
         ) : video ? (
-          <CreatorVideoEditor video={video} headerActionsTargetId={creatorEditorHeaderActionsId} />
+          <CreatorVideoEditor
+            video={video}
+            headerLeadingActionsTargetId={creatorEditorHeaderLeadingActionsId}
+            headerActionsTargetId={creatorEditorHeaderActionsId}
+          />
         ) : null}
       </CreatorAccessGuard>
     </ContentPageShell>

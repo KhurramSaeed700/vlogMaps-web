@@ -13,11 +13,40 @@ interface RouteContext {
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params
   const { userId } = await auth()
-  const cloudVideo = await getCreatorVideoFromDb(id, userId)
+  const configured = isCreatorVideosDbConfigured()
+  if (!configured) {
+    return NextResponse.json(
+      {
+        configured: false,
+        video: null,
+        viewerCanEdit: false,
+        editHref: null,
+        error: "The video service is temporarily unavailable.",
+      },
+      { status: 503 },
+    )
+  }
+
+  let cloudVideo: Awaited<ReturnType<typeof getCreatorVideoFromDb>>
+  try {
+    cloudVideo = await getCreatorVideoFromDb(id, userId)
+  } catch {
+    return NextResponse.json(
+      {
+        configured: true,
+        video: null,
+        viewerCanEdit: false,
+        editHref: null,
+        error: "The video service is temporarily unavailable.",
+      },
+      { status: 503 },
+    )
+  }
+
   if (!cloudVideo) {
     return NextResponse.json(
       {
-        configured: isCreatorVideosDbConfigured(),
+        configured,
         video: null,
         viewerCanEdit: false,
         editHref: null,
@@ -29,7 +58,7 @@ export async function GET(_request: Request, context: RouteContext) {
   const viewerCanEdit = await isCreatorVideoOwnedByUser(id, userId)
 
   return NextResponse.json({
-    configured: isCreatorVideosDbConfigured(),
+    configured,
     video: cloudVideo,
     viewerCanEdit,
     editHref: viewerCanEdit ? `/creator/video/${encodeURIComponent(cloudVideo.id)}/edit` : null,

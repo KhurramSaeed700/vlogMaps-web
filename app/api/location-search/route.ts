@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { parseBoundingBox, parseCoordinate } from "@/lib/location-search/query-utils"
+import { getCoordinateSearchResult, isPastedPostalAddress, parseBoundingBox, parseCoordinate } from "@/lib/location-search/query-utils"
+import { getPlusCodeSearchResult, parsePlusCodeQuery } from "@/lib/location-search/plus-code"
 import { searchLocations } from "@/lib/location-search/search"
 import { checkRateLimit } from "@/lib/rate-limit"
 
@@ -52,9 +53,36 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid location search coordinates." }, { status: 400 })
   }
 
+  const coordinateResult = getCoordinateSearchResult(query)
+  if (coordinateResult) {
+    return NextResponse.json(
+      { features: [coordinateResult] },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
+        },
+      },
+    )
+  }
+
+  const plusCode = parsePlusCodeQuery(query)
+  if (plusCode) {
+    let reference = null
+    if (plusCode.referenceQuery) {
+      const referenceResults = await searchLocations(plusCode.referenceQuery, null, null)
+      reference = referenceResults[0]?.center ?? null
+    }
+    const plusCodeResult = getPlusCodeSearchResult(plusCode, reference)
+    return NextResponse.json(
+      { features: plusCodeResult ? [plusCodeResult] : [] },
+      { headers: { "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400" } },
+    )
+  }
+
   let features
   try {
-    features = await searchLocations(query, proximity, bbox)
+    const ignoreViewportBias = isPastedPostalAddress(query)
+    features = await searchLocations(query, ignoreViewportBias ? null : proximity, ignoreViewportBias ? null : bbox)
   } catch {
     return NextResponse.json({ error: "Location search is not configured." }, { status: 500 })
   }

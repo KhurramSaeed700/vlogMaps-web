@@ -3,6 +3,7 @@ import { createSearchContext, getQueryVariants } from "@/lib/location-search/que
 import { dedupeResults, hasStrongLocalMatch, hasStrongTextMatch, sortResults } from "@/lib/location-search/ranking"
 import { fetchFallbackMapboxResults, fetchPrimaryMapboxResults } from "@/lib/location-search/providers/mapbox"
 import { fetchFallbackOpenStreetMapResults, fetchPrimaryOpenStreetMapResults } from "@/lib/location-search/providers/openstreetmap"
+import { abbreviateUsStatesInResult } from "@/lib/location-search/us-state-abbreviations"
 
 export async function searchLocations(query: string, proximity: Coordinate | null, bbox: BoundingBox | null) {
   const context = createSearchContext(query, proximity, bbox)
@@ -15,7 +16,7 @@ export async function searchLocations(query: string, proximity: Coordinate | nul
 
   const primaryResults = [...mapboxResults, ...openStreetMapResults]
   const needsFallback =
-    !hasStrongLocalMatch(query, primaryResults, proximity, bbox, context.countryCode) && !hasStrongTextMatch(query, primaryResults)
+    !hasStrongLocalMatch(query, primaryResults, proximity, bbox, context.countryCode) && !hasStrongTextMatch(rankingQueries, primaryResults)
   const fallbackResults = needsFallback
     ? await Promise.all([
         fetchFallbackMapboxResults(context),
@@ -31,5 +32,5 @@ export async function searchLocations(query: string, proximity: Coordinate | nul
       bbox,
       context.countryCode,
     ),
-  ).slice(0, 10)
+  ).slice(0, 10).map(abbreviateUsStatesInResult)
 }

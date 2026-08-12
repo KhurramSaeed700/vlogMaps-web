@@ -1,8 +1,10 @@
 import type { TravelVideo, VideoKeyframe } from "@/lib/demo-data"
 import { loadCreatorPoints } from "@/lib/creator-points"
 import { loadCreatorRouteShapes } from "@/lib/creator-route-shapes"
+import { loadCreatorSavedPlaces } from "@/lib/creator-saved-places"
 import { loadCreatorTripRoute } from "@/lib/creator-trip-route"
 import type { CreatorVideoState } from "@/lib/creator-video-state"
+import { summarizeKeyframeLocations } from "@/lib/video-locations"
 import { extractYouTubeId, getYouTubeThumbnailUrl, type ResolvedYouTubeMetadata } from "@/lib/youtube"
 
 const instantRouteTemplates = [
@@ -134,6 +136,7 @@ export function buildCreatorVideoStateSnapshot(video: TravelVideo): CreatorVideo
     points: loadCreatorPoints(video.id, video.keyframes),
     tripRoute: loadCreatorTripRoute(video.id),
     routeShapes: video.routeShapes ?? loadCreatorRouteShapes(video.id),
+    savedPlaces: loadCreatorSavedPlaces(video.id),
   }
 }
 
@@ -144,7 +147,7 @@ export function withSyncedVideoState(video: TravelVideo, state: CreatorVideoStat
     ...video,
     status,
     keyframes,
-    locations: keyframes.map((point) => point.location),
+    locations: summarizeKeyframeLocations(keyframes),
     routeShapes: state.routeShapes,
   }
 }
@@ -255,7 +258,7 @@ export function createInstantWatchVideo({
     status: "published",
     createdAt: now,
     description: "An instant map route was generated so you can jump straight into the split-screen watch experience.",
-    locations: keyframes.map((point) => point.location),
+    locations: summarizeKeyframeLocations(keyframes),
     keyframes,
     tags,
   }
@@ -286,7 +289,7 @@ function createInstantWatchVideoFromId(id: string) {
     status: "published",
     createdAt: new Date().toISOString(),
     description: "An instant map route was generated so you can jump straight into the split-screen watch experience.",
-    locations: keyframes.map((point) => point.location),
+    locations: summarizeKeyframeLocations(keyframes),
     keyframes,
     tags,
   } satisfies TravelVideo

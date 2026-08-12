@@ -67,6 +67,36 @@ function getBestTextMatchScore(queries: string[], result: LocationSearchResult) 
   return Math.max(...queries.map((query) => getTextMatchScore(query, result)))
 }
 
+const geographicFeatureScores: Record<string, number> = {
+  country: 150,
+  region: 140,
+  state: 140,
+  province: 140,
+  place: 130,
+  city: 130,
+  town: 125,
+  municipality: 125,
+  village: 120,
+  county: 115,
+  district: 110,
+  locality: 110,
+  borough: 105,
+  suburb: 100,
+  neighborhood: 95,
+  quarter: 90,
+}
+
+function getExactGeographicMatchScore(queries: string[], result: LocationSearchResult) {
+  const featureType = normalizeSearchText(result.feature_type ?? "")
+  const featureScore = geographicFeatureScores[featureType] ?? 0
+  if (!featureScore) {
+    return 0
+  }
+
+  const normalizedText = normalizeSearchText(result.text)
+  return queries.some((query) => normalizeSearchText(query) === normalizedText) ? featureScore : 0
+}
+
 function getSourceScore(result: LocationSearchResult) {
   if (result.source === "mapbox-structured") {
     return 46
@@ -99,6 +129,7 @@ export function getResultScore(
   const bboxScore = isInsideBoundingBox(result.center, bbox) ? 34 : 0
   const countryScore = countryCode === "pk" && isPakistanCoordinate(result.center) ? 30 : 0
   const textScore = getBestTextMatchScore(queries, result)
+  const exactGeographicMatchScore = getExactGeographicMatchScore(queries, result)
   const relevanceScore = typeof result.relevance === "number" ? result.relevance * 18 : 0
   const distanceScore = proximity
     ? (() => {
@@ -123,7 +154,7 @@ export function getResultScore(
       })()
     : 0
 
-  return sourceScore + textScore + bboxScore + countryScore + distanceScore + relevanceScore
+  return sourceScore + textScore + exactGeographicMatchScore + bboxScore + countryScore + distanceScore + relevanceScore
 }
 
 export function sortResults(
@@ -152,7 +183,20 @@ export function sortResults(
 export function dedupeResults(results: LocationSearchResult[]) {
   const seen = new Set<string>()
   return results.filter((result) => {
-    const key = `${normalizeSearchText(result.text)}:${result.center[0].toFixed(4)},${result.center[1].toFixed(4)}`
+    const normalizedFeatureType = normalizeSearchText(result.feature_type ?? "")
+    const geographicGroup =
+      normalizedFeatureType === "country"
+        ? "country"
+        : ["region", "state", "province"].includes(normalizedFeatureType)
+          ? "region"
+          : ["place", "city", "town", "municipality", "village", "locality"].includes(normalizedFeatureType)
+            ? "place"
+            : ["borough", "suburb", "neighborhood", "quarter"].includes(normalizedFeatureType)
+              ? "neighborhood"
+              : null
+    const key = geographicGroup
+      ? `${geographicGroup}:${normalizeSearchText(result.place_name)}`
+      : `${normalizeSearchText(result.text)}:${result.center[0].toFixed(4)},${result.center[1].toFixed(4)}`
     if (seen.has(key)) {
       return false
     }
@@ -177,6 +221,7 @@ export function hasStrongLocalMatch(
   })
 }
 
-export function hasStrongTextMatch(query: string, results: LocationSearchResult[]) {
-  return results.some((result) => getTextMatchScore(query, result) >= 58)
+export function hasStrongTextMatch(query: string | string[], results: LocationSearchResult[]) {
+  const queries = Array.isArray(query) ? query : [query]
+  return results.some((result) => Math.max(...queries.map((candidate) => getTextMatchScore(candidate, result))) >= 58)
 }

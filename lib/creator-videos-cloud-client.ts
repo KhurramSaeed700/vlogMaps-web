@@ -153,6 +153,32 @@ export async function deleteCreatorVideoFromCloud(videoId: string) {
   }
 }
 
+export async function unpublishCreatorVideoFromCloud(videoId: string) {
+  const response = await fetch(`/api/creator/videos/${encodeURIComponent(videoId)}`, {
+    method: "PATCH",
+    cache: "no-store",
+  })
+
+  if (!response.ok) {
+    const body = await readErrorResponse(response)
+    return {
+      configured: response.status !== 503,
+      unpublished: false,
+      video: null,
+      error: body.error || getDefaultCreatorApiError(response.status),
+      status: response.status,
+    } as const
+  }
+
+  return (await response.json()) as {
+    configured: boolean
+    unpublished: boolean
+    video: TravelVideo | null
+    error?: string
+    status?: number
+  }
+}
+
 async function readErrorResponse(response: Response) {
   try {
     return (await response.json()) as { error?: string }

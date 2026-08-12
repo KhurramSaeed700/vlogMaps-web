@@ -44,6 +44,7 @@ function mapMapboxFeature(feature: MapboxFeature, source: LocationSearchSource):
       text: name,
       center: center as Coordinate,
       source,
+      feature_type: props.feature_type,
       relevance: props.relevance,
     },
   ]

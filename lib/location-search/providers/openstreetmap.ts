@@ -17,6 +17,9 @@ interface PhotonFeature {
     city?: string
     state?: string
     country?: string
+    type?: string
+    osm_key?: string
+    osm_value?: string
   }
 }
 
@@ -33,6 +36,9 @@ interface NominatimResult {
   lat?: string
   lon?: string
   boundingbox?: [string, string, string, string]
+  category?: string
+  type?: string
+  addresstype?: string
 }
 
 async function fetchPhotonResults(query: string, proximity: Coordinate | null) {
@@ -60,14 +66,13 @@ async function fetchPhotonResults(query: string, proximity: Coordinate | null) {
     const props = feature.properties ?? {}
     const name = props.name || props.street || "Unnamed place"
     const houseAndStreet = compactParts([props.housenumber, props.street]).join(" ")
-    const label = compactParts([
+    const localityParts = compactParts([
       name,
       houseAndStreet && houseAndStreet !== name ? houseAndStreet : undefined,
       props.district,
       props.city,
-      props.state,
-      props.country,
-    ]).join(", ")
+    ])
+    const label = [...localityParts, props.state, props.country].filter(Boolean).join(", ")
 
     return [
       {
@@ -76,6 +81,7 @@ async function fetchPhotonResults(query: string, proximity: Coordinate | null) {
         text: name,
         center,
         source: "photon" as const,
+        feature_type: props.type || (props.osm_key === "place" ? props.osm_value : props.osm_key),
       },
     ]
   })
@@ -130,6 +136,7 @@ async function fetchNominatimResults(query: string, countryCode: CountryCode | n
         center: [lon, lat] as Coordinate,
         bbox: bboxResult?.every((value) => Number.isFinite(value)) ? bboxResult : undefined,
         source: "nominatim" as const,
+        feature_type: result.addresstype || (result.category === "place" ? result.type : result.category),
       },
     ]
   })

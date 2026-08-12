@@ -99,10 +99,11 @@ model VideoKeyframe {
 model VideoEditorState {
   videoId     String    @id @map("video_id") @db.Uuid
   ownerUserId String    @map("owner_user_id")
-  points      Json      @default("[]")
-  tripRoute   Json      @default("{\"start\":null,\"end\":null}") @map("trip_route")
-  routeShapes Json      @default("{\"trip\":[],\"timestampLegs\":{}}") @map("route_shapes")
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+    points      Json      @default("[]")
+    tripRoute   Json      @default("{\"start\":null,\"end\":null}") @map("trip_route")
+    routeShapes Json      @default("{\"trip\":[],\"timestampLegs\":{}}") @map("route_shapes")
+    savedPlaces Json      @default("[]") @map("saved_places")
+    createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
   video       Video     @relation(fields: [videoId], references: [id], onDelete: Cascade)
 

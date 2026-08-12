@@ -3,6 +3,11 @@ import Image from "next/image"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatCompactNumber, formatDuration } from "@/lib/demo-data"
+import {
+  formatTravelDistance,
+  formatVideoReleaseDate,
+  getVideoTravelDistanceKm,
+} from "@/lib/video-trip-summary"
 import type { HydratedTravelVideo } from "@/lib/youtube-client"
 
 interface HomeVideoCardProps {
@@ -10,6 +15,10 @@ interface HomeVideoCardProps {
 }
 
 export function HomeVideoCard({ video }: HomeVideoCardProps) {
+  const distanceLabel = formatTravelDistance(getVideoTravelDistanceKm(video.keyframes))
+  const timestampLabel = `${video.keyframes.length} ${video.keyframes.length === 1 ? "timestamp" : "timestamps"}`
+  const releaseDateLabel = formatVideoReleaseDate(video.publishedAt ?? video.createdAt)
+
   return (
     <Link href={`/watch/${video.id}`} className="group block">
       <div className="space-y-3">
@@ -40,9 +49,15 @@ export function HomeVideoCard({ video }: HomeVideoCardProps) {
             <>
               <h2 className="line-clamp-2 text-[15px] font-semibold leading-5 text-foreground">{video.title}</h2>
               <p className="text-sm text-muted-foreground">{video.creator}</p>
-              <p className="text-sm text-muted-foreground">
-                {video.hasLiveViewCount ? `${formatCompactNumber(video.views)} views - ` : ""}
-                {video.locations[0] ?? "Route pending"}
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-medium text-foreground/80">
+                <span>{distanceLabel}</span>
+                <span aria-hidden="true" className="text-muted-foreground/60">&middot;</span>
+                <span>{timestampLabel}</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {releaseDateLabel}
+                <span aria-hidden="true"> &middot; </span>
+                {formatCompactNumber(video.views)} views
               </p>
             </>
           )}

@@ -17,6 +17,8 @@ interface YouTubePlayerProps {
   onReady?: (duration: number) => void
   onTimeChange?: (time: number) => void
   onPlayingChange?: (isPlaying: boolean) => void
+  onVolumeChange?: (volume: number) => void
+  onEnded?: () => void
 }
 
 interface YTPlayerInstance {
@@ -41,6 +43,8 @@ interface YTNamespace {
   Player: new (
     element: HTMLDivElement,
     options: {
+      height?: number | string
+      width?: number | string
       videoId: string
       playerVars?: Record<string, number | string>
       events?: {
@@ -154,20 +158,26 @@ export function YouTubePlayer({
   onReady,
   onTimeChange,
   onPlayingChange,
+  onVolumeChange,
+  onEnded,
 }: YouTubePlayerProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [seekFeedback, setSeekFeedback] = useState<SeekFeedback | null>(null)
+  const [volumeFeedback, setVolumeFeedback] = useState<number | null>(null)
   const playerRef = useRef<YTPlayerInstance | null>(null)
   const progressIntervalRef = useRef<number | null>(null)
   const pauseCommitTimeoutRef = useRef<number | null>(null)
   const seekFeedbackTimeoutRef = useRef<number | null>(null)
+  const volumeFeedbackTimeoutRef = useRef<number | null>(null)
   const seekHoldDelayTimeoutRef = useRef<number | null>(null)
   const seekHoldIntervalRef = useRef<number | null>(null)
   const activeSeekHoldKeyRef = useRef<"KeyJ" | "KeyL" | "ArrowLeft" | "ArrowRight" | null>(null)
   const onReadyRef = useRef(onReady)
   const onTimeChangeRef = useRef(onTimeChange)
   const onPlayingChangeRef = useRef(onPlayingChange)
+  const onVolumeChangeRef = useRef(onVolumeChange)
+  const onEndedRef = useRef(onEnded)
   const isPlayingRef = useRef(isPlaying)
   const isMutedRef = useRef(isMuted)
   const volumeRef = useRef(volume)
@@ -244,10 +254,12 @@ export function YouTubePlayer({
     onReadyRef.current = onReady
     onTimeChangeRef.current = onTimeChange
     onPlayingChangeRef.current = onPlayingChange
+    onVolumeChangeRef.current = onVolumeChange
+    onEndedRef.current = onEnded
     isPlayingRef.current = isPlaying
     isMutedRef.current = isMuted
     volumeRef.current = volume
-  }, [isMuted, isPlaying, onReady, onPlayingChange, onTimeChange, volume])
+  }, [isMuted, isPlaying, onEnded, onReady, onPlayingChange, onTimeChange, onVolumeChange, volume])
 
   const clearProgressInterval = () => {
     if (progressIntervalRef.current !== null) {
@@ -277,6 +289,13 @@ export function YouTubePlayer({
     }
   }
 
+  const clearVolumeFeedbackTimeout = () => {
+    if (volumeFeedbackTimeoutRef.current !== null) {
+      window.clearTimeout(volumeFeedbackTimeoutRef.current)
+      volumeFeedbackTimeoutRef.current = null
+    }
+  }
+
   const clearSeekHoldTimers = () => {
     if (seekHoldDelayTimeoutRef.current !== null) {
       window.clearTimeout(seekHoldDelayTimeoutRef.current)
@@ -301,6 +320,15 @@ export function YouTubePlayer({
       seekFeedbackTimeoutRef.current = null
       setSeekFeedback(null)
     }, 750)
+  }
+
+  const showVolumeFeedback = (nextVolume: number) => {
+    clearVolumeFeedbackTimeout()
+    setVolumeFeedback(nextVolume)
+    volumeFeedbackTimeoutRef.current = window.setTimeout(() => {
+      volumeFeedbackTimeoutRef.current = null
+      setVolumeFeedback(null)
+    }, 900)
   }
 
   const emitCurrentTime = () => {
@@ -403,6 +431,21 @@ export function YouTubePlayer({
     seekBySeconds(keyCode === "KeyJ" ? -10 : 10)
   }
 
+  const startKeyboardSeek = (keyCode: "KeyJ" | "KeyL" | "ArrowLeft" | "ArrowRight") => {
+    if (activeSeekHoldKeyRef.current === keyCode) {
+      return
+    }
+
+    activeSeekHoldKeyRef.current = keyCode
+    seekByKeyboardOffset(keyCode)
+    seekHoldDelayTimeoutRef.current = window.setTimeout(() => {
+      seekHoldDelayTimeoutRef.current = null
+      seekHoldIntervalRef.current = window.setInterval(() => {
+        seekByKeyboardOffset(keyCode)
+      }, 220)
+    }, 500)
+  }
+
   const togglePlaybackFromKeyboard = () => {
     const nextIsPlaying = !isPlayingRef.current
     onPlayingChangeRef.current?.(nextIsPlaying)
@@ -429,6 +472,8 @@ export function YouTubePlayer({
     const nextVolume = Math.min(Math.max(volumeRef.current + offset, 0), 100)
     volumeRef.current = nextVolume
     player.setVolume(nextVolume)
+    onVolumeChangeRef.current?.(nextVolume)
+    showVolumeFeedback(nextVolume)
 
     if (nextVolume > 0) {
       player.unMute()
@@ -500,7 +545,7 @@ export function YouTubePlayer({
       if (
         allowWatchKeyboardControls &&
         (
-          ["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "KeyF", "KeyM"].includes(event.code) ||
+          ["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "KeyF", "KeyJ", "KeyK", "KeyL", "KeyM"].includes(event.code) ||
           watchShortcutDigit !== null
         ) &&
         !event.shiftKey &&
@@ -511,7 +556,7 @@ export function YouTubePlayer({
       ) {
         event.preventDefault()
 
-        if (event.repeat && event.code === "Space") {
+        if (event.repeat && (event.code === "Space" || event.code === "KeyK")) {
           return
         }
 
@@ -522,18 +567,13 @@ export function YouTubePlayer({
           return
         }
 
-        if (event.code === "Space") {
+        if (event.code === "Space" || event.code === "KeyK") {
           togglePlaybackFromKeyboard()
           return
         }
 
-        if (event.code === "ArrowLeft") {
-          seekBySeconds(-5)
-          return
-        }
-
-        if (event.code === "ArrowRight") {
-          seekBySeconds(5)
+        if (event.code === "ArrowLeft" || event.code === "ArrowRight" || event.code === "KeyJ" || event.code === "KeyL") {
+          startKeyboardSeek(event.code)
           return
         }
 
@@ -564,7 +604,7 @@ export function YouTubePlayer({
 
       if (
         !allowKeyboard ||
-        !["ArrowLeft", "ArrowRight", "KeyJ", "KeyK", "KeyL"].includes(event.code) ||
+        !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "KeyF", "KeyJ", "KeyK", "KeyL", "KeyM"].includes(event.code) ||
         event.shiftKey ||
         event.altKey ||
         event.ctrlKey ||
@@ -576,20 +616,31 @@ export function YouTubePlayer({
 
       event.preventDefault()
 
+      if (event.code === "ArrowUp" || event.code === "ArrowDown") {
+        adjustVolumeFromKeyboard(event.code === "ArrowUp" ? 5 : -5)
+        return
+      }
+
+      if (event.code === "KeyF") {
+        if (!event.repeat) {
+          toggleFullscreenFromKeyboard()
+        }
+        return
+      }
+
+      if (event.code === "KeyM") {
+        if (!event.repeat) {
+          toggleMuteFromKeyboard()
+        }
+        return
+      }
+
       if (event.code === "ArrowLeft" || event.code === "ArrowRight" || event.code === "KeyJ" || event.code === "KeyL") {
-        if (event.repeat || activeSeekHoldKeyRef.current === event.code) {
+        if (event.repeat) {
           return
         }
 
-        const keyCode = event.code
-        activeSeekHoldKeyRef.current = keyCode
-        seekByKeyboardOffset(keyCode)
-        seekHoldDelayTimeoutRef.current = window.setTimeout(() => {
-          seekHoldDelayTimeoutRef.current = null
-          seekHoldIntervalRef.current = window.setInterval(() => {
-            seekByKeyboardOffset(keyCode)
-          }, 220)
-        }, 500)
+        startKeyboardSeek(event.code)
         return
       }
 
@@ -619,13 +670,16 @@ export function YouTubePlayer({
 
   useEffect(() => {
     let isMounted = true
+    let createdPlayer: YTPlayerInstance | null = null
 
     loadYouTubeApi().then((YT) => {
       if (!containerRef.current || !isMounted) {
         return
       }
 
-      const player = new YT.Player(containerRef.current, {
+      createdPlayer = new YT.Player(containerRef.current, {
+        height: "100%",
+        width: "100%",
         videoId,
         playerVars: {
           controls: showControls ? 1 : 0,
@@ -637,6 +691,10 @@ export function YouTubePlayer({
         },
         events: {
           onReady: (event) => {
+            if (!isMounted) {
+              event.target.destroy()
+              return
+            }
             playerRef.current = event.target
             event.target.setVolume(volumeRef.current)
             if (isMutedRef.current) {
@@ -682,6 +740,7 @@ export function YouTubePlayer({
               clearPauseCommitTimeout()
               onPlayingChangeRef.current?.(false)
               onTimeChangeRef.current?.(event.target.getCurrentTime())
+              onEndedRef.current?.()
             }
 
             if (event.data === YT.PlayerState.PAUSED) {
@@ -701,7 +760,6 @@ export function YouTubePlayer({
         },
       })
 
-      playerRef.current = player
     })
 
     return () => {
@@ -710,9 +768,10 @@ export function YouTubePlayer({
       clearSeekPollTimeout()
       clearPauseCommitTimeout()
       clearSeekFeedbackTimeout()
+      clearVolumeFeedbackTimeout()
       clearSeekHoldTimers()
       pendingSeekRef.current = null
-      playerRef.current?.destroy()
+      createdPlayer?.destroy()
       playerRef.current = null
     }
   }, [allowKeyboard, allowWatchKeyboardControls, autoPlay, showControls, videoId])
@@ -771,7 +830,11 @@ export function YouTubePlayer({
   }, [isMuted])
 
   return (
-    <div ref={wrapperRef} tabIndex={-1} className="relative h-full w-full">
+    <div
+      ref={wrapperRef}
+      tabIndex={-1}
+      className="relative h-full w-full [&_iframe]:block [&_iframe]:h-full [&_iframe]:w-full"
+    >
       <div ref={containerRef} className="h-full w-full" />
       {seekFeedback && (
         <div
@@ -781,6 +844,28 @@ export function YouTubePlayer({
           }`}
         >
           {seekFeedback.label}
+        </div>
+      )}
+      {volumeFeedback !== null && (
+        <div
+          aria-live="polite"
+          className="pointer-events-none absolute left-1/2 top-4 z-10 w-40 -translate-x-1/2 rounded-lg bg-black/75 px-3 py-2 text-white shadow-lg ring-1 ring-white/15 backdrop-blur-sm"
+        >
+          <div className="flex items-center justify-between gap-3 text-xs font-semibold">
+            <span>Volume</span>
+            <span className="tabular-nums">{volumeFeedback}%</span>
+          </div>
+          <div className="relative mt-2 h-2 overflow-visible rounded-full bg-white/35 ring-1 ring-white/20">
+            <div
+              className="h-full rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.8)] transition-[width] duration-100"
+              style={{ width: `${volumeFeedback}%` }}
+            />
+            <span
+              aria-hidden="true"
+              className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-orange-500 shadow-md transition-[left] duration-100"
+              style={{ left: `${volumeFeedback}%` }}
+            />
+          </div>
         </div>
       )}
     </div>

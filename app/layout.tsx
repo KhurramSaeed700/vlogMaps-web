@@ -2,6 +2,7 @@ import type React from "react"
 import { Inter } from "next/font/google"
 import { ThemeProvider } from "@/components/app-shell/theme-provider"
 import { ClerkProviderWrapper } from "@/components/auth/clerk-provider-wrapper"
+import { Toaster } from "@/components/ui/sonner"
 import "./globals.css"
 
 const inter = Inter({ subsets: ["latin"] })
@@ -22,6 +23,7 @@ export default function RootLayout({
       <body className={`${inter.className} bg-background text-foreground`}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <ClerkProviderWrapper>{children}</ClerkProviderWrapper>
+          <Toaster />
         </ThemeProvider>
       </body>
     </html>

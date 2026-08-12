@@ -19,6 +19,58 @@ export function parseCoordinate(value: string | null): Coordinate | null {
   return Number.isFinite(lng) && Number.isFinite(lat) ? [lng, lat] : null
 }
 
+const locationCoordinateQueryPattern = /^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(?:,|\s)\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*$/
+
+/**
+ * Parses coordinates copied from mapping apps. The common latitude, longitude
+ * order wins when both values could be valid latitudes; an unambiguous
+ * longitude-first pair (for example 120, 30) is also accepted.
+ */
+export function parseLocationCoordinateQuery(value: string): Coordinate | null {
+  const match = locationCoordinateQueryPattern.exec(value)
+  if (!match) {
+    return null
+  }
+
+  const first = Number(match[1])
+  const second = Number(match[2])
+  if (!Number.isFinite(first) || !Number.isFinite(second)) {
+    return null
+  }
+
+  if (Math.abs(first) <= 90 && Math.abs(second) <= 180) {
+    return [second, first]
+  }
+
+  if (Math.abs(first) <= 180 && Math.abs(second) <= 90) {
+    return [first, second]
+  }
+
+  return null
+}
+
+function formatCoordinate(value: number) {
+  return value.toFixed(6).replace(/\.?0+$/, "")
+}
+
+export function getCoordinateSearchResult(query: string) {
+  const center = parseLocationCoordinateQuery(query)
+  if (!center) {
+    return null
+  }
+
+  const [lng, lat] = center
+  const label = `${formatCoordinate(lat)}, ${formatCoordinate(lng)}`
+  return {
+    id: `coordinates:${lat}:${lng}`,
+    place_name: label,
+    text: "Coordinates",
+    center,
+    source: "coordinates" as const,
+    relevance: 1,
+  }
+}
+
 export function parseBoundingBox(value: string | null): BoundingBox | null {
   if (!value) {
     return null
@@ -140,6 +192,7 @@ export function levenshteinDistance(left: string, right: string) {
 
 function stripAddressNoise(value: string) {
   return value
+    .replace(/\s+(?:#|suite\s+|ste\s+|unit\s+|apt\s*)[a-z0-9-]+\b/gi, " ")
     .replace(/["'`\\]/g, " ")
     .replace(/\b\d{4,6}\b/g, " ")
     .replace(/\bpakistan\b/gi, " ")
@@ -165,8 +218,8 @@ export function parseCopiedAddress(rawQuery: string): ParsedAddress {
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean)
-  const countryPart = parts.find((part) => /\bpakistan\b/i.test(part))
-  const postcode = parts.find((part) => /^\d{4,6}$/.test(part)) ?? null
+  const countryPart = parts.find((part) => /\b(?:pakistan|united states(?: of america)?|usa|u\.s\.a\.)\b/i.test(part))
+  const postcode = parts.map((part) => part.match(/\b\d{4,6}(?:-\d{4})?\b/)?.[0]).find(Boolean) ?? null
   const usefulParts = parts.filter((part) => part !== countryPart && part !== postcode)
 
   return {
@@ -175,7 +228,7 @@ export function parseCopiedAddress(rawQuery: string): ParsedAddress {
     primary: usefulParts[0] ?? null,
     place: usefulParts[1] ?? null,
     postcode,
-    countryCode: countryPart ? "pk" : null,
+    countryCode: countryPart ? (/pakistan/i.test(countryPart) ? "pk" : "us") : null,
   }
 }
 
@@ -244,4 +297,9 @@ export function getTypoTolerantQueries(query: string) {
 
 export function isLikelyCompleteAddress(query: string) {
   return query.includes(",") || /\b\d{4,6}\b/.test(query) || query.trim().split(/\s+/).length >= 3
+}
+
+export function isPastedPostalAddress(query: string) {
+  const parsedAddress = parseCopiedAddress(query)
+  return Boolean(parsedAddress.primary && /\d/.test(parsedAddress.primary) && parsedAddress.place && (parsedAddress.postcode || parsedAddress.parts.length >= 3))
 }

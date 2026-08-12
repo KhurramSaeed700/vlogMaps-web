@@ -1,12 +1,14 @@
 import { z } from "zod"
 import type { CreatorVideoState } from "@/lib/creator-video-state"
 import type { TravelVideo } from "@/lib/demo-data"
+import { maxVideoLocationSummaries, summarizeVideoLocations } from "@/lib/video-locations"
 
 const youtubeIdPattern = /^[a-zA-Z0-9_-]{11}$/
 const maxCreatorPoints = 300
 const maxRouteShapePoints = 2500
 const maxTimestampRouteLegs = 300
 const maxStringArrayItems = 40
+const maxSavedPlaces = 100
 
 const safeText = (max: number) => z.string().trim().max(max)
 const nonNegativeFiniteNumber = z.number().finite().min(0)
@@ -27,10 +29,14 @@ const videoKeyframeSchema = z
     location: safeText(255).default("Saved location"),
     description: safeText(1000).default(""),
     pointType: z.enum(["point", "stop", "flight"]).default("point"),
+    flightId: safeText(160).optional(),
+    flightPhase: z.enum(["takeoff", "landing"]).optional(),
   })
   .transform((point) => ({
     ...point,
     stopEndTime: point.pointType === "stop" && point.stopEndTime && point.stopEndTime > point.time ? point.stopEndTime : undefined,
+    flightId: point.pointType === "flight" ? point.flightId : undefined,
+    flightPhase: point.pointType === "flight" ? point.flightPhase : undefined,
   }))
 
 const creatorPointSchema = videoKeyframeSchema.and(
@@ -75,11 +81,27 @@ const routeShapesSchema = z
     }
   })
 
+const savedPlaceSchema = z.object({
+  id: safeText(160).min(1),
+  name: safeText(120).min(1),
+  lat: latitude,
+  lng: longitude,
+})
+
 const creatorVideoStateSchema = z.object({
   points: z.array(creatorPointSchema).max(maxCreatorPoints),
   tripRoute: tripRouteSchema,
   routeShapes: routeShapesSchema,
+  savedPlaces: z.array(savedPlaceSchema).max(maxSavedPlaces).default([]),
 })
+
+const videoLocationsSchema = z.preprocess(
+  (value) =>
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+      ? summarizeVideoLocations(value)
+      : value,
+  z.array(safeText(255)).max(maxVideoLocationSummaries).default([]),
+)
 
 const travelVideoSchema = z.object({
   id: safeText(160).min(1),
@@ -95,7 +117,7 @@ const travelVideoSchema = z.object({
   status: z.enum(["draft", "published"]).default("draft"),
   createdAt: safeText(64).default(() => new Date().toISOString()),
   description: safeText(5000).default(""),
-  locations: z.array(safeText(255)).max(maxStringArrayItems).default([]),
+  locations: videoLocationsSchema,
   keyframes: z.array(videoKeyframeSchema).max(maxCreatorPoints).default([]),
   tags: z.array(safeText(80)).max(maxStringArrayItems).default([]),
 })

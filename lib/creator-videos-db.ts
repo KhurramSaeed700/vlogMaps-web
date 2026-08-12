@@ -5,6 +5,7 @@ import type { CreatorVideoState } from "@/lib/creator-video-state"
 import { getPrisma } from "@/lib/prisma"
 import { isDatabaseConfigured } from "@/lib/database"
 import type { TravelVideo, VideoKeyframe as TravelVideoKeyframe } from "@/lib/demo-data"
+import { summarizeKeyframeLocations, summarizeVideoLocations } from "@/lib/video-locations"
 
 type VideoWithRoute = Video & {
   editorState: VideoEditorState | null
@@ -54,6 +55,10 @@ function asStringArray(value: Prisma.JsonValue | null | undefined) {
 
 function asCreatorPoints(value: Prisma.JsonValue | null | undefined) {
   return Array.isArray(value) ? (value as unknown as CreatorVideoState["points"]) : []
+}
+
+function asSavedPlaces(value: Prisma.JsonValue | null | undefined) {
+  return Array.isArray(value) ? (value as unknown as CreatorVideoState["savedPlaces"]) : []
 }
 
 function toJsonInput(value: unknown) {
@@ -129,7 +134,10 @@ function rowToTravelVideo(video: VideoWithRoute, options: RowToTravelVideoOption
     status: video.status === "published" ? "published" : "draft",
     createdAt: (video.createdAt ?? new Date()).toISOString(),
     description: video.description || "",
-    locations: asStringArray(video.locations).length > 0 ? asStringArray(video.locations) : keyframes.map((point) => point.location),
+    locations:
+      asStringArray(video.locations).length > 0
+        ? summarizeVideoLocations(asStringArray(video.locations))
+        : summarizeKeyframeLocations(keyframes),
     keyframes,
     routeShapes: video.editorState ? asRouteShapes(video.editorState.routeShapes) : undefined,
     tags: asStringArray(video.tags),
@@ -208,7 +216,7 @@ export async function saveCreatorVideoToDb({
             description: video.description,
             creatorName: video.creator,
             creatorChannelUrl: video.creatorChannelUrl,
-            locations: keyframes.map((point) => point.location),
+            locations: summarizeKeyframeLocations(keyframes),
             tags: video.tags ?? [],
           },
         })
@@ -227,7 +235,7 @@ export async function saveCreatorVideoToDb({
             description: video.description,
             creatorName: video.creator,
             creatorChannelUrl: video.creatorChannelUrl,
-            locations: keyframes.map((point) => point.location),
+            locations: summarizeKeyframeLocations(keyframes),
             tags: video.tags ?? [],
           },
         })
@@ -243,11 +251,13 @@ export async function saveCreatorVideoToDb({
           points: toJsonInput(state.points),
           tripRoute: toJsonInput(state.tripRoute),
           routeShapes: toJsonInput(state.routeShapes),
+          savedPlaces: toJsonInput(state.savedPlaces),
         },
         update: {
           points: toJsonInput(state.points),
           tripRoute: toJsonInput(state.tripRoute),
           routeShapes: toJsonInput(state.routeShapes),
+          savedPlaces: toJsonInput(state.savedPlaces),
           updatedAt: new Date(),
         },
       })
@@ -331,28 +341,24 @@ export async function getCreatorVideoFromDb(videoId: string, requesterUserId?: s
     return null
   }
 
-  try {
-    const video = await prisma.video.findFirst({
-      where: {
-        AND: [
-          getVideoLookup(videoId),
-          {
-            OR: [{ status: "published" }, { ownerUserId: requesterUserId ?? "" }, { ownerUserId: catalogOwnerUserId }],
-          },
-        ],
-      },
-      include: {
-        editorState: true,
-        keyframes: {
-          orderBy: { timestampSeconds: "asc" },
+  const video = await prisma.video.findFirst({
+    where: {
+      AND: [
+        getVideoLookup(videoId),
+        {
+          OR: [{ status: "published" }, { ownerUserId: requesterUserId ?? "" }, { ownerUserId: catalogOwnerUserId }],
         },
+      ],
+    },
+    include: {
+      editorState: true,
+      keyframes: {
+        orderBy: { timestampSeconds: "asc" },
       },
-    })
+    },
+  })
 
-    return video ? rowToTravelVideo(video) : null
-  } catch {
-    return null
-  }
+  return video ? rowToTravelVideo(video) : null
 }
 
 export async function getOwnedCreatorVideoFromDb(videoId: string, ownerUserIds: OwnerUserIdInput) {
@@ -426,6 +432,46 @@ export async function deleteCreatorVideoFromDb(videoId: string, ownerUserIds: Ow
   return true
 }
 
+export async function unpublishCreatorVideoFromDb(videoId: string, ownerUserIds: OwnerUserIdInput) {
+  const prisma = getPrisma()
+  if (!prisma) {
+    return null
+  }
+  const editableOwnerUserIds = normalizeOwnerUserIds(ownerUserIds)
+  if (editableOwnerUserIds.length === 0) {
+    return null
+  }
+
+  const video = await prisma.video.findFirst({
+    where: {
+      AND: [getVideoLookup(videoId), { ownerUserId: { in: editableOwnerUserIds } }],
+    },
+    select: {
+      id: true,
+    },
+  })
+
+  if (!video) {
+    return null
+  }
+
+  const unpublishedVideo = await prisma.video.update({
+    where: { id: video.id },
+    data: {
+      status: "draft",
+      updatedAt: new Date(),
+    },
+    include: {
+      editorState: true,
+      keyframes: {
+        orderBy: { timestampSeconds: "asc" },
+      },
+    },
+  })
+
+  return rowToTravelVideo(unpublishedVideo, { editableOwnerUserIds })
+}
+
 export async function getCreatorVideoStateFromDb(videoId: string, ownerUserIds: OwnerUserIdInput) {
   const prisma = getPrisma()
   if (!prisma) {
@@ -454,6 +500,7 @@ export async function getCreatorVideoStateFromDb(videoId: string, ownerUserIds: 
       points: asCreatorPoints(video.editorState.points),
       tripRoute: asTripRoute(video.editorState.tripRoute),
       routeShapes: asRouteShapes(video.editorState.routeShapes),
+      savedPlaces: asSavedPlaces(video.editorState.savedPlaces),
     },
     updatedAt: video.editorState.updatedAt.toISOString(),
   }
@@ -505,7 +552,7 @@ export async function saveCreatorVideoStateForVideoId(
     await tx.video.update({
       where: { id: video.id },
       data: {
-        locations: keyframes.map((point) => point.location),
+        locations: summarizeKeyframeLocations(keyframes),
         updatedAt: new Date(),
       },
     })
@@ -518,11 +565,13 @@ export async function saveCreatorVideoStateForVideoId(
         points: toJsonInput(state.points),
         tripRoute: toJsonInput(state.tripRoute),
         routeShapes: toJsonInput(state.routeShapes),
+        savedPlaces: toJsonInput(state.savedPlaces),
       },
       update: {
         points: toJsonInput(state.points),
         tripRoute: toJsonInput(state.tripRoute),
         routeShapes: toJsonInput(state.routeShapes),
+        savedPlaces: toJsonInput(state.savedPlaces),
         updatedAt: new Date(),
       },
     })

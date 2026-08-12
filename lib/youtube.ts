@@ -51,6 +51,7 @@ export interface ResolvedYouTubeMetadata {
   durationSeconds: number | null
   views: number | null
   likes: number | null
+  publishedAt: string | null
   source: "youtube-data-api" | "youtube-oembed"
 }
 
@@ -64,6 +65,7 @@ interface YouTubeDataApiVideo {
     description?: string
     channelId?: string
     channelTitle?: string
+    publishedAt?: string
     thumbnails?: Record<string, YouTubeThumbnailVariant>
   }
   contentDetails?: {
@@ -160,6 +162,7 @@ async function fetchOEmbedMetadata(videoId: string): Promise<ResolvedYouTubeMeta
     durationSeconds: null,
     views: null,
     likes: null,
+    publishedAt: null,
     source: "youtube-oembed",
   }
 }
@@ -190,6 +193,7 @@ async function fetchYouTubeDataApiMetadata(videoId: string, apiKey: string): Pro
     durationSeconds: item.contentDetails?.duration ? parseIso8601Duration(item.contentDetails.duration) : null,
     views: item.statistics?.viewCount ? Number(item.statistics.viewCount) : null,
     likes: item.statistics?.likeCount ? Number(item.statistics.likeCount) : null,
+    publishedAt: item.snippet.publishedAt || null,
     source: "youtube-data-api",
   }
 }

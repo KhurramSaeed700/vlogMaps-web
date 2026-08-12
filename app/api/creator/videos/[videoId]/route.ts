@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server"
-import { deleteCreatorVideoFromDb, getOwnedCreatorVideoFromDb, isCreatorVideosDbConfigured } from "@/lib/creator-videos-db"
+import {
+  deleteCreatorVideoFromDb,
+  getOwnedCreatorVideoFromDb,
+  isCreatorVideosDbConfigured,
+  unpublishCreatorVideoFromDb,
+} from "@/lib/creator-videos-db"
 import { CreatorAuthorizationError, requireApprovedCreator } from "@/lib/server-creator-auth"
 
 export const dynamic = "force-dynamic"
@@ -57,5 +62,34 @@ export async function DELETE(_request: Request, context: RouteContext) {
   return NextResponse.json({
     configured: true,
     deleted,
+  })
+}
+
+export async function PATCH(_request: Request, context: RouteContext) {
+  let creator
+  try {
+    creator = await requireApprovedCreator()
+  } catch (error) {
+    return creatorVideoRouteErrorResponse(error)
+  }
+
+  if (!isCreatorVideosDbConfigured()) {
+    return NextResponse.json({ configured: false, unpublished: false, video: null }, { status: 503 })
+  }
+
+  const { videoId } = await context.params
+  const video = await unpublishCreatorVideoFromDb(videoId, creator.ownerUserIds)
+
+  if (!video) {
+    return NextResponse.json(
+      { configured: true, unpublished: false, video: null, error: "Video not found." },
+      { status: 404 },
+    )
+  }
+
+  return NextResponse.json({
+    configured: true,
+    unpublished: true,
+    video,
   })
 }

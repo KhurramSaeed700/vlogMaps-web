@@ -46,6 +46,7 @@ function readLegacyCreatorState(video: TravelVideo): CreatorVideoState {
     points: Array.isArray(points) && points.length > 0 ? points : toCreatorMapPoints(video.id, video.keyframes),
     tripRoute: tripRoute ?? emptyCreatorTripRoute,
     routeShapes: routeShapes ?? video.routeShapes ?? emptyCreatorRouteShapes,
+    savedPlaces: [],
   }
 }
 
