@@ -213,7 +213,10 @@ const visualCoordinatePausedSmoothingMs = 90
 const visualPlaybackPlayingSnapThresholdSeconds = 0.003
 const visualPlaybackPausedSnapThresholdSeconds = 0.01
 const visualCatchUpDurationMs = 1100
-const realtimeCameraSnapDistanceKm = 120
+// Fast travel enters one stable overview instead of chasing the traveler with
+// the camera. A lower threshold makes that one-time transition immediate while
+// the static viewport prevents any further cross-region tile churn.
+const realtimeCameraSnapDistanceKm = 40
 const seekOverviewDurationMs = 1650
 const seekOverviewZoomOutFraction = 0.34
 const seekOverviewPaddingRatio = 0.24
@@ -1435,7 +1438,6 @@ function getFlightOverviewCameraTarget(
           map.getMinZoom(),
         )
       : null
-  const flightCenter = currentTime <= flightLeg.fromTime ? flightStart : currentCoordinate
   const landingCenterProgress = Math.sqrt(landingApproachProgress)
   const landingZoomProgress = clampNumber(
     (landingApproachProgress - 0.18) / 0.82,
@@ -1453,11 +1455,11 @@ function getFlightOverviewCameraTarget(
         // of zooming into the trailing midpoint and panning to the airport later.
         center: landingApproachTarget
           ? interpolateCoordinate(
-              landingApproachTarget.center,
+              target.center,
               flightEnd,
               landingCenterProgress,
             )
-          : flightCenter,
+          : target.center,
         zoom: landingApproachTarget
           ? interpolateNumber(
               target.zoom,
@@ -1494,7 +1496,10 @@ function getRapidLandOverviewCameraTarget(
 
   return target
     ? ({
-        center: currentCoordinate,
+        // Hold the full rapid leg in one viewport. The traveler remains tied
+        // directly to video time, but Mapbox no longer loads every intermediate
+        // region just because the camera was following it frame by frame.
+        center: target.center,
         zoom: clampNumber(
           target.zoom,
           Math.max(map.getMinZoom(), sharedRapidLandCameraMotion.minZoom),
@@ -3675,7 +3680,7 @@ export function MapboxTravelMap({
       )
       const shouldSnapRealtimeCamera =
         isRealtimeMotion &&
-        (isCameraOverview || realtimeCameraDistanceKm >= realtimeCameraSnapDistanceKm)
+        realtimeCameraDistanceKm >= realtimeCameraSnapDistanceKm
       effectiveCameraZoomTarget =
         !isCatchUp &&
         !isCameraOverview &&
@@ -3701,6 +3706,8 @@ export function MapboxTravelMap({
         Math.abs(nextZoom - effectiveCameraZoomTarget) < 0.015
           ? effectiveCameraZoomTarget
           : nextZoom
+      const previousCameraCenter = animatedCameraCenterRef.current
+      const previousCameraZoom = animatedCameraZoomRef.current
       animatedCameraZoomRef.current = snappedZoom
       effectiveCameraCenterTarget = desiredCenter
       const plannedCenterSmoothingMs = interpolateNumber(
@@ -3744,12 +3751,18 @@ export function MapboxTravelMap({
           : nextCenter
       animatedCameraCenterRef.current = snappedCenter
 
-      try {
-        runAutomatedCameraUpdate(() => {
-          map.jumpTo({ center: snappedCenter, zoom: snappedZoom })
-        })
-      } catch {
-        // Skip this frame and let the next one retry once the map settles.
+      const cameraChanged =
+        coordinateDistance(previousCameraCenter, snappedCenter) >= 0.000001 ||
+        Math.abs(previousCameraZoom - snappedZoom) >= 0.001
+
+      if (cameraChanged) {
+        try {
+          runAutomatedCameraUpdate(() => {
+            map.jumpTo({ center: snappedCenter, zoom: snappedZoom })
+          })
+        } catch {
+          // Skip this frame and let the next one retry once the map settles.
+        }
       }
     } else if (map) {
       const center = map.getCenter()

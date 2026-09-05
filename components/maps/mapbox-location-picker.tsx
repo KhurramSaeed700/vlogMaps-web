@@ -84,7 +84,9 @@ const editorTravelerTrackingCenterFastMs = sharedMapNavigationMotion.centerFastM
 const editorTravelerTrackingCenterCatchUpMs = sharedMapNavigationMotion.centerCatchUpMs
 const editorTravelerTrackingCenterCatchUpStartKm = 0.45
 const editorTravelerTrackingCenterCatchUpFullKm = 2.8
-const editorTravelerTrackingRealtimeSnapKm = 120
+// Fast travel uses a stable low-zoom overview. This threshold only governs the
+// one-time jump into that viewport; it no longer fires on every animation frame.
+const editorTravelerTrackingRealtimeSnapKm = 40
 const editorTravelerTrackingZoomOutMs = sharedMapNavigationMotion.zoomOutMs
 const editorTravelerTrackingZoomInMs = sharedMapNavigationMotion.zoomInMs
 const editorTravelerTrackingZoomCatchUpMs = sharedMapNavigationMotion.zoomCatchUpMs
@@ -1417,13 +1419,20 @@ export function MapboxLocationPicker({
     const landingCenter = landingCamera?.center
       ? mapboxgl.LngLat.convert(landingCamera.center)
       : null
+    const overviewLngLat = mapboxgl.LngLat.convert(camera.center)
+    const overviewCenter: RouteCoordinate = [overviewLngLat.lng, overviewLngLat.lat]
+    const landingCenterProgress = Math.sqrt(landingApproachProgress)
+
     return {
-      center:
-        landingCenter
-          ? [landingCenter.lng, landingCenter.lat]
-          : progressTime <= flightSegment.fromTime
-            ? flightStart
-            : activeTravelerCoordinate,
+      // Keep the whole flight in a single, already-loaded viewport. Only begin
+      // moving the camera toward the airport during the landing approach.
+      center: landingCenter
+        ? interpolateRouteCoordinate(
+            overviewCenter,
+            flightEnd,
+            landingCenterProgress,
+          )
+        : overviewCenter,
       zoom: clampNumber(
         landingCamera?.zoom !== undefined
           ? landingCamera.zoom
@@ -1466,12 +1475,16 @@ export function MapboxLocationPicker({
       },
       maxZoom: Math.min(map.getMaxZoom(), sharedRapidLandCameraMotion.maxZoom),
     })
-    if (typeof camera?.zoom !== "number") {
+    if (!camera?.center || typeof camera.zoom !== "number") {
       return null
     }
 
+    const overviewCenter = mapboxgl.LngLat.convert(camera.center)
+
     return {
-      center: travelerCoordinate,
+      // The traveler moves through this fixed overview; the camera does not
+      // trigger a fresh set of regional tiles for every playback sample.
+      center: [overviewCenter.lng, overviewCenter.lat],
       zoom: clampNumber(
         camera.zoom,
         Math.max(map.getMinZoom(), sharedRapidLandCameraMotion.minZoom),
@@ -1941,9 +1954,7 @@ export function MapboxLocationPicker({
         const targetDistanceKm = haversineDistance(currentCenter, targetCenter)
         const shouldSnapRealtimeCamera =
           isRealtimeMotion &&
-          (isFlightOverview ||
-            isRapidLandOverview ||
-            targetDistanceKm >= editorTravelerTrackingRealtimeSnapKm)
+          targetDistanceKm >= editorTravelerTrackingRealtimeSnapKm
         const catchUpProgress = easeInOut(
           (targetDistanceKm - editorTravelerTrackingCenterCatchUpStartKm) /
             (editorTravelerTrackingCenterCatchUpFullKm -
@@ -2004,12 +2015,18 @@ export function MapboxLocationPicker({
             ? targetZoom
             : currentZoom + (targetZoom - currentZoom) * zoomSmoothing
 
+        const cameraChanged =
+          haversineDistance(currentCenter, nextCenter) >= 0.0001 ||
+          Math.abs(currentZoom - nextZoom) >= 0.001
+
         trackingCameraCenterRef.current = nextCenter
         trackingCameraZoomRef.current = nextZoom
-        activeMap.jumpTo({
-          center: nextCenter,
-          zoom: nextZoom,
-        })
+        if (cameraChanged) {
+          activeMap.jumpTo({
+            center: nextCenter,
+            zoom: nextZoom,
+          })
+        }
       } else if (trackingLoadingStartedAtRef.current !== null) {
         updateTrackingLoadingState({
           label: "Resolving route",
