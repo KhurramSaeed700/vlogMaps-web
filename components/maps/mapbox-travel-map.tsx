@@ -21,6 +21,7 @@ import {
   updateFlightAirplaneMarkerElement,
 } from "@/components/maps/flight-airplane-marker"
 import { hasMapboxAccessToken, mapboxAccessToken } from "@/lib/mapbox"
+import { buildCameraZoomPlan, getCameraPlanZoom, type CameraZoomWindow } from "@/lib/map-camera-plan"
 import { getFlightRouteKeyframes } from "@/lib/flight-path"
 import { getTimestampLegKey, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
 import { getCoordinateSearchResult } from "@/lib/location-search/query-utils"
@@ -213,14 +214,6 @@ const visualCoordinatePausedSmoothingMs = 90
 const visualPlaybackPlayingSnapThresholdSeconds = 0.003
 const visualPlaybackPausedSnapThresholdSeconds = 0.01
 const visualCatchUpDurationMs = 1100
-// Fast travel enters one stable overview instead of chasing the traveler with
-// the camera. A lower threshold makes that one-time transition immediate while
-// the static viewport prevents any further cross-region tile churn.
-const realtimeCameraSnapDistanceKm = 40
-const seekOverviewDurationMs = 1650
-const seekOverviewZoomOutFraction = 0.34
-const seekOverviewPaddingRatio = 0.24
-const seekOverviewMaxZoom = 9.2
 const routeDataReconcileCatchUpDurationMs = 420
 const visualHardSeekSnapSeconds = 18
 const visualHardSeekSnapDistanceKm = 18
@@ -1740,28 +1733,6 @@ function getDynamicCameraTarget(
   currentCoordinate: RouteCoordinate,
   fallbackZoom = defaultFollowZoom,
 ): CameraTarget {
-  const flightOverviewTarget = getFlightOverviewCameraTarget(
-    map,
-    legs,
-    currentTime,
-    currentCoordinate,
-    fallbackZoom,
-  )
-  if (flightOverviewTarget) {
-    return flightOverviewTarget
-  }
-
-  const rapidLandOverviewTarget = getRapidLandOverviewCameraTarget(
-    map,
-    legs,
-    currentTime,
-    currentCoordinate,
-    fallbackZoom,
-  )
-  if (rapidLandOverviewTarget) {
-    return rapidLandOverviewTarget
-  }
-
   const motionContext = getRouteMotionContext(legs, currentTime)
   const focusCoordinate = getCameraFocusCoordinate(legs, currentTime, currentCoordinate, motionContext)
 
@@ -2347,7 +2318,9 @@ function hasUsableMapSize(map: mapboxgl.Map) {
 }
 
 function canUpdateCamera(map: mapboxgl.Map) {
-  return hasUsableMapSize(map) && map.isStyleLoaded()
+  // isStyleLoaded also waits for source tiles. Camera transforms must continue
+  // while tiles load, otherwise each new viewport stalls video tracking.
+  return hasUsableMapSize(map)
 }
 
 function hasOriginalMapEvent(event: unknown) {
@@ -2410,6 +2383,7 @@ export function MapboxTravelMap({
   const routeCoordinatesRef = useRef<RouteCoordinate[]>([])
   const positionedLegsRef = useRef<PositionedRoutedLeg[]>([])
   const cameraTimelineRef = useRef<CameraTimelineEntry[]>([])
+  const cameraZoomPlanRef = useRef<CameraZoomWindow[]>([])
   const contextualZoomCacheRef = useRef<ContextualZoomCacheEntry | null>(null)
   const routeLayersReadyRef = useRef(false)
   const routeRevealTimeRef = useRef(0)
@@ -2424,10 +2398,6 @@ export function MapboxTravelMap({
   const animatedCameraZoomRef = useRef(defaultFollowZoom)
   const targetCameraSpeedProgressRef = useRef(0)
   const targetCameraModeRef = useRef<CameraTarget["mode"]>("follow")
-  const seekOverviewTargetRef = useRef<CameraTarget | null>(null)
-  const seekOverviewUntilRef = useRef(0)
-  const seekOverviewStartedAtRef = useRef(0)
-  const seekOverviewOriginCenterRef = useRef<RouteCoordinate | null>(null)
   const followZoomOffsetRef = useRef(readStoredFollowZoomOffset(followZoomPreferenceKey))
   const isAutomatedCameraUpdateRef = useRef(false)
   const isUserZoomingWhileFollowingRef = useRef(false)
@@ -2508,6 +2478,16 @@ export function MapboxTravelMap({
     currentCoordinate: RouteCoordinate,
     fallbackZoom = defaultFollowZoom,
   ) => {
+    const plannedZoom = getCameraPlanZoom(cameraZoomPlanRef.current, currentTime)
+    if (plannedZoom !== null) {
+      return {
+        center: currentCoordinate,
+        zoom: plannedZoom,
+        mode: "flight-overview",
+        speedProgress: 1,
+        departureProgress: 1,
+      } satisfies AutomaticCameraTarget
+    }
     const timelineTarget = getCameraTimelineTargetAtTime(cameraTimelineRef.current, currentTime)
     const automaticTarget: AutomaticCameraTarget = timelineTarget
       ? ({
@@ -2583,6 +2563,19 @@ export function MapboxTravelMap({
     }
 
     cameraTimelineRef.current = buildCameraTimeline(map, positionedLegsRef.current)
+    const container = map.getContainer()
+    cameraZoomPlanRef.current = buildCameraZoomPlan(positionedLegsRef.current, {
+      width: container.clientWidth, height: container.clientHeight,
+      minZoom: map.getMinZoom(), maxZoom: map.getMaxZoom(),
+    }, (time) => {
+      const coordinate = getRouteCoordinateAtTime(positionedLegsRef.current, time)
+      if (!coordinate) return defaultFollowZoom
+      return getPreferredFollowZoom(getContextualFollowZoom(
+        map, positionedLegsRef.current, keyframesRef.current, time, coordinate,
+        getDynamicCameraZoom(map, positionedLegsRef.current, time, defaultFollowZoom),
+        getPlannedCameraSpeedProgress(positionedLegsRef.current, time),
+      ))
+    })
     contextualZoomCacheRef.current = null
   }
 
@@ -2689,58 +2682,6 @@ export function MapboxTravelMap({
     isFollowingRef.current = false
     updateTrackingEnabled(false)
     return true
-  }
-
-  const clearSeekOverviewCamera = () => {
-    seekOverviewTargetRef.current = null
-    seekOverviewUntilRef.current = 0
-    seekOverviewStartedAtRef.current = 0
-    seekOverviewOriginCenterRef.current = null
-  }
-
-  const beginSeekOverviewCamera = (
-    map: mapboxgl.Map,
-    targetCoordinate: RouteCoordinate,
-    previousCoordinate: RouteCoordinate,
-    force = false,
-  ) => {
-    if (!canUpdateCamera(map)) {
-      return
-    }
-
-    const currentCenter = map.getCenter()
-    const currentCenterCoordinate: RouteCoordinate = [currentCenter.lng, currentCenter.lat]
-    const targetIsVisible = isPointWithinMapViewport(map, targetCoordinate, travelerMarkerViewportPadding)
-    const targetDistanceKm = Math.max(
-      haversineDistance(currentCenterCoordinate, targetCoordinate),
-      haversineDistance(previousCoordinate, targetCoordinate),
-    )
-
-    if (!force && targetIsVisible && targetDistanceKm < cameraMovementZoomOutMinDistanceKm) {
-      return
-    }
-
-    const overviewTarget = getCameraTargetForCoordinates(
-      map,
-      [currentCenterCoordinate, previousCoordinate, targetCoordinate],
-      targetCoordinate,
-      map.getZoom(),
-      seekOverviewPaddingRatio,
-      seekOverviewMaxZoom,
-    )
-
-    if (!overviewTarget) {
-      return
-    }
-
-    seekOverviewTargetRef.current = {
-      center: targetCoordinate,
-      zoom: clampNumber(overviewTarget.zoom, dynamicCameraMinZoom, seekOverviewMaxZoom),
-    }
-    const startedAt = window.performance.now()
-    seekOverviewStartedAtRef.current = startedAt
-    seekOverviewOriginCenterRef.current = currentCenterCoordinate
-    seekOverviewUntilRef.current = startedAt + seekOverviewDurationMs
   }
 
   const updateFollowCameraTarget = (
@@ -2875,7 +2816,6 @@ export function MapboxTravelMap({
     const didCancelRouteIntroAutoStart = cancelRouteIntroAutoStart()
     clearManualFollowResume(false)
     clearRouteIntroAnimation()
-    clearSeekOverviewCamera()
     clearTrackingLoading()
     clearProgrammaticCameraMove()
     const shouldAutoResume =
@@ -3084,6 +3024,7 @@ export function MapboxTravelMap({
     highlightedKeyframeKeysRef.current.clear()
     lastRouteDataReconcileSignatureRef.current = ""
     cameraTimelineRef.current = []
+    cameraZoomPlanRef.current = []
     contextualZoomCacheRef.current = null
     routeLayersReadyRef.current = false
     hasFocusedCurrentLocationRef.current = false
@@ -3593,8 +3534,9 @@ export function MapboxTravelMap({
     // Performance budget: one allocation-free O(log n) leg lookup per frame.
     // It replaces seconds of stale interpolation on the product's fastest legs.
     const targetLeg = getRouteLegAtTime(positionedLegsRef.current, targetTime)
+    const plannedZoom = getCameraPlanZoom(cameraZoomPlanRef.current, targetTime)
     const isRealtimeMotion = Boolean(
-      isPlayingRef.current && targetLeg && isRealtimeNavigationSegment(targetLeg),
+      plannedZoom !== null || (targetLeg && isRealtimeNavigationSegment(targetLeg)),
     )
     const isCatchUp = timestamp < visualCatchUpUntilRef.current
     const playbackSmoothingMs = isCatchUp
@@ -3641,24 +3583,11 @@ export function MapboxTravelMap({
         animatedCameraZoomRef.current,
         { forceTravelerFocus: !isPlayingRef.current },
       )
-      const seekOverviewTarget = seekOverviewTargetRef.current
-      if (seekOverviewTarget && timestamp < seekOverviewUntilRef.current) {
-        const zoomOutEndsAt =
-          seekOverviewStartedAtRef.current +
-          seekOverviewDurationMs * seekOverviewZoomOutFraction
-        targetCameraCenterRef.current =
-          timestamp < zoomOutEndsAt
-            ? seekOverviewOriginCenterRef.current ?? seekOverviewTarget.center
-            : seekOverviewTarget.center
-        targetCameraZoomRef.current = seekOverviewTarget.zoom
-      } else if (seekOverviewTarget) {
-        clearSeekOverviewCamera()
-      }
     }
 
     const shouldDrawRoute =
       timestamp - lastAnimatedRouteDrawTimestampRef.current >= 50 ||
-      Math.abs(snappedTime - targetTime) < 0.08
+      (!isPlayingRef.current && Math.abs(snappedTime - targetTime) < 0.08)
     if (shouldDrawRoute) {
       drawRoute(map)
       lastAnimatedRouteDrawTimestampRef.current = timestamp
@@ -3674,13 +3603,7 @@ export function MapboxTravelMap({
       const currentZoom = animatedCameraZoomRef.current
       const desiredCenter = targetCameraCenterRef.current
       const targetZoom = targetCameraZoomRef.current
-      const realtimeCameraDistanceKm = haversineDistance(
-        animatedCameraCenterRef.current,
-        desiredCenter,
-      )
-      const shouldSnapRealtimeCamera =
-        isRealtimeMotion &&
-        realtimeCameraDistanceKm >= realtimeCameraSnapDistanceKm
+      const followsVideoTime = isRealtimeMotion
       effectiveCameraZoomTarget =
         !isCatchUp &&
         !isCameraOverview &&
@@ -3702,7 +3625,7 @@ export function MapboxTravelMap({
       )
       const nextZoom = currentZoom + (effectiveCameraZoomTarget - currentZoom) * zoomSmoothing
       snappedZoom =
-        (shouldSnapRealtimeCamera && effectiveCameraZoomTarget < currentZoom) ||
+        (followsVideoTime && plannedZoom !== null) ||
         Math.abs(nextZoom - effectiveCameraZoomTarget) < 0.015
           ? effectiveCameraZoomTarget
           : nextZoom
@@ -3745,7 +3668,7 @@ export function MapboxTravelMap({
         centerSmoothing,
       )
       const snappedCenter =
-        shouldSnapRealtimeCamera ||
+        followsVideoTime ||
         coordinateDistance(nextCenter, effectiveCameraCenterTarget) < cameraCenterSnapThreshold
           ? effectiveCameraCenterTarget
           : nextCenter
@@ -3783,12 +3706,8 @@ export function MapboxTravelMap({
       cameraZoomDelta: snappedZoom - effectiveCameraZoomTarget,
       isFollowing: isFollowingRef.current,
     })
-    const hasActiveSeekOverview =
-      seekOverviewTargetRef.current !== null &&
-      timestamp < seekOverviewUntilRef.current
     if (
       !isPlayingRef.current &&
-      !hasActiveSeekOverview &&
       hasSettledPausedNavigation
     ) {
       stopMarkerAnimation()
@@ -3811,30 +3730,16 @@ export function MapboxTravelMap({
     map: mapboxgl.Map,
     nextTime: number,
     nextCoordinate: RouteCoordinate,
-    options: { forceTravelerSnap?: boolean; catchUpDurationMs?: number; showSeekOverview?: boolean } = {},
+    options: { forceTravelerSnap?: boolean; catchUpDurationMs?: number; snapCamera?: boolean } = {},
   ) => {
     stopMarkerAnimation()
     clearTrackingLoading()
     clearProgrammaticCameraMove()
-    const targetMotionContext = getRouteMotionContext(positionedLegsRef.current, nextTime)
-    const isTargetOverview = Boolean(
-      getFlightOverviewSegment(positionedLegsRef.current, nextTime) ||
-        getRapidLandOverviewSegment(positionedLegsRef.current, nextTime),
-    )
-    const isStopTarget =
-      targetMotionContext.isStationary ||
-      isStopPointFocusTime(keyframesRef.current, nextTime)
-    const shouldShowSeekOverview = Boolean(
-      options.showSeekOverview && !isStopTarget && !isTargetOverview,
-    )
-    if (!shouldShowSeekOverview) {
-      clearSeekOverviewCamera()
-    }
     const previousCoordinate = animatedRouteCoordinateRef.current
     const routeJumpDistanceKm = haversineDistance(previousCoordinate, nextCoordinate)
     const routeJumpSeconds = Math.abs(nextTime - animatedRouteTimeRef.current)
     const shouldHardSnapTraveler =
-      Boolean(options.forceTravelerSnap) ||
+      Boolean(options.forceTravelerSnap || options.snapCamera) ||
       routeJumpSeconds >= visualHardSeekSnapSeconds ||
       routeJumpDistanceKm >= visualHardSeekSnapDistanceKm
 
@@ -3852,18 +3757,25 @@ export function MapboxTravelMap({
     }
 
     if (isFollowingRef.current && canUpdateCamera(map)) {
+      if (options.snapCamera) contextualZoomCacheRef.current = null
       updateFollowCameraTarget(map, nextTime, nextCoordinate, map.getZoom(), {
-        forceTravelerFocus: !isPlayingRef.current,
+        forceTravelerFocus: options.snapCamera || !isPlayingRef.current,
       })
       const currentCenter = map.getCenter()
       animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
       animatedCameraZoomRef.current = map.getZoom()
-      if (shouldShowSeekOverview) {
-        beginSeekOverviewCamera(map, nextCoordinate, previousCoordinate, true)
-      }
-
       try {
         map.stop()
+        if (options.snapCamera) {
+          // A seek selects a frame; it must not replay travel between frames.
+          animatedCameraCenterRef.current = nextCoordinate
+          targetCameraCenterRef.current = nextCoordinate
+          animatedCameraZoomRef.current = targetCameraZoomRef.current
+          runAutomatedCameraUpdate(() => map.jumpTo({
+            center: nextCoordinate,
+            zoom: targetCameraZoomRef.current,
+          }))
+        }
         startMarkerAnimation()
         setMapError(null)
       } catch {
@@ -4360,7 +4272,6 @@ export function MapboxTravelMap({
 
     clearManualFollowResume()
     clearRouteIntroAnimation()
-    clearSeekOverviewCamera()
     clearTrackingLoading()
     stopMarkerAnimation()
     isFollowingRef.current = false
@@ -4742,15 +4653,10 @@ export function MapboxTravelMap({
       return
     }
 
-    runWhenStyleReady(map, () => {
-      const currentMap = mapInstanceRef.current
-      if (!currentMap || !canUpdateCamera(currentMap)) {
-        return
-      }
-
-      currentMap.resize()
-      rebuildCameraTimeline(currentMap)
-    })
+    // Planning uses the transform and route data, not loaded source tiles.
+    // Waiting for style.load here can strand a new route indefinitely: tile
+    // requests make isStyleLoaded false without emitting another style.load.
+    if (canUpdateCamera(map)) rebuildCameraTimeline(map)
   }, [isLoaded, mapStyle, positionedLegs, routeSignature])
 
   useEffect(() => {
@@ -5053,7 +4959,7 @@ export function MapboxTravelMap({
 
   useEffect(() => {
     if (mapInstanceRef.current && markerRef.current && isLoaded) {
-      runWhenStyleReady(mapInstanceRef.current, () => {
+      const syncPlaybackCamera = () => {
         const map = mapInstanceRef.current
         if (!map || !hasUsableMapSize(map)) {
           return
@@ -5097,13 +5003,14 @@ export function MapboxTravelMap({
 
         if (didJumpPlayback) {
           snapTravelerToPlaybackTime(map, nextPlaybackTime, liveRouteCoordinate, {
-            showSeekOverview: true,
+            snapCamera: true,
           })
           return
         }
 
         startMarkerAnimation()
-      })
+      }
+      syncPlaybackCamera()
     }
   }, [isLoaded, isPlaying, liveRouteCoordinate, positionedLegs, safeCurrentKeyframe.time])
 
@@ -5165,7 +5072,6 @@ export function MapboxTravelMap({
     setIsLoaded(false)
     stopMarkerAnimation()
     clearRouteIntroAnimation()
-    clearSeekOverviewCamera()
     clearProgrammaticCameraMove()
     map.stop()
     map.setStyle(getMapStyleUrl(mapStyle))
@@ -5402,7 +5308,6 @@ export function MapboxTravelMap({
     clearTrackingLoading()
     clearManualFollowResume()
     clearRouteIntroAnimation()
-    clearSeekOverviewCamera()
     isFollowingRef.current = false
     updateTrackingEnabled(false)
     map.stop()
@@ -5517,7 +5422,6 @@ export function MapboxTravelMap({
     if (isTrackingEnabledRef.current) {
       clearManualFollowResume()
       clearRouteIntroAnimation()
-      clearSeekOverviewCamera()
       clearTrackingLoading()
       isFollowingRef.current = false
       updateTrackingEnabled(false)
@@ -5531,7 +5435,6 @@ export function MapboxTravelMap({
     if (mapInstanceRef.current) {
       clearManualFollowResume()
       clearRouteIntroAnimation()
-      clearSeekOverviewCamera()
       clearTrackingLoading()
       isFollowingRef.current = false
       updateTrackingEnabled(false)
@@ -5549,50 +5452,10 @@ export function MapboxTravelMap({
       return
     }
 
-    const continuePausedTracking = () => {
-      if (!hasUsableMapSize(map)) {
-        return
-      }
-
-      if (!isFollowingRef.current) {
-        return
-      }
-
-      isFollowingRef.current = true
-      updateTrackingEnabled(true)
-      targetRouteTimeRef.current = safeCurrentKeyframe.time
-      targetRouteCoordinateRef.current = liveRouteCoordinate
-      targetPlaybackUpdatedAtRef.current = window.performance.now()
-      visualCatchUpUntilRef.current = targetPlaybackUpdatedAtRef.current + visualCatchUpDurationMs
-
-      updateFollowCameraTarget(map, safeCurrentKeyframe.time, liveRouteCoordinate, map.getZoom(), {
-        forceTravelerFocus: true,
-      })
-
-      const currentCenter = map.getCenter()
-      animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
-      animatedCameraZoomRef.current = map.getZoom()
-      if (!getFlightOverviewSegment(positionedLegsRef.current, safeCurrentKeyframe.time)) {
-        beginSeekOverviewCamera(map, liveRouteCoordinate, animatedRouteCoordinateRef.current, false)
-      } else {
-        clearSeekOverviewCamera()
-      }
-
-      try {
-        clearProgrammaticCameraMove()
-        startMarkerAnimation()
-        setMapError(null)
-      } catch {
-        clearProgrammaticCameraMove()
-      }
-    }
-
-    if (map.isStyleLoaded()) {
-      continuePausedTracking()
-      return
-    }
-
-    runWhenStyleReady(map, continuePausedTracking)
+    if (!hasUsableMapSize(map) || !isFollowingRef.current) return
+    snapTravelerToPlaybackTime(map, safeCurrentKeyframe.time, liveRouteCoordinate, {
+      snapCamera: true,
+    })
   }, [isLoaded, isPlaying, liveRouteCoordinate, safeCurrentKeyframe.time])
 
   const isMapBusy = !isLoaded || isTrackingLoading

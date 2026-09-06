@@ -11,6 +11,7 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { CreatorAccessGuard } from "@/components/creator/creator-access-guard"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
 import { ThemeToggle } from "@/components/app-shell/theme-toggle"
@@ -29,6 +30,47 @@ import {
 } from "@/lib/creator-videos-cloud-client"
 import { migrateLegacyCreatorStorageToDatabase } from "@/lib/legacy-creator-storage-migration"
 
+const creatorDashboardSkeletonCardCount = 3
+
+function CreatorVideoGridSkeleton() {
+  return (
+    <div
+      className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
+      aria-hidden="true"
+    >
+      {Array.from({ length: creatorDashboardSkeletonCardCount }, (_, index) => (
+        <Card
+          key={`creator-video-skeleton-${index}`}
+          className="flex h-full flex-col overflow-hidden border-border bg-card shadow-sm"
+        >
+          <Skeleton className="aspect-video w-full rounded-none bg-muted" />
+          <CardContent className="flex flex-1 flex-col p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 space-y-2 py-1">
+                <Skeleton className="h-4 w-11/12" />
+                <Skeleton className="h-4 w-3/5" />
+              </div>
+              <Skeleton className="h-7 w-20 shrink-0" />
+            </div>
+
+            <div className="mt-3 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-1 w-1 rounded-full" />
+              <Skeleton className="h-4 w-20" />
+            </div>
+
+            <div className="mt-auto flex items-center gap-2 pt-3">
+              <Skeleton className="h-10 flex-1 rounded-lg" />
+              <Skeleton className="h-10 flex-1 rounded-lg" />
+              <Skeleton className="h-10 w-10 rounded-lg" />
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  )
+}
+
 function CreatorDashboardContent() {
   const router = useRouter()
   const { user } = useUser()
@@ -40,6 +82,7 @@ function CreatorDashboardContent() {
   const [cloudVideoIds, setCloudVideoIds] = useState<Set<string>>(() => new Set())
   const [cloudConfigured, setCloudConfigured] = useState<boolean | null>(null)
   const [syncMessage, setSyncMessage] = useState("")
+  const [isLoadingCreatorVideos, setIsLoadingCreatorVideos] = useState(true)
 
   useEffect(() => {
     if (!syncMessage) {
@@ -63,6 +106,7 @@ function CreatorDashboardContent() {
         setCloudConfigured(response.configured)
         setCloudVideoIds(new Set(response.videos.map((video) => video.id)))
         setAllCreatorVideos(response.videos)
+        setIsLoadingCreatorVideos(false)
         setSyncMessage(
           response.error ??
             (response.configured ? "" : "Cloud database is not configured yet. Add DATABASE_URL in Vercel to sync creator videos."),
@@ -88,6 +132,7 @@ function CreatorDashboardContent() {
       } catch {
         if (isMounted) {
           setCloudConfigured(false)
+          setIsLoadingCreatorVideos(false)
           setSyncMessage("Unable to load creator videos from the database.")
         }
       }
@@ -338,7 +383,11 @@ function CreatorDashboardContent() {
               <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
                   <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Videos</p>
-                  <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{stats.totalVideos}</p>
+                  {isLoadingCreatorVideos ? (
+                    <Skeleton className="mt-2 h-9 w-12" />
+                  ) : (
+                    <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{stats.totalVideos}</p>
+                  )}
                 </div>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300 sm:h-10 sm:w-10">
                   <Youtube className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -352,7 +401,11 @@ function CreatorDashboardContent() {
               <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
                   <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Published</p>
-                  <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{stats.publishedVideos}</p>
+                  {isLoadingCreatorVideos ? (
+                    <Skeleton className="mt-2 h-9 w-12" />
+                  ) : (
+                    <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{stats.publishedVideos}</p>
+                  )}
                 </div>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300 sm:h-10 sm:w-10">
                   <CheckCircle2 className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -366,7 +419,11 @@ function CreatorDashboardContent() {
               <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
                   <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Views</p>
-                  <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{formatCompactNumber(stats.totalViews)}</p>
+                  {isLoadingCreatorVideos ? (
+                    <Skeleton className="mt-2 h-9 w-20" />
+                  ) : (
+                    <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{formatCompactNumber(stats.totalViews)}</p>
+                  )}
                 </div>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-300 sm:h-10 sm:w-10">
                   <Eye className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -380,7 +437,11 @@ function CreatorDashboardContent() {
               <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
                   <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Map Views</p>
-                  <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{formatCompactNumber(stats.totalMapViews)}</p>
+                  {isLoadingCreatorVideos ? (
+                    <Skeleton className="mt-2 h-9 w-20" />
+                  ) : (
+                    <p className="mt-1 text-2xl font-semibold tracking-tight sm:mt-2 sm:text-3xl">{formatCompactNumber(stats.totalMapViews)}</p>
+                  )}
                 </div>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300 sm:h-10 sm:w-10">
                   <MapPin className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -394,7 +455,11 @@ function CreatorDashboardContent() {
               <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
                   <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Engagement</p>
-                  <p className="mt-1 text-2xl font-semibold tracking-tight text-emerald-700 dark:text-emerald-300 sm:mt-2 sm:text-3xl">{stats.avgEngagement}%</p>
+                  {isLoadingCreatorVideos ? (
+                    <Skeleton className="mt-2 h-9 w-16" />
+                  ) : (
+                    <p className="mt-1 text-2xl font-semibold tracking-tight text-emerald-700 dark:text-emerald-300 sm:mt-2 sm:text-3xl">{stats.avgEngagement}%</p>
+                  )}
                 </div>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300 sm:h-10 sm:w-10">
                   <TrendingUp className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -404,9 +469,14 @@ function CreatorDashboardContent() {
           </Card>
         </div>
 
-        <section>
+        <section aria-busy={isLoadingCreatorVideos} aria-label="Creator videos">
           <div>
-            {creatorVideos.length === 0 ? (
+            {isLoadingCreatorVideos ? (
+              <>
+                <p className="sr-only" role="status">Loading creator videos</p>
+                <CreatorVideoGridSkeleton />
+              </>
+            ) : creatorVideos.length === 0 ? (
               <Card className="border-border bg-card shadow-sm">
                 <CardContent className="p-10 text-center">
                   <p className="text-base font-medium text-foreground">No creator videos yet</p>
