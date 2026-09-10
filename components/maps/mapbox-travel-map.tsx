@@ -22,6 +22,7 @@ import {
 } from "@/components/maps/flight-airplane-marker"
 import { hasMapboxAccessToken, mapboxAccessToken } from "@/lib/mapbox"
 import { buildCameraZoomPlan, getCameraPlanZoom, type CameraZoomWindow } from "@/lib/map-camera-plan"
+import { readMapPreloadPolicy } from "@/lib/map-preload-policy"
 import { getFlightRouteKeyframes } from "@/lib/flight-path"
 import { getTimestampLegKey, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
 import { getCoordinateSearchResult } from "@/lib/location-search/query-utils"
@@ -253,10 +254,7 @@ const keyframeMarkerViewportPaddingPx = Math.ceil(keyframeMarkerMaxSize / 2) + 6
 const visibleMapMinTileCacheSize = 96
 const visibleMapMaxTileCacheSize = 384
 const routePreloadSampleCount = 12
-const routePreloadStepDelayMs = 220
 const routePreloadMaxZoom = 13
-const playbackRoutePreloadSeconds = 10
-const playbackRoutePreloadSampleCount = 4
 const playbackRoutePreloadRefreshMs = 1500
 const playbackRoutePreloadMaxZoom = 15.5
 const mapOverlayWideMinWidth = 760
@@ -1964,32 +1962,22 @@ function getPlaybackRoutePreloadTargets(
   keyframes: Keyframe[],
   cameraTimeline: CameraTimelineEntry[],
   currentTime: number,
+  policy = readMapPreloadPolicy(),
 ) {
   const bounds = getRouteTimeBounds(legs)
-  if (!bounds || currentTime >= bounds.end) {
+  if (!bounds || currentTime >= bounds.end || policy.samples === 0) {
     return [] as CameraTarget[]
   }
 
-  const flightLeg = getFlightPreloadSegment(legs, currentTime)
-  if (flightLeg) {
-    return getFlightPathPreloadTargets(map, legs, flightLeg)
-  }
-  const rapidLandLeg = getRapidLandPreloadSegment(legs, currentTime)
-  if (rapidLandLeg) {
-    return getRapidLandPathPreloadTargets(map, legs, rapidLandLeg)
-  }
-
   const windowStart = clampNumber(currentTime, bounds.start, bounds.end)
-  const windowEnd = Math.min(windowStart + playbackRoutePreloadSeconds, bounds.end)
+  const windowEnd = Math.min(windowStart + policy.seconds, bounds.end)
   const times = new Set<number>()
 
-  // Work from the far edge back toward the traveler. The visible map already has
-  // nearby tiles; warming the future edge first gives satellite imagery the most
-  // time to arrive before the camera reaches it.
-  for (let index = playbackRoutePreloadSampleCount; index >= 1; index -= 1) {
+  // Warm imminent views first so distant tiles cannot displace the next view.
+  for (let index = 1; index <= policy.samples; index += 1) {
     times.add(
       windowStart +
-        ((windowEnd - windowStart) * index) / playbackRoutePreloadSampleCount,
+        ((windowEnd - windowStart) * index) / policy.samples,
     )
   }
 
@@ -2353,6 +2341,7 @@ export function MapboxTravelMap({
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<mapboxgl.Map | null>(null)
   const routePreloadTimerRef = useRef<number | null>(null)
+  const routePreloadIdleCleanupRef = useRef<(() => void) | null>(null)
   const routePreloadQueueRef = useRef<CameraTarget[]>([])
   const routePreloadSignatureRef = useRef("")
   const routePreloadGenerationRef = useRef(0)
@@ -4325,13 +4314,15 @@ export function MapboxTravelMap({
   }
 
   const clearRoutePreloadTimer = () => {
+    routePreloadIdleCleanupRef.current?.()
+    routePreloadIdleCleanupRef.current = null
     if (routePreloadTimerRef.current !== null) {
       window.clearTimeout(routePreloadTimerRef.current)
       routePreloadTimerRef.current = null
     }
   }
 
-  const scheduleRoutePreloadStep = (delay = routePreloadStepDelayMs) => {
+  const scheduleRoutePreloadStep = (delay = readMapPreloadPolicy().delayMs) => {
     clearRoutePreloadTimer()
     routePreloadTimerRef.current = window.setTimeout(() => {
       routePreloadTimerRef.current = null
@@ -4349,14 +4340,13 @@ export function MapboxTravelMap({
       return
     }
 
-    if (!preloadMap.isStyleLoaded()) {
-      preloadMap.once("style.load", () => {
-        if (generation === routePreloadGenerationRef.current) {
-          scheduleRoutePreloadStep(0)
-        }
-      })
+    const policy = readMapPreloadPolicy()
+    if (policy.maxTargets === 0 || document.hidden || !preloadMap.isStyleLoaded() || !preloadMap.areTilesLoaded()) {
+      // Poll: loading tiles can make isStyleLoaded false without a style.load event.
+      scheduleRoutePreloadStep(Math.max(policy.delayMs, 1000))
       return
     }
+    routePreloadQueueRef.current = routePreloadQueueRef.current.slice(0, policy.maxTargets)
 
     const target = routePreloadQueueRef.current.shift()
     if (!target) {
@@ -4375,6 +4365,7 @@ export function MapboxTravelMap({
         preloadOnly: true,
       })
     } catch {
+      scheduleRoutePreloadStep()
       return
     }
 
@@ -4388,8 +4379,9 @@ export function MapboxTravelMap({
       scheduleRoutePreloadStep()
     }
 
-    preloadMap.once("idle", scheduleNextStep)
     clearRoutePreloadTimer()
+    preloadMap.once("idle", scheduleNextStep)
+    routePreloadIdleCleanupRef.current = () => preloadMap.off("idle", scheduleNextStep)
     routePreloadTimerRef.current = window.setTimeout(scheduleNextStep, 1600)
   }
 
@@ -4668,6 +4660,8 @@ export function MapboxTravelMap({
     let playbackRefreshTimer: number | null = null
     let isCancelled = false
     let basePreloadSignature = ""
+    let previousPlaybackTime = latestPlaybackTimeRef.current
+    let previousPolicy = ""
 
     const schedulePlaybackRefresh = () => {
       if (isCancelled) {
@@ -4686,15 +4680,31 @@ export function MapboxTravelMap({
       }
 
       const playbackTime = latestPlaybackTimeRef.current
+      const policy = readMapPreloadPolicy()
+      const policySignature = `${policy.seconds}:${policy.maxTargets}`
+      if (
+        policySignature !== previousPolicy ||
+        playbackTime < previousPlaybackTime - 0.5 ||
+        playbackTime > previousPlaybackTime + 5
+      ) {
+        resetRoutePreloader()
+      }
+      previousPolicy = policySignature
+      previousPlaybackTime = playbackTime
+      if (policy.maxTargets === 0 || document.hidden) {
+        schedulePlaybackRefresh()
+        return
+      }
       const flightLeg = getFlightPreloadSegment(positionedLegs, playbackTime)
+      const bufferWindow = Math.floor(playbackTime / Math.max(3, policy.seconds / 2))
       const flightSignature = flightLeg
-        ? `${basePreloadSignature}:flight:${flightLeg.fromTime}:${flightLeg.toTime}`
+        ? `${basePreloadSignature}:flight:${flightLeg.fromTime}:${flightLeg.toTime}:${bufferWindow}`
         : null
       const rapidLandLeg = !flightLeg
         ? getRapidLandPreloadSegment(positionedLegs, playbackTime)
         : null
       const rapidLandSignature = rapidLandLeg
-        ? `${basePreloadSignature}:rapid-land:${rapidLandLeg.fromTime}:${rapidLandLeg.toTime}`
+        ? `${basePreloadSignature}:rapid-land:${rapidLandLeg.fromTime}:${rapidLandLeg.toTime}:${bufferWindow}`
         : null
       const specialSignature = flightSignature ?? rapidLandSignature
 
@@ -4705,9 +4715,13 @@ export function MapboxTravelMap({
         routePreloadGenerationRef.current += 1
         clearRoutePreloadTimer()
         routePreloadSignatureRef.current = specialSignature!
-        routePreloadQueueRef.current = flightLeg
+        const transitionTargets = flightLeg
           ? getFlightPathPreloadTargets(map, positionedLegs, flightLeg)
           : getRapidLandPathPreloadTargets(map, positionedLegs, rapidLandLeg!)
+        routePreloadQueueRef.current = dedupeRoutePreloadTargets([
+          ...transitionTargets,
+          ...getPlaybackRoutePreloadTargets(map, positionedLegs, safeKeyframes, cameraTimelineRef.current, playbackTime, policy),
+        ]).slice(0, policy.maxTargets)
         if (routePreloadQueueRef.current.length > 0) {
           scheduleRoutePreloadStep(0)
         }
@@ -4715,8 +4729,7 @@ export function MapboxTravelMap({
         return
       }
 
-      // Never interrupt an in-flight tile load. Once the bounded queue drains,
-      // sample a fresh ten-second window from the latest playback ref.
+      // Refresh the adaptive window outside the animation loop.
       if (
         routePreloadQueueRef.current.length === 0 &&
         routePreloadTimerRef.current === null
@@ -4736,6 +4749,7 @@ export function MapboxTravelMap({
             safeKeyframes,
             cameraTimelineRef.current,
             playbackTime,
+            policy,
           )
           if (routePreloadQueueRef.current.length > 0) {
             scheduleRoutePreloadStep(0)
@@ -4760,23 +4774,6 @@ export function MapboxTravelMap({
       ].join(":")
       resetRoutePreloader()
 
-      if (!isPlaying) {
-        routePreloadSignatureRef.current = `${basePreloadSignature}:route`
-        routePreloadQueueRef.current = getRoutePreloadTargets(map, positionedLegs)
-        if (routePreloadQueueRef.current.length > 0) {
-          scheduleRoutePreloadStep(0)
-        }
-        return
-      }
-
-      routePreloadSignatureRef.current = `${basePreloadSignature}:flights`
-      routePreloadQueueRef.current = getInitialFlightPreloadTargets(
-        map,
-        positionedLegs,
-      )
-      if (routePreloadQueueRef.current.length > 0) {
-        scheduleRoutePreloadStep(0)
-      }
       queuePlaybackWindow()
     }
 

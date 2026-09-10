@@ -1,6 +1,7 @@
 "use client"
 
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
+import { readMapPreloadPolicy } from "@/lib/map-preload-policy"
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
 import { Crosshair, ExternalLink, Loader2, Play, Redo2, Search, Undo2, X } from "lucide-react"
@@ -92,10 +93,7 @@ const editorTravelerTrackingLoadingMinMs = 450
 const editorTravelerTrackingLoadingFallbackMs = 6500
 const editorTravelerTrackingTargetRefreshMs = sharedMapNavigationMotion.targetRefreshMs
 const editorTrackingAutoStartDurationMs = 10000
-const editorPlaybackPreloadSeconds = 10
-const editorPlaybackPreloadSampleCount = 4
 const editorPlaybackPreloadRefreshMs = 1500
-const editorPlaybackPreloadStepDelayMs = 220
 const editorPlaybackPreloadMaxZoom = 15.5
 const editorSeekMinTimeJumpSeconds = 1.25
 const editorVisibleMapMinTileCacheSize = 96
@@ -970,6 +968,7 @@ export function MapboxLocationPicker({
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<mapboxgl.Map | null>(null)
   const routePreloadTimerRef = useRef<number | null>(null)
+  const routePreloadIdleCleanupRef = useRef<(() => void) | null>(null)
   const routePreloadQueueRef = useRef<EditorCameraTarget[]>([])
   const routePreloadGenerationRef = useRef(0)
   const routePreloadPlaybackSignatureRef = useRef("")
@@ -1539,13 +1538,15 @@ export function MapboxLocationPicker({
   }
 
   const clearRoutePreloadTimer = () => {
+    routePreloadIdleCleanupRef.current?.()
+    routePreloadIdleCleanupRef.current = null
     if (routePreloadTimerRef.current !== null) {
       window.clearTimeout(routePreloadTimerRef.current)
       routePreloadTimerRef.current = null
     }
   }
 
-  const scheduleRoutePreloadStep = (delay = editorPlaybackPreloadStepDelayMs) => {
+  const scheduleRoutePreloadStep = (delay = readMapPreloadPolicy().delayMs) => {
     clearRoutePreloadTimer()
     routePreloadTimerRef.current = window.setTimeout(() => {
       routePreloadTimerRef.current = null
@@ -1566,14 +1567,12 @@ export function MapboxLocationPicker({
       return
     }
 
-    if (!preloadMap.isStyleLoaded()) {
-      preloadMap.once("style.load", () => {
-        if (generation === routePreloadGenerationRef.current) {
-          scheduleRoutePreloadStep(0)
-        }
-      })
+    const policy = readMapPreloadPolicy()
+    if (policy.maxTargets === 0 || document.hidden || !preloadMap.isStyleLoaded() || !preloadMap.areTilesLoaded()) {
+      scheduleRoutePreloadStep(Math.max(policy.delayMs, 1000))
       return
     }
+    routePreloadQueueRef.current = routePreloadQueueRef.current.slice(0, policy.maxTargets)
 
     const target = routePreloadQueueRef.current.shift()
     if (!target) {
@@ -1592,6 +1591,7 @@ export function MapboxLocationPicker({
         preloadOnly: true,
       })
     } catch {
+      scheduleRoutePreloadStep()
       return
     }
 
@@ -1605,8 +1605,9 @@ export function MapboxLocationPicker({
       scheduleRoutePreloadStep()
     }
 
-    preloadMap.once("idle", scheduleNextStep)
     clearRoutePreloadTimer()
+    preloadMap.once("idle", scheduleNextStep)
+    routePreloadIdleCleanupRef.current = () => preloadMap.off("idle", scheduleNextStep)
     routePreloadTimerRef.current = window.setTimeout(scheduleNextStep, 1600)
   }
 
@@ -1734,14 +1735,15 @@ export function MapboxLocationPicker({
   }
 
   const getPlaybackPreloadTargets = (progressTime: number) => {
+    const policy = readMapPreloadPolicy()
     const segments = timestampRouteSegmentsRef.current
     const map = mapInstanceRef.current
-    if (segments.length === 0 || !map) {
+    if (segments.length === 0 || !map || policy.samples === 0) {
       return [] as EditorCameraTarget[]
     }
 
     const routeEndTime = segments[segments.length - 1].toTime
-    const windowEnd = Math.min(progressTime + editorPlaybackPreloadSeconds, routeEndTime)
+    const windowEnd = Math.min(progressTime + policy.seconds, routeEndTime)
     if (windowEnd <= progressTime) {
       return [] as EditorCameraTarget[]
     }
@@ -1757,19 +1759,10 @@ export function MapboxLocationPicker({
       seenTargets.add(key)
       targets.push(target)
     }
-    const flightSegment = getFlightPreloadSegment(segments, progressTime)
-    if (flightSegment) {
-      return getFlightPathPreloadTargets(map, flightSegment)
-    }
-    const rapidLandSegment = getRapidLandPreloadSegment(segments, progressTime)
-    if (rapidLandSegment) {
-      return getRapidLandPathPreloadTargets(map, rapidLandSegment)
-    }
-
-    for (let index = editorPlaybackPreloadSampleCount; index >= 1; index -= 1) {
+    for (let index = 1; index <= policy.samples; index += 1) {
       const sampleTime =
         progressTime +
-        ((windowEnd - progressTime) * index) / editorPlaybackPreloadSampleCount
+        ((windowEnd - progressTime) * index) / policy.samples
       const flightCameraTarget = getFlightTrackingCameraTarget(map, sampleTime)
       const center =
         flightCameraTarget?.center ??
@@ -1792,7 +1785,7 @@ export function MapboxLocationPicker({
       )
       appendTarget({
         center,
-        zoom,
+        zoom: getCameraPlanZoom(cameraZoomPlanRef.current, sampleTime) ?? zoom,
         mode: flightCameraTarget?.mode ?? "follow",
       })
     }
@@ -2220,12 +2213,14 @@ export function MapboxLocationPicker({
   }, [isPlaying])
 
   useEffect(() => {
-    if (!isLoaded || !isPlaying || !isTrackingTraveler) {
+    if (!isLoaded || !isTrackingTraveler) {
       return
     }
 
     let isCancelled = false
     let playbackRefreshTimer: number | null = null
+    let previousPlaybackTime: number | null = null
+    let previousPolicy = ""
 
     const queuePlaybackWindow = () => {
       if (isCancelled) {
@@ -2235,19 +2230,34 @@ export function MapboxLocationPicker({
       const progressTime =
         liveRouteProgressTimeRef?.current ??
         routeProgressTimeRef.current
+      const policy = readMapPreloadPolicy()
+      const policySignature = `${policy.seconds}:${policy.maxTargets}`
+      if (
+        policySignature !== previousPolicy ||
+        (typeof progressTime === "number" && previousPlaybackTime !== null &&
+          (progressTime < previousPlaybackTime - 0.5 || progressTime > previousPlaybackTime + 5))
+      ) {
+        resetRoutePreloader()
+      }
+      previousPolicy = policySignature
+      previousPlaybackTime = progressTime ?? null
+      if (policy.maxTargets === 0 || document.hidden) {
+        playbackRefreshTimer = window.setTimeout(queuePlaybackWindow, editorPlaybackPreloadRefreshMs)
+        return
+      }
       const flightSegment =
         typeof progressTime === "number" && Number.isFinite(progressTime)
           ? getFlightPreloadSegment(timestampRouteSegmentsRef.current, progressTime)
           : null
       const flightSignature = flightSegment
-        ? `flight:${flightSegment.legKey}`
+        ? `flight:${flightSegment.legKey}:${Math.floor((progressTime ?? 0) / Math.max(3, policy.seconds / 2))}`
         : null
       const rapidLandSegment =
         !flightSegment && typeof progressTime === "number" && Number.isFinite(progressTime)
           ? getRapidLandPreloadSegment(timestampRouteSegmentsRef.current, progressTime)
           : null
       const specialSignature = flightSignature ?? (rapidLandSegment
-        ? `rapid-land:${rapidLandSegment.legKey}`
+        ? `rapid-land:${rapidLandSegment.legKey}:${Math.floor((progressTime ?? 0) / Math.max(3, policy.seconds / 2))}`
         : null)
 
       if (
@@ -2263,6 +2273,12 @@ export function MapboxLocationPicker({
             ? getFlightPathPreloadTargets(map, flightSegment)
             : getRapidLandPathPreloadTargets(map, rapidLandSegment!)
           : []
+        if (typeof progressTime === "number") {
+          routePreloadQueueRef.current = [
+            ...routePreloadQueueRef.current,
+            ...getPlaybackPreloadTargets(progressTime),
+          ].slice(0, policy.maxTargets)
+        }
         if (routePreloadQueueRef.current.length > 0) {
           scheduleRoutePreloadStep(0)
         }
@@ -3208,9 +3224,8 @@ export function MapboxLocationPicker({
           updateRouteLayer(map, routeSegments)
           syncRouteProgress(map, false)
           resetRoutePreloader()
-          routePreloadQueueRef.current = getInitialFlightPreloadTargets(
-            map,
-            routeSegments,
+          routePreloadQueueRef.current = getPlaybackPreloadTargets(
+            liveRouteProgressTimeRef?.current ?? routeProgressTimeRef.current ?? 0,
           )
           if (routePreloadQueueRef.current.length > 0) {
             scheduleRoutePreloadStep(0)
