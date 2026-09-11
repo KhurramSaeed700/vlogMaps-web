@@ -22,7 +22,7 @@ import {
   updateFlightAirplaneMarkerElement,
 } from "@/components/maps/flight-airplane-marker"
 import { hasMapboxAccessToken, mapboxAccessToken } from "@/lib/mapbox"
-import { buildCameraZoomPlan, getCameraPlanZoom, type CameraZoomWindow } from "@/lib/map-camera-plan"
+import { buildCameraZoomPlan, getCameraPlanTarget, getCameraPlanZoom, type CameraZoomWindow } from "@/lib/map-camera-plan"
 import { readMapPreloadPolicy } from "@/lib/map-preload-policy"
 import { attachMapLoading, canPreloadMap, createWorldFallbackStyle, getMapLoadingObservation, isMapStyleReady, setDetailedMapStyle } from "@/lib/map-loading"
 import { getFlightRouteKeyframes } from "@/lib/flight-path"
@@ -33,6 +33,7 @@ import {
   getFlightCameraPreloadTargets,
   getFlightLandingApproachProgress,
   getFlightLandingApproachStartTime,
+  getFlightLandingFocusPoint,
   getFlightOverviewSegment,
   getFlightPreloadSegment,
   getMapNavigationSmoothing,
@@ -83,7 +84,7 @@ interface PositionedRoutedLeg extends RoutedLeg {
 interface CameraTarget {
   center: RouteCoordinate
   zoom: number
-  mode?: "follow" | "flight-overview" | "rapid-land-overview"
+  mode?: "follow" | "flight-overview" | "rapid-land-overview" | "landing-focus"
 }
 
 interface CameraTimelineEntry extends CameraTarget {
@@ -1604,40 +1605,8 @@ function getContextualFollowZoom(
   const mobileBoost = map.getContainer().clientWidth <= 640 ? mobileFollowZoomBoost : 0
 
   if (isStopPoint) {
-    const stopZoom = clampNumber(
-      stopPointFollowZoom + mobileBoost,
-      dynamicCameraMinZoom,
-      dynamicCameraMaxZoom,
-    )
-    if (!motionContext.isStationary || plannedSpeedProgress <= 0.01) {
-      return stopZoom
-    }
-
-    // A stopped traveler should remain the focus, but an already-scheduled fast
-    // departure needs visual preparation. The speed signal comes from the cached
-    // camera timeline, so this transition adds no route scanning to the frame loop.
-    const departureSpeedZoom = interpolateNumber(
-      roadFollowMaxZoom,
-      fastRoadFollowMinZoom,
-      plannedSpeedProgress,
-    )
-    const departureFitZoom = clampNumber(
-      automaticZoom,
-      dynamicCameraMinZoom,
-      roadFollowMaxZoom,
-    )
-    const departureZoom = Math.min(
-      stopZoom,
-      interpolateNumber(departureFitZoom, departureSpeedZoom, speedTargetZoomWeight) +
-        mobileBoost,
-    )
-    const departureProgress =
-      plannedSpeedProgress *
-      plannedSpeedProgress *
-      (3 - 2 * plannedSpeedProgress)
-
     return clampNumber(
-      interpolateNumber(stopZoom, departureZoom, departureProgress),
+      stopPointFollowZoom + mobileBoost,
       dynamicCameraMinZoom,
       dynamicCameraMaxZoom,
     )
@@ -2469,11 +2438,26 @@ export function MapboxTravelMap({
     currentCoordinate: RouteCoordinate,
     fallbackZoom = defaultFollowZoom,
   ) => {
-    const plannedZoom = getCameraPlanZoom(cameraZoomPlanRef.current, currentTime)
-    if (plannedZoom !== null) {
+    const landingFocusPoint = getFlightLandingFocusPoint(keyframesRef.current, currentTime)
+    if (landingFocusPoint) {
       return {
-        center: currentCoordinate,
-        zoom: plannedZoom,
+        center: [landingFocusPoint.lng, landingFocusPoint.lat],
+        zoom: clampNumber(
+          sharedFlightCameraMotion.landingFocusZoom,
+          map.getMinZoom(),
+          map.getMaxZoom(),
+        ),
+        mode: "landing-focus",
+        speedProgress: 0,
+        departureProgress: 0,
+      } satisfies AutomaticCameraTarget
+    }
+
+    const plannedTarget = getCameraPlanTarget(cameraZoomPlanRef.current, currentTime)
+    if (plannedTarget !== null) {
+      return {
+        center: plannedTarget.center ?? currentCoordinate,
+        zoom: plannedTarget.zoom,
         mode: "flight-overview",
         speedProgress: 1,
         departureProgress: 1,
@@ -2692,10 +2676,11 @@ export function MapboxTravelMap({
     const isOverview =
       cameraTarget.mode === "flight-overview" ||
       cameraTarget.mode === "rapid-land-overview"
+    const isLandingFocus = cameraTarget.mode === "landing-focus"
     // Pausing or seeking should focus an ordinary road/stop position, but an
     // active flight must retain its overview camera so rewinding cannot leave
     // the map stranded at the previous close zoom.
-    if (options.forceTravelerFocus && !isOverview) {
+    if (options.forceTravelerFocus && !isOverview && !isLandingFocus) {
       targetCameraCenterRef.current = routeCoordinate
       targetCameraZoomRef.current = getPreferredFollowZoom(
         cameraTarget.zoom,
@@ -2704,7 +2689,7 @@ export function MapboxTravelMap({
       targetCameraModeRef.current = "follow"
       return
     }
-    targetCameraCenterRef.current = isOverview
+    targetCameraCenterRef.current = isOverview || isLandingFocus
       ? cameraTarget.center
       : interpolateCoordinate(
           routeCoordinate,
@@ -2716,7 +2701,7 @@ export function MapboxTravelMap({
               cameraTarget.speedProgress,
             ),
         )
-    targetCameraZoomRef.current = isOverview
+    targetCameraZoomRef.current = isOverview || isLandingFocus
       ? cameraTarget.zoom
       : getPreferredFollowZoom(cameraTarget.zoom)
     targetCameraSpeedProgressRef.current = cameraTarget.speedProgress
@@ -3594,7 +3579,10 @@ export function MapboxTravelMap({
       const currentZoom = animatedCameraZoomRef.current
       const desiredCenter = targetCameraCenterRef.current
       const targetZoom = targetCameraZoomRef.current
-      const followsVideoTime = isRealtimeMotion
+      const followsVideoTime =
+        isRealtimeMotion &&
+        targetCameraModeRef.current !== "landing-focus" &&
+        targetCameraModeRef.current !== "flight-overview"
       effectiveCameraZoomTarget =
         !isCatchUp &&
         !isCameraOverview &&

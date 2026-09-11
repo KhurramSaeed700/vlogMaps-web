@@ -9,7 +9,7 @@ import { Crosshair, ExternalLink, Loader2, Play, Redo2, Search, Undo2, X } from 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { hasMapboxAccessToken, mapboxAccessToken } from "@/lib/mapbox"
-import { buildCameraZoomPlan, getCameraPlanZoom, type CameraZoomWindow } from "@/lib/map-camera-plan"
+import { buildCameraZoomPlan, getCameraPlanTarget, getCameraPlanZoom, type CameraZoomWindow } from "@/lib/map-camera-plan"
 import { getInterpolatedPointAtTime, type CreatorMapPoint } from "@/lib/creator-points"
 import { getFlightRouteKeyframes } from "@/lib/flight-path"
 import type { CreatorTripEndpoint, CreatorTripRoute } from "@/lib/creator-trip-route"
@@ -26,11 +26,13 @@ import {
   flightOverviewPaddingRatio,
   getFlightCameraPreloadTargets,
   getFlightLandingApproachProgress,
+  getFlightLandingFocusPoint,
   getFlightOverviewSegment,
   getFlightPreloadSegment,
   getMapNavigationSmoothing,
   getRapidLandOverviewSegment,
   getRapidLandPreloadSegment,
+  getStationaryCameraFocusProgress,
   isRealtimeNavigationSegment,
   isRapidLandNavigationSegment,
   rapidLandOverviewPaddingRatio,
@@ -76,7 +78,6 @@ const editorTravelerTrackingClusterRadiusKm = 12
 const editorTravelerTrackingClusterFullCount = 5
 const editorTravelerTrackingClusterZoomBoost = 1.15
 const editorTravelerTrackingStopZoomDelaySeconds = 3
-const editorTravelerTrackingStopZoomOutLeadSeconds = 3
 const editorTravelerTrackingStopZoomTransitionSeconds = 2
 const editorTravelerTrackingStopZoomBoost = 1.55
 const editorTravelerTrackingPredictionSeconds = 18
@@ -293,7 +294,7 @@ interface TrackingLoadingState {
 interface EditorCameraTarget {
   center: RouteCoordinate
   zoom: number
-  mode?: "follow" | "flight-overview" | "rapid-land-overview"
+  mode?: "follow" | "flight-overview" | "rapid-land-overview" | "landing-focus"
 }
 
 async function fetchLocationSuggestions(query: string, bias: LocationSearchBias = {}, signal?: AbortSignal) {
@@ -525,38 +526,12 @@ function getActiveFlightSegment(segments: TimestampRouteSegment[], routeProgress
 }
 
 function getStopZoomAmount(segment: TimestampRouteSegment, routeProgressTime: number) {
-  const duration = segment.toTime - segment.fromTime
-  if (duration < 2.5) {
-    return 0
-  }
-
-  const delay = Math.min(editorTravelerTrackingStopZoomDelaySeconds, duration * 0.25)
-  const zoomOutLead = Math.min(editorTravelerTrackingStopZoomOutLeadSeconds, duration * 0.25)
-  const transitionSeconds = Math.min(editorTravelerTrackingStopZoomTransitionSeconds, Math.max(0.75, duration * 0.16))
-  const zoomInStart = segment.fromTime + delay
-  const zoomOutStart = segment.toTime - zoomOutLead
-
-  if (zoomOutStart <= zoomInStart) {
-    const availableDuration = Math.max(segment.toTime - zoomInStart, 0.001)
-    const stopProgress = clampNumber((routeProgressTime - zoomInStart) / availableDuration, 0, 1)
-    return easeInOut(Math.sin(stopProgress * Math.PI))
-  }
-
-  const zoomInEnd = Math.min(zoomInStart + transitionSeconds, zoomOutStart)
-
-  if (routeProgressTime <= zoomInStart) {
-    return 0
-  }
-
-  if (routeProgressTime < zoomInEnd) {
-    return easeInOut((routeProgressTime - zoomInStart) / Math.max(zoomInEnd - zoomInStart, 0.001))
-  }
-
-  if (routeProgressTime >= zoomOutStart) {
-    return 1 - easeInOut((routeProgressTime - zoomOutStart) / Math.max(segment.toTime - zoomOutStart, 0.001))
-  }
-
-  return 1
+  return getStationaryCameraFocusProgress(
+    segment,
+    routeProgressTime,
+    editorTravelerTrackingStopZoomDelaySeconds,
+    editorTravelerTrackingStopZoomTransitionSeconds,
+  )
 }
 
 function getRouteDistanceIndex(coordinates: RouteCoordinate[]) {
@@ -1498,24 +1473,7 @@ export function MapboxLocationPicker({
       const closeStopZoom = clampNumber(stopZoomState.baseZoom + editorTravelerTrackingStopZoomBoost, minZoom, maxZoom)
       const stopZoom =
         stopZoomState.baseZoom + (closeStopZoom - stopZoomState.baseZoom) * stopZoomAmount
-      const departurePreparation = easeInOut(
-        (progressTime -
-          (activeStopSegment.toTime - editorTravelerTrackingPredictionSeconds)) /
-          editorTravelerTrackingPredictionSeconds,
-      )
-      const departureZoom = clampNumber(
-        editorTravelerTrackingMaxZoom -
-          editorTravelerTrackingFastZoomDrop * speedProgress,
-        minZoom,
-        maxZoom,
-      )
-
-      return (
-        stopZoom +
-        (Math.min(stopZoom, departureZoom) - stopZoom) *
-          departurePreparation *
-          speedProgress
-      )
+      return stopZoom
     }
 
     trackingStopZoomRef.current = null
@@ -1878,11 +1836,14 @@ export function MapboxLocationPicker({
         setRouteProgressMarker(activeMap, targetCoordinate, progressTime)
 
         // One O(log n) plan lookup per frame; no route scans or bounds fitting.
-        const plannedZoom = getCameraPlanZoom(cameraZoomPlanRef.current, progressTime)
+        const landingFocusPoint = getFlightLandingFocusPoint(routePointsRef.current, progressTime)
+        const plannedTarget = landingFocusPoint
+          ? null
+          : getCameraPlanTarget(cameraZoomPlanRef.current, progressTime)
         const currentZoom = trackingCameraZoomRef.current ?? activeMap.getZoom()
         const lastTargetZoomCalculatedAt = trackingTargetZoomCalculatedAtRef.current
         if (
-          plannedZoom === null &&
+          plannedTarget === null &&
           (trackingTargetModeRef.current !== "follow" ||
             trackingTargetZoomRef.current === null ||
             lastTargetZoomCalculatedAt === null ||
@@ -1904,9 +1865,17 @@ export function MapboxLocationPicker({
         if (trackingTargetModeRef.current === "follow") {
           trackingTargetCenterRef.current = targetCoordinate
         }
-        if (plannedZoom !== null) {
-          trackingTargetCenterRef.current = targetCoordinate
-          trackingTargetZoomRef.current = plannedZoom
+        if (landingFocusPoint) {
+          trackingTargetCenterRef.current = [landingFocusPoint.lng, landingFocusPoint.lat]
+          trackingTargetZoomRef.current = clampNumber(
+            sharedFlightCameraMotion.landingFocusZoom,
+            activeMap.getMinZoom(),
+            activeMap.getMaxZoom(),
+          )
+          trackingTargetModeRef.current = "landing-focus"
+        } else if (plannedTarget !== null) {
+          trackingTargetCenterRef.current = plannedTarget.center ?? targetCoordinate
+          trackingTargetZoomRef.current = plannedTarget.zoom
           trackingTargetModeRef.current = "flight-overview"
         }
 
@@ -1919,7 +1888,7 @@ export function MapboxLocationPicker({
           progressTime,
         )
         const isRealtimeMotion = Boolean(
-          plannedZoom !== null || (activeTrackingSegment &&
+          plannedTarget !== null || (activeTrackingSegment &&
             isRealtimeNavigationSegment(activeTrackingSegment)),
         )
         const speedProgress = getTrackingSpeedProgress(trackingSpeedKmhRef.current)
@@ -1927,7 +1896,10 @@ export function MapboxLocationPicker({
         const currentMapCenter = activeMap.getCenter()
         const currentCenter: RouteCoordinate = currentCenterRef ?? [currentMapCenter.lng, currentMapCenter.lat]
         const targetDistanceKm = haversineDistance(currentCenter, targetCenter)
-        const followsVideoTime = isRealtimeMotion
+        const followsVideoTime =
+          isRealtimeMotion &&
+          trackingTargetModeRef.current !== "landing-focus" &&
+          trackingTargetModeRef.current !== "flight-overview"
         const catchUpProgress = easeInOut(
           (targetDistanceKm - editorTravelerTrackingCenterCatchUpStartKm) /
             (editorTravelerTrackingCenterCatchUpFullKm -
@@ -1984,7 +1956,7 @@ export function MapboxLocationPicker({
           0.28,
         )
         const nextZoom =
-          followsVideoTime && plannedZoom !== null
+          followsVideoTime && plannedTarget !== null
             ? targetZoom
             : currentZoom + (targetZoom - currentZoom) * zoomSmoothing
 
@@ -2193,18 +2165,19 @@ export function MapboxLocationPicker({
     // Choose the destination's planned zoom, never bounds spanning the seek.
     trackingStopZoomRef.current = null
     trackingSpeedKmhRef.current = getPlannedTrackingSpeedKmh(timestampRouteSegmentsRef.current, nextTime)
-    const plannedZoom = getCameraPlanZoom(cameraZoomPlanRef.current, nextTime)
-    const zoom = plannedZoom ?? clampNumber(getTravelerTrackingZoom(map, nextTime),
+    const plannedTarget = getCameraPlanTarget(cameraZoomPlanRef.current, nextTime)
+    const zoom = plannedTarget?.zoom ?? clampNumber(getTravelerTrackingZoom(map, nextTime),
       Math.max(map.getMinZoom(), editorTravelerTrackingMinZoom),
       Math.min(map.getMaxZoom(), editorTravelerTrackingCloseMaxZoom))
+    const center = plannedTarget?.center ?? nextCoordinate
     map.stop()
     setRouteProgressMarker(map, nextCoordinate, nextTime)
-    map.jumpTo({ center: nextCoordinate, zoom })
-    trackingCameraCenterRef.current = nextCoordinate
+    map.jumpTo({ center, zoom })
+    trackingCameraCenterRef.current = center
     trackingCameraZoomRef.current = zoom
-    trackingTargetCenterRef.current = nextCoordinate
+    trackingTargetCenterRef.current = center
     trackingTargetZoomRef.current = zoom
-    trackingTargetModeRef.current = plannedZoom === null ? "follow" : "flight-overview"
+    trackingTargetModeRef.current = plannedTarget === null ? "follow" : "flight-overview"
     trackingTargetZoomCalculatedAtRef.current = null
     startTravelerTrackingLoop()
   }, [liveRouteProgressTimeRef, routeProgressTime, isPlaying])

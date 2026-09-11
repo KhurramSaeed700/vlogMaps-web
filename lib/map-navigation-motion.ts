@@ -20,7 +20,61 @@ export const sharedFlightCameraMotion = {
   centerSmoothingMs: 480,
   zoomSmoothingMs: 900,
   boundedLookAheadSegments: 6,
+  landingFocusZoom: 12.4,
+  landingFocusMaxSeconds: 6,
 } as const
+
+interface FlightLandingPoint {
+  time: number
+  lat: number
+  lng: number
+  pointType?: string
+  flightPhase?: string
+}
+
+export function getFlightLandingFocusPoint<T extends FlightLandingPoint>(
+  points: readonly T[],
+  currentTime: number,
+) {
+  if (points.length === 0 || !Number.isFinite(currentTime)) {
+    return null
+  }
+
+  let low = 0
+  let high = points.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (points[middle].time <= currentTime) low = middle + 1
+    else high = middle
+  }
+
+  const latestIndex = low - 1
+  for (let index = latestIndex; index >= Math.max(0, latestIndex - 5); index -= 1) {
+    const point = points[index]
+    if (currentTime - point.time > sharedFlightCameraMotion.landingFocusMaxSeconds) {
+      break
+    }
+    if (point.pointType !== "flight" || point.flightPhase !== "landing") {
+      continue
+    }
+
+    let nextDistinctTime = Number.POSITIVE_INFINITY
+    const lastCandidateIndex = Math.min(points.length - 1, index + 6)
+    for (let candidateIndex = index + 1; candidateIndex <= lastCandidateIndex; candidateIndex += 1) {
+      if (points[candidateIndex].time > point.time + 0.1) {
+        nextDistinctTime = points[candidateIndex].time
+        break
+      }
+    }
+    const focusEnd = Math.min(
+      point.time + sharedFlightCameraMotion.landingFocusMaxSeconds,
+      nextDistinctTime,
+    )
+    return currentTime < focusEnd ? point : null
+  }
+
+  return null
+}
 
 export function getFlightLandingApproachStartTime(segment: {
   fromTime: number
@@ -343,6 +397,29 @@ export function getMapNavigationSmoothing(
 ) {
   const smoothing = 1 - Math.exp(-Math.max(deltaMs, 0) / Math.max(smoothingMs, 1))
   return Math.min(Math.max(smoothing, min), max)
+}
+
+export function getStationaryCameraFocusProgress(
+  segment: { fromTime: number; toTime: number },
+  currentTime: number,
+  delaySeconds = 3,
+  transitionSeconds = 2,
+) {
+  const duration = Math.max(segment.toTime - segment.fromTime, 0)
+  if (duration < 2.5) {
+    return 1
+  }
+
+  const delay = Math.min(delaySeconds, duration * 0.25)
+  const transition = Math.min(transitionSeconds, Math.max(0.75, duration * 0.16))
+  const zoomInStart = segment.fromTime + delay
+  const zoomInEnd = Math.min(zoomInStart + transition, segment.toTime)
+  const progress = Math.min(
+    Math.max((currentTime - zoomInStart) / Math.max(zoomInEnd - zoomInStart, 0.001), 0),
+    1,
+  )
+
+  return progress * progress * (3 - 2 * progress)
 }
 
 interface PausedNavigationSettledInput {

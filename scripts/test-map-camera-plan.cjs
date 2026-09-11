@@ -16,7 +16,8 @@ function load(name) {
   cache.set(filename, module.exports)
   return module.exports
 }
-const { buildCameraZoomPlan, getCameraPlanZoom } = load('map-camera-plan')
+const { buildCameraZoomPlan, getCameraPlanTarget, getCameraPlanZoom } = load('map-camera-plan')
+const { getFlightLandingFocusPoint, getStationaryCameraFocusProgress } = load('map-navigation-motion')
 const desktop = { width: 900, height: 700, minZoom: 0, maxZoom: 18 }
 const flight = (fromTime, toTime, totalDistance = 5840) => ({
   fromTime, toTime, totalDistance, routeKind: 'flight',
@@ -35,12 +36,38 @@ test('one-second Atlantic flight is wide BEFORE moving and arrives on video time
   assert.equal(getCameraPlanZoom(plan, w.end + 0.01), null)
   assert.ok(w.zoom < 3)
 })
+test('long-haul flights hold a continent-aware corridor center', () => {
+  const plan = build([flight(10, 70)])
+  const target = getCameraPlanTarget(plan, 40)
+  assert.ok(target.zoom < 3)
+  assert.ok(Math.abs(target.center[0] - -35.825) < 0.01)
+  assert.ok(Math.abs(target.center[1] - 44.78) < 0.01)
+})
+test('Pacific flight context uses the short path across the antimeridian', () => {
+  const pacific = {
+    ...flight(10, 70, 8300),
+    coordinates: [[139.7, 35.7], [179, 42], [-150, 40], [-122.4, 37.6]],
+  }
+  const target = getCameraPlanTarget(build([pacific]), 40)
+  assert.ok(target.center[0] > 170 || target.center[0] < -170)
+  assert.ok(target.zoom < 3)
+})
 test('dense global montage stays wide between flights; no landing zoom pulses', () => {
-  const plan = build([flight(10, 11), flight(12, 13, 8000), flight(14, 15, 11000)])
+  const secondFlight = {
+    ...flight(12, 13, 8000),
+    coordinates: [[2.35, 48.86], [31.24, 30.04]],
+  }
+  const plan = build([flight(10, 11), secondFlight, flight(14, 15, 11000)])
   assert.equal(plan.length, 1)
   for (let time = 10; time <= 15; time += 1 / 60) {
     assert.equal(getCameraPlanZoom(plan, time), plan[0].zoom)
   }
+  const firstCenter = getCameraPlanTarget(plan, 10.5).center
+  const secondCenter = getCameraPlanTarget(plan, 12.5).center
+  assert.ok(Math.abs(firstCenter[0] - -35.825) < 0.001)
+  assert.ok(Math.abs(firstCenter[1] - 44.78) < 0.001)
+  assert.ok(Math.abs(secondCenter[0] - 16.795) < 0.001)
+  assert.ok(Math.abs(secondCenter[1] - 39.45) < 0.001)
 })
 test('seeking, pausing and dropped frames cannot accumulate animation delay', () => {
   const plan = build([flight(10, 11), flight(30, 31)])
@@ -54,6 +81,32 @@ test('slow roads and stationary segments keep normal navigation', () => {
   assert.equal(build([{ ...flight(0, 5), isStationary: true }]).length, 0)
   assert.equal(build([flight(10, 10)]).length, 0)
   assert.equal(getCameraPlanZoom([], 0), null)
+})
+test('stationary camera targets never prepare a zoom-out before movement', () => {
+  const watchSource = fs.readFileSync(path.resolve(__dirname, '../components/maps/mapbox-travel-map.tsx'), 'utf8')
+  const editorSource = fs.readFileSync(path.resolve(__dirname, '../components/maps/mapbox-location-picker.tsx'), 'utf8')
+  assert.doesNotMatch(watchSource, /departureZoom[\s\S]*departureProgress/)
+  assert.doesNotMatch(editorSource, /stopZoom[\s\S]{0,500}departurePreparation/)
+  assert.match(editorSource, /return stopZoom/)
+  let previous = 0
+  for (let time = 10; time <= 30; time += 0.1) {
+    const progress = getStationaryCameraFocusProgress({ fromTime: 10, toTime: 30 }, time)
+    assert.ok(progress >= previous)
+    previous = progress
+  }
+  assert.equal(previous, 1)
+})
+test('landing focus holds the airport until the next distinct movement timestamp', () => {
+  const points = [
+    { time: 10, lat: 40.6, lng: -73.7, pointType: 'flight', flightPhase: 'takeoff' },
+    { time: 20, lat: 49.0, lng: 2.55, pointType: 'flight', flightPhase: 'landing' },
+    { time: 20.05, lat: 49.0, lng: 2.55, pointType: 'point' },
+    { time: 24, lat: 48.86, lng: 2.35, pointType: 'point' },
+  ]
+  assert.equal(getFlightLandingFocusPoint(points, 19.99), null)
+  assert.equal(getFlightLandingFocusPoint(points, 20.1), points[1])
+  assert.equal(getFlightLandingFocusPoint(points, 23.99), points[1])
+  assert.equal(getFlightLandingFocusPoint(points, 24), null)
 })
 test('rapid land movement and narrow mobile viewports also prepare early', () => {
   const road = { ...flight(10, 12, 400), routeKind: 'road' }
