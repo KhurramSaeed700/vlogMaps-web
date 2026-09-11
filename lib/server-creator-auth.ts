@@ -1,8 +1,7 @@
 import "server-only"
 
-import { auth, currentUser } from "@clerk/nextjs/server"
+import { auth } from "@clerk/nextjs/server"
 import { getPrisma } from "@/lib/prisma"
-import { isCreatorEmail } from "@/lib/creator-access"
 
 const approvedCreatorProfileStatuses = ["approved", "verified", "active"]
 const approvedCreatorUserTypes = ["creator", "admin"]
@@ -32,31 +31,12 @@ export async function requireApprovedCreator(): Promise<ApprovedCreator> {
   }
 
   const prisma = getPrisma()
-  const clerkUser = await currentUser()
-  const email = clerkUser?.primaryEmailAddress?.emailAddress?.toLowerCase() ?? null
-  const isDemoCreator = isCreatorEmail(email)
-
   if (!prisma) {
-    if (isDemoCreator) {
-      return {
-        userId,
-        databaseUserId: null,
-        ownerUserIds: [userId],
-        isAdmin: false,
-        isDemoCreator,
-      }
-    }
-
     throw new CreatorAuthorizationError(503, "Creator database is not configured.")
   }
 
-  const user = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { clerkUserId: userId },
-        ...(email ? [{ email: { equals: email, mode: "insensitive" as const } }] : []),
-      ],
-    },
+  const user = await prisma.user.findUnique({
+    where: { clerkUserId: userId },
     select: {
       id: true,
       userType: true,
@@ -90,7 +70,7 @@ export async function requireApprovedCreator(): Promise<ApprovedCreator> {
   )
   const hasApprovedApplication = Boolean(user?.creatorApplications.length)
 
-  if (!isDemoCreator && !hasCreatorType && !hasApprovedProfile && !hasApprovedApplication) {
+  if (!hasCreatorType && !hasApprovedProfile && !hasApprovedApplication) {
     throw new CreatorAuthorizationError(403, "Creator access required.")
   }
 
@@ -99,6 +79,6 @@ export async function requireApprovedCreator(): Promise<ApprovedCreator> {
     databaseUserId: user?.id ?? null,
     ownerUserIds: [...new Set([userId, user?.id].filter((value): value is string => Boolean(value)))],
     isAdmin,
-    isDemoCreator,
+    isDemoCreator: false,
   }
 }

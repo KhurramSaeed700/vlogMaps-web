@@ -446,15 +446,8 @@ function createDirectPostFlightTransferLeg(keyframe: RoutableKeyframe, nextKeyfr
   } satisfies RoutedLeg
 }
 
-export async function fetchRoutedLegsForKeyframes(
-  keyframes: RoutableKeyframe[],
-  options: FetchRoutedLegsOptions = {},
-) {
-  if (keyframes.length < 2) {
-    return [] as RoutedLeg[]
-  }
-
-  const legs = keyframes.slice(0, -1).map((keyframe, index) => {
+export function createInitialRoutedLegs(keyframes: RoutableKeyframe[]): RoutedLeg[] {
+  return keyframes.slice(0, -1).map((keyframe, index) => {
     const nextKeyframe = keyframes[index + 1]
     if (isFlightRouteLeg(keyframe.pointType, nextKeyframe.pointType)) {
       return createFlightLeg(keyframe, nextKeyframe)
@@ -464,6 +457,13 @@ export async function fetchRoutedLegsForKeyframes(
       ? createDirectPostFlightTransferLeg(keyframe, nextKeyframe)
       : createRoadLeg(keyframe, nextKeyframe, { status: "no-route" })
   })
+}
+
+export async function fetchRoutedLegsForKeyframes(
+  keyframes: RoutableKeyframe[],
+  options: FetchRoutedLegsOptions = {},
+) {
+  const legs = createInitialRoutedLegs(keyframes)
   const requests = keyframes.slice(0, -1).map(async (keyframe, index) => {
     const nextKeyframe = keyframes[index + 1]
     if (

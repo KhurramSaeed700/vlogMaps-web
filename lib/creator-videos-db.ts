@@ -346,7 +346,7 @@ export async function getCreatorVideoFromDb(videoId: string, requesterUserId?: s
       AND: [
         getVideoLookup(videoId),
         {
-          OR: [{ status: "published" }, { ownerUserId: requesterUserId ?? "" }, { ownerUserId: catalogOwnerUserId }],
+          OR: [{ status: "published" }, ...(requesterUserId ? [{ ownerUserId: requesterUserId }] : [])],
         },
       ],
     },

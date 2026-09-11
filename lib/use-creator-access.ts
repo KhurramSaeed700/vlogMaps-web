@@ -1,7 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { isCreatorEmail } from "@/lib/creator-access"
+import { useEffect, useState } from "react"
 
 interface CreatorAccessResponse {
   approved?: boolean
@@ -28,19 +27,19 @@ export function useCreatorAccess({
   isSignedIn?: boolean
   user: CreatorAccessUser | null | undefined
 }): CreatorAccessState {
-  const email = user?.primaryEmailAddress?.emailAddress ?? null
-  const isDemoCreator = useMemo(() => isCreatorEmail(email), [email])
-  const [isDatabaseCreator, setIsDatabaseCreator] = useState(false)
+  const [approvedUserId, setApprovedUserId] = useState<string | null>(null)
   const [isCheckingCreatorAccess, setIsCheckingCreatorAccess] = useState(false)
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || isDemoCreator) {
-      setIsDatabaseCreator(false)
+    if (!isLoaded || !isSignedIn || !user?.id) {
+      setApprovedUserId(null)
       setIsCheckingCreatorAccess(false)
       return
     }
 
     let isMounted = true
+    const checkingUserId = user.id
+    setApprovedUserId(null)
     setIsCheckingCreatorAccess(true)
 
     fetch("/api/creator/access", { cache: "no-store" })
@@ -53,12 +52,12 @@ export function useCreatorAccess({
       })
       .then((data) => {
         if (isMounted) {
-          setIsDatabaseCreator(Boolean(data.approved))
+          setApprovedUserId(data.approved === true ? checkingUserId : null)
         }
       })
       .catch(() => {
         if (isMounted) {
-          setIsDatabaseCreator(false)
+          setApprovedUserId(null)
         }
       })
       .finally(() => {
@@ -70,10 +69,10 @@ export function useCreatorAccess({
     return () => {
       isMounted = false
     }
-  }, [isDemoCreator, isLoaded, isSignedIn, user?.id])
+  }, [isLoaded, isSignedIn, user?.id])
 
   return {
-    isApprovedCreator: Boolean(isLoaded && isSignedIn && (isDemoCreator || isDatabaseCreator)),
+    isApprovedCreator: Boolean(isLoaded && isSignedIn && user?.id && approvedUserId === user.id),
     isCheckingCreatorAccess,
   }
 }

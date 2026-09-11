@@ -29,3 +29,11 @@ test('buffer grows with bandwidth but stays bounded', () => {
   assert.ok(fast.maxTargets <= 18)
   assert.deepEqual(policy({ downlink: 1000 }), fast)
 })
+
+test('observed tile latency and backlog override optimistic bandwidth', () => {
+  assert.equal(policy({ downlink: 100 }, true, { latencyMs: 2100, samples: 8, pending: 5 }).maxTargets, 3)
+  assert.equal(policy({ downlink: 100 }, true, { latencyMs: 1000, samples: 8, pending: 5 }).maxTargets, 6)
+  assert.equal(policy(undefined, true, { latencyMs: 100, samples: 8, pending: 60 }).maxTargets, 3)
+  assert.equal(policy(undefined, true, { latencyMs: 100, samples: 8, pending: 0 }).maxTargets, 18)
+  assert.equal(policy({ saveData: true }, true, { latencyMs: 100, samples: 8, pending: 0 }).maxTargets, 0)
+})

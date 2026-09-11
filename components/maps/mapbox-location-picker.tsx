@@ -2,6 +2,7 @@
 
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import { readMapPreloadPolicy } from "@/lib/map-preload-policy"
+import { attachMapLoading, canPreloadMap, createWorldFallbackStyle, getMapLoadingObservation, isMapStyleReady, setDetailedMapStyle } from "@/lib/map-loading"
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
 import { Crosshair, ExternalLink, Loader2, Play, Redo2, Search, Undo2, X } from "lucide-react"
@@ -14,7 +15,7 @@ import { getFlightRouteKeyframes } from "@/lib/flight-path"
 import type { CreatorTripEndpoint, CreatorTripRoute } from "@/lib/creator-trip-route"
 import { getTimestampLegKey, type CreatorRouteShapePoint, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
 import { getCoordinateSearchResult } from "@/lib/location-search/query-utils"
-import { fetchRoutedLegsForKeyframes, isFlightRouteLeg, type RouteCoordinate } from "@/lib/mapbox-directions"
+import { createGreatCircleFlightCoordinates, createInitialRoutedLegs, fetchRoutedLegsForKeyframes, isFlightRouteLeg, type RouteCoordinate, type RoutedLeg } from "@/lib/mapbox-directions"
 import {
   createFlightAirplaneMarkerElement,
   flightPathLineWidth,
@@ -845,7 +846,7 @@ function buildTimestampRouteSegments(legs: TimestampRouteSegmentInput[]) {
           fromTime: leg.fromTime,
           toTime: leg.toTime,
           routeKind: "flight",
-          coordinates: [leg.startCoordinate, leg.endCoordinate],
+          coordinates: createGreatCircleFlightCoordinates(leg.startCoordinate, leg.endCoordinate),
         }),
       ] satisfies TimestampRouteSegment[]
     }
@@ -1567,8 +1568,8 @@ export function MapboxLocationPicker({
       return
     }
 
-    const policy = readMapPreloadPolicy()
-    if (policy.maxTargets === 0 || document.hidden || !preloadMap.isStyleLoaded() || !preloadMap.areTilesLoaded()) {
+    const policy = readMapPreloadPolicy(getMapLoadingObservation(preloadMap))
+    if (policy.maxTargets === 0 || document.hidden || !canPreloadMap(preloadMap) || preloadMap.isEasing()) {
       scheduleRoutePreloadStep(Math.max(policy.delayMs, 1000))
       return
     }
@@ -1582,16 +1583,16 @@ export function MapboxLocationPicker({
     try {
       preloadMap.flyTo({
         center: target.center,
-        zoom: target.zoom,
+        zoom: Math.min(target.zoom, policy.maxTargets <= 3 ? 6 : policy.maxTargets <= 6 ? 10 : 14),
         bearing: 0,
         pitch: 0,
-        duration: 1400,
+        duration: 1,
         curve: 1,
         essential: true,
         preloadOnly: true,
       })
     } catch {
-      scheduleRoutePreloadStep()
+      scheduleRoutePreloadStep(policy.delayMs)
       return
     }
 
@@ -1602,7 +1603,7 @@ export function MapboxLocationPicker({
       }
 
       didScheduleNextStep = true
-      scheduleRoutePreloadStep()
+      scheduleRoutePreloadStep(policy.delayMs)
     }
 
     clearRoutePreloadTimer()
@@ -2230,7 +2231,7 @@ export function MapboxLocationPicker({
       const progressTime =
         liveRouteProgressTimeRef?.current ??
         routeProgressTimeRef.current
-      const policy = readMapPreloadPolicy()
+      const policy = readMapPreloadPolicy(getMapLoadingObservation(mapInstanceRef.current))
       const policySignature = `${policy.seconds}:${policy.maxTargets}`
       if (
         policySignature !== previousPolicy ||
@@ -2247,7 +2248,7 @@ export function MapboxLocationPicker({
       }
       const flightSegment =
         typeof progressTime === "number" && Number.isFinite(progressTime)
-          ? getFlightPreloadSegment(timestampRouteSegmentsRef.current, progressTime)
+          ? getFlightPreloadSegment(timestampRouteSegmentsRef.current, progressTime, policy.seconds)
           : null
       const flightSignature = flightSegment
         ? `flight:${flightSegment.legKey}:${Math.floor((progressTime ?? 0) / Math.max(3, policy.seconds / 2))}`
@@ -2812,20 +2813,20 @@ export function MapboxLocationPicker({
   }
 
   const runWhenMapStyleReady = (map: mapboxgl.Map, callback: () => void) => {
-    if (map.isStyleLoaded()) {
+    if (isMapStyleReady(map)) {
       callback()
       return
     }
 
-    map.once("idle", () => {
-      if (mapInstanceRef.current === map && map.isStyleLoaded()) {
+    map.once("style.load", () => {
+      if (mapInstanceRef.current === map && isMapStyleReady(map)) {
         callback()
       }
     })
   }
 
   const updateTimestampPointLayer = (map: mapboxgl.Map, currentPoints: CreatorMapPoint[]) => {
-    if (!map.isStyleLoaded()) {
+    if (!isMapStyleReady(map)) {
       removeTimestampPointLayer(map)
       return
     }
@@ -2902,7 +2903,7 @@ export function MapboxLocationPicker({
   }
 
   const updateRouteLayer = (map: mapboxgl.Map, segments: TimestampRouteSegment[]) => {
-    if (!map.isStyleLoaded()) {
+    if (!isMapStyleReady(map)) {
       removeRouteLayer(map)
       return
     }
@@ -3009,7 +3010,7 @@ export function MapboxLocationPicker({
       routeProgressTimeRef.current,
     )
 
-    if (!progressCoordinate || !map.isStyleLoaded()) {
+    if (!progressCoordinate || !isMapStyleReady(map)) {
       routeProgressMarkerRef.current?.remove()
       flightAirplaneMarkerRef.current?.remove()
       routeProgressMarkerRef.current = null
@@ -3032,7 +3033,7 @@ export function MapboxLocationPicker({
   }
 
   const updateTripRouteLayer = (map: mapboxgl.Map, coordinates: RouteCoordinate[]) => {
-    if (!map.isStyleLoaded() || coordinates.length < 2) {
+    if (!isMapStyleReady(map) || coordinates.length < 2) {
       removeTripRouteLayer(map)
       return
     }
@@ -3156,8 +3157,7 @@ export function MapboxLocationPicker({
       return
     }
 
-    fetchRoutedLegsForKeyframes(routePoints)
-      .then((legs) => {
+    const applyLegs = (legs: RoutedLeg[]) => {
         if (routeRequestIdRef.current !== routeRequestId || mapInstanceRef.current !== map) {
           return
         }
@@ -3231,7 +3231,11 @@ export function MapboxLocationPicker({
             scheduleRoutePreloadStep(0)
           }
         })
-      })
+      }
+
+    applyLegs(createInitialRoutedLegs(routePoints))
+    fetchRoutedLegsForKeyframes(routePoints)
+      .then(applyLegs)
       .catch(() => {
         if (routeRequestIdRef.current !== routeRequestId || mapInstanceRef.current !== map) {
           return
@@ -3513,7 +3517,7 @@ export function MapboxLocationPicker({
     const persistedView = persistedViewRef.current
     const map = new mapboxgl.Map({
       container: mapRef.current,
-      style: mapStyleOptions.find((option) => option.id === mapStyle)?.style ?? mapStyleOptions[0].style,
+      style: createWorldFallbackStyle(),
       center: persistedView?.center ?? (fallbackCenter as [number, number]),
       zoom: persistedView?.zoom ?? (value || points[0] ? 4 : 1.5),
       bearing: persistedView?.bearing ?? 0,
@@ -3524,6 +3528,7 @@ export function MapboxLocationPicker({
       maxTileCacheSize: editorVisibleMapMaxTileCacheSize,
     })
 
+    attachMapLoading(map, () => mapStyleOptions.find((option) => option.id === appliedMapStyleRef.current)?.style ?? mapStyleOptions[0].style)
     map.addControl(new mapboxgl.NavigationControl(), "bottom-right")
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right")
 
@@ -3799,7 +3804,7 @@ export function MapboxLocationPicker({
     appliedMapStyleRef.current = mapStyle
     persistCurrentMapView(map, mapStyle)
     setIsLoaded(false)
-    map.setStyle(styleUrl)
+    setDetailedMapStyle(map, styleUrl)
   }, [mapStyle])
 
   useEffect(() => {

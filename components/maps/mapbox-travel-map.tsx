@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   fetchRoutedLegsForKeyframes,
+  createGreatCircleFlightCoordinates,
   isFlightRouteLeg,
   type RouteCoordinate,
   type RoutedLeg,
@@ -23,6 +24,7 @@ import {
 import { hasMapboxAccessToken, mapboxAccessToken } from "@/lib/mapbox"
 import { buildCameraZoomPlan, getCameraPlanZoom, type CameraZoomWindow } from "@/lib/map-camera-plan"
 import { readMapPreloadPolicy } from "@/lib/map-preload-policy"
+import { attachMapLoading, canPreloadMap, createWorldFallbackStyle, getMapLoadingObservation, isMapStyleReady, setDetailedMapStyle } from "@/lib/map-loading"
 import { getFlightRouteKeyframes } from "@/lib/flight-path"
 import { getTimestampLegKey, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
 import { getCoordinateSearchResult } from "@/lib/location-search/query-utils"
@@ -703,7 +705,7 @@ function normalizeRoutedLegsForManualKeyframes(legs: RoutedLeg[], keyframes: Key
         ...leg,
         isFallback: true,
         routeKind: "flight" as const,
-        coordinates: [startCoordinate, endCoordinate],
+        coordinates: createGreatCircleFlightCoordinates(startCoordinate, endCoordinate),
       }
     }
 
@@ -792,7 +794,7 @@ function buildPendingRoutedLegs(keyframes: Keyframe[]) {
       isFallback: true,
       isStationary: keyframe.pointType === "stop",
       routeKind: isFlight ? "flight" as const : "road" as const,
-      coordinates: [
+      coordinates: isFlight ? createGreatCircleFlightCoordinates([keyframe.lng, keyframe.lat], [nextKeyframe.lng, nextKeyframe.lat]) : [
         [keyframe.lng, keyframe.lat],
         [nextKeyframe.lng, nextKeyframe.lat],
       ] as RouteCoordinate[],
@@ -2292,7 +2294,7 @@ function isPointWithinMapViewport(
 }
 
 function runWhenStyleReady(map: mapboxgl.Map, callback: () => void) {
-  if (map.isStyleLoaded()) {
+  if (isMapStyleReady(map)) {
     callback()
     return
   }
@@ -3956,7 +3958,7 @@ export function MapboxTravelMap({
     const revealTime = routeRevealTimeRef.current
     const revealedRouteSegments = getRevealedRouteSegments(activePositionedLegs, revealTime)
 
-    if (!map.isStyleLoaded()) {
+    if (!isMapStyleReady(map)) {
       return
     }
 
@@ -3982,7 +3984,7 @@ export function MapboxTravelMap({
     const activeKeyframes = markerKeyframesRef.current
     const activePositionedLegs = positionedLegsRef.current
 
-    if (!map.isStyleLoaded()) {
+    if (!isMapStyleReady(map)) {
       return
     }
 
@@ -4008,7 +4010,7 @@ export function MapboxTravelMap({
     const activePositionedLegs = positionedLegsRef.current
     const revealedRouteSegments = getRevealedRouteSegmentsByDistanceProgress(activePositionedLegs, progress)
 
-    if (!map.isStyleLoaded()) {
+    if (!isMapStyleReady(map)) {
       return
     }
 
@@ -4340,9 +4342,9 @@ export function MapboxTravelMap({
       return
     }
 
-    const policy = readMapPreloadPolicy()
-    if (policy.maxTargets === 0 || document.hidden || !preloadMap.isStyleLoaded() || !preloadMap.areTilesLoaded()) {
-      // Poll: loading tiles can make isStyleLoaded false without a style.load event.
+    const policy = readMapPreloadPolicy(getMapLoadingObservation(preloadMap))
+    if (policy.maxTargets === 0 || document.hidden || !canPreloadMap(preloadMap) || preloadMap.isEasing()) {
+      // Wait for style initialization, never for all visible tiles to finish.
       scheduleRoutePreloadStep(Math.max(policy.delayMs, 1000))
       return
     }
@@ -4356,16 +4358,16 @@ export function MapboxTravelMap({
     try {
       preloadMap.flyTo({
         center: target.center,
-        zoom: target.zoom,
+        zoom: Math.min(target.zoom, policy.maxTargets <= 3 ? 6 : policy.maxTargets <= 6 ? 10 : 14),
         bearing: 0,
         pitch: 0,
-        duration: 1400,
+        duration: 1,
         curve: 1,
         essential: true,
         preloadOnly: true,
       })
     } catch {
-      scheduleRoutePreloadStep()
+      scheduleRoutePreloadStep(policy.delayMs)
       return
     }
 
@@ -4376,7 +4378,7 @@ export function MapboxTravelMap({
       }
 
       didScheduleNextStep = true
-      scheduleRoutePreloadStep()
+      scheduleRoutePreloadStep(policy.delayMs)
     }
 
     clearRoutePreloadTimer()
@@ -4412,7 +4414,7 @@ export function MapboxTravelMap({
       mapboxgl.prewarm()
       map = new mapboxgl.Map({
         container: mapRef.current,
-        style: getMapStyleUrl(mapStyle),
+        style: createWorldFallbackStyle(),
         center: liveRouteCoordinateRef.current,
         zoom: 6,
         attributionControl: false,
@@ -4425,6 +4427,8 @@ export function MapboxTravelMap({
       return
     }
 
+    appliedMapStyleRef.current = mapStyle
+    attachMapLoading(map, () => getMapStyleUrl(appliedMapStyleRef.current))
     map.addControl(new mapboxgl.NavigationControl(), "bottom-left")
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right")
     map
@@ -4680,7 +4684,7 @@ export function MapboxTravelMap({
       }
 
       const playbackTime = latestPlaybackTimeRef.current
-      const policy = readMapPreloadPolicy()
+      const policy = readMapPreloadPolicy(getMapLoadingObservation(map))
       const policySignature = `${policy.seconds}:${policy.maxTargets}`
       if (
         policySignature !== previousPolicy ||
@@ -4695,7 +4699,7 @@ export function MapboxTravelMap({
         schedulePlaybackRefresh()
         return
       }
-      const flightLeg = getFlightPreloadSegment(positionedLegs, playbackTime)
+      const flightLeg = getFlightPreloadSegment(positionedLegs, playbackTime, policy.seconds)
       const bufferWindow = Math.floor(playbackTime / Math.max(3, policy.seconds / 2))
       const flightSignature = flightLeg
         ? `${basePreloadSignature}:flight:${flightLeg.fromTime}:${flightLeg.toTime}:${bufferWindow}`
@@ -5071,7 +5075,7 @@ export function MapboxTravelMap({
     clearRouteIntroAnimation()
     clearProgrammaticCameraMove()
     map.stop()
-    map.setStyle(getMapStyleUrl(mapStyle))
+    setDetailedMapStyle(map, getMapStyleUrl(mapStyle))
   }, [mapStyle])
 
   const getLocationSearchBias = (): LocationSearchBias => {

@@ -22,11 +22,12 @@ function harness(component) {
   const timers = new Map()
   const idle = new Set()
   const calls = []
-  const state = { ready: true, hidden: false, maxTargets: 3 }
+  const state = { ready: true, tilesReady: true, hidden: false, maxTargets: 3 }
   let nextTimer = 0
   const map = {
     isStyleLoaded: () => state.ready,
-    areTilesLoaded: () => state.ready,
+    areTilesLoaded: () => state.tilesReady,
+    isEasing: () => false,
     flyTo: (options) => calls.push(options),
     once: (event, callback) => { assert.equal(event, 'idle'); idle.add(callback) },
     off: (event, callback) => idle.delete(callback),
@@ -43,6 +44,8 @@ function harness(component) {
   const bindings = {
     ...refs,
     readMapPreloadPolicy: () => ({ maxTargets: state.maxTargets, delayMs: 500 }),
+    canPreloadMap: () => state.ready,
+    getMapLoadingObservation: () => undefined,
     window: {
       setTimeout: (callback) => { timers.set(++nextTimer, callback); return nextTimer },
       clearTimeout: (id) => timers.delete(id),
@@ -61,7 +64,7 @@ function harness(component) {
 }
 
 for (const component of ['mapbox-travel-map.tsx', 'mapbox-location-picker.tsx']) {
-  test(`${component}: tile loading retries without waiting for a style.load event`, () => {
+  test(`${component}: style initialization retries without consuming targets`, () => {
     const h = harness(component)
     h.state.ready = false
     h.runRoutePreloadStep(1)
@@ -70,6 +73,16 @@ for (const component of ['mapbox-travel-map.tsx', 'mapbox-location-picker.tsx'])
     h.tick()
     assert.equal(h.calls.length, 1)
     assert.equal(h.calls[0].preloadOnly, true)
+    assert.equal(h.refs.routePreloadQueueRef.current.length, 2)
+  })
+  test(`${component}: unfinished visible tiles do not starve bounded preloading`, () => {
+    const h = harness(component)
+    h.state.tilesReady = false
+    h.runRoutePreloadStep(1)
+    assert.equal(h.calls.length, 1)
+    assert.equal(h.calls[0].preloadOnly, true)
+    assert.equal(h.calls[0].duration, 1)
+    assert.equal(h.calls[0].zoom, 6)
     assert.equal(h.refs.routePreloadQueueRef.current.length, 2)
   })
   test(`${component}: hidden and disabled preloads do not consume targets`, () => {

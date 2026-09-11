@@ -1,10 +1,10 @@
 "use client"
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import Image from "next/image"
 import Link from "next/link"
-import { ArrowLeft, Pencil, RotateCcw, Settings, Share2 } from "lucide-react"
+import { ArrowLeft, ChevronUp, Pencil, RotateCcw, Settings, Share2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SplitViewResizer } from "@/components/ui/split-view-resizer"
 import { MapboxTravelMap } from "@/components/maps/mapbox-travel-map"
@@ -88,17 +88,85 @@ const WatchTimestampList = memo(function WatchTimestampList({
   points,
   activeIndex,
   onSelect,
+  onHide,
 }: {
   points: CreatorMapPoint[]
   activeIndex: number
   onSelect: (time: number) => void
+  onHide: () => void
 }) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const rowRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const activeIndexRef = useRef(activeIndex)
+
+  useLayoutEffect(() => {
+    activeIndexRef.current = activeIndex
+  }, [activeIndex])
+
+  useLayoutEffect(() => {
+    const scrollContainer = scrollContainerRef.current
+    if (!scrollContainer) {
+      return
+    }
+
+    const updateCenterPadding = () => {
+      const rowHeight = rowRefs.current.find((row) => row)?.offsetHeight ?? 0
+      const centerPadding = Math.max((scrollContainer.clientHeight - rowHeight) / 2, 0)
+      scrollContainer.style.paddingBlock = `${centerPadding}px`
+
+      const activeRow = rowRefs.current[activeIndexRef.current]
+      if (activeRow) {
+        scrollContainer.scrollTop =
+          activeRow.offsetTop + activeRow.offsetHeight / 2 - scrollContainer.clientHeight / 2
+      }
+    }
+
+    updateCenterPadding()
+    const resizeObserver = new ResizeObserver(updateCenterPadding)
+    resizeObserver.observe(scrollContainer)
+
+    return () => resizeObserver.disconnect()
+  }, [points])
+
+  useEffect(() => {
+    if (activeIndex < 0) {
+      return
+    }
+
+    const scrollContainer = scrollContainerRef.current
+    const activeRow = rowRefs.current[activeIndex]
+    if (!scrollContainer || !activeRow) {
+      return
+    }
+
+    const targetTop = activeRow.offsetTop + activeRow.offsetHeight / 2 - scrollContainer.clientHeight / 2
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    scrollContainer.scrollTo({
+      top: targetTop,
+      behavior: prefersReducedMotion ? "auto" : "smooth",
+    })
+  }, [activeIndex])
+
   return (
     <section
       aria-label="Video timestamps"
-      className="flex min-h-0 max-h-[38dvh] flex-col border-t border-white/10 bg-[linear-gradient(180deg,#09090b_0%,#050506_100%)] lg:max-h-none lg:flex-1"
+      className="order-3 flex h-[min(62dvh,32rem)] min-h-0 shrink-0 flex-col border-t border-white/10 bg-[linear-gradient(180deg,#09090b_0%,#050506_100%)] lg:order-none lg:h-auto lg:max-h-none lg:flex-1"
     >
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 pb-12">
+      <div className="flex h-11 shrink-0 items-center justify-between border-b border-white/[0.07] px-3 lg:hidden">
+        <h2 className="text-xs font-semibold text-white/80">Timestamps</h2>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onHide}
+          aria-label="Hide timestamps"
+          title="Hide timestamps"
+          className="h-8 w-8 text-white/75 hover:bg-white/10 hover:text-white"
+        >
+          <ChevronUp className="h-4 w-4" />
+        </Button>
+      </div>
+      <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1.5">
         {points.length > 0 ? (
           points.map((point, index) => {
             const isActive = index === activeIndex
@@ -113,11 +181,14 @@ const WatchTimestampList = memo(function WatchTimestampList({
             return (
               <button
                 key={point.id}
+                ref={(element) => {
+                  rowRefs.current[index] = element
+                }}
                 type="button"
                 aria-current={isActive ? "true" : undefined}
                 aria-label={`Play timestamp ${index + 1}, ${getWatchTimestampLabel(point)}, at ${formatDuration(point.time)}`}
                 onClick={() => onSelect(point.time)}
-                className={`group relative mb-1 grid min-h-9 w-full scroll-mb-12 grid-cols-[1.5rem_minmax(5.25rem,auto)_minmax(0,1fr)_auto] items-center gap-x-2 overflow-hidden rounded-lg border px-2 py-1.5 text-left shadow-sm transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 ${
+                className={`group relative mb-1 grid min-h-9 w-full grid-cols-[1.5rem_minmax(5.25rem,auto)_minmax(0,1fr)_auto] items-center gap-x-2 overflow-hidden rounded-lg border px-2 py-1.5 text-left shadow-sm transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 ${
                   isActive
                     ? "border-blue-400/30 bg-[linear-gradient(90deg,rgba(37,99,235,0.2),rgba(30,41,59,0.46))] shadow-[0_8px_24px_rgba(0,0,0,0.22)]"
                     : "border-white/[0.065] bg-white/[0.025] hover:border-white/15 hover:bg-white/[0.06]"
@@ -370,6 +441,16 @@ export function WatchExperience({
     setIsPlaying(true)
   }, [commitCurrentTime])
 
+  const hideMobileTimestamps = useCallback(() => {
+    const wrapper = wrapperRef.current
+    if (!wrapper) {
+      return
+    }
+
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    wrapper.scrollTo({ top: 0, behavior: prefersReducedMotion ? "auto" : "smooth" })
+  }, [])
+
   const shareVideo = async () => {
     if (isSharing || typeof window === "undefined") {
       return
@@ -404,8 +485,8 @@ export function WatchExperience({
   }
 
   return (
-    <div ref={wrapperRef} className="flex h-[100dvh] flex-col overflow-hidden bg-black text-white">
-      <header className="relative z-50 shrink-0 bg-black/75 p-1.5 backdrop-blur-sm sm:p-2">
+    <div ref={wrapperRef} className="flex h-[100dvh] flex-col overflow-y-auto bg-black text-white lg:overflow-hidden">
+      <header className="sticky top-0 z-50 shrink-0 bg-black/75 p-1.5 backdrop-blur-sm sm:p-2 lg:relative">
         <div className="flex w-full items-center justify-between gap-3">
           <div className="flex items-center">
             <Link href="/">
@@ -503,14 +584,14 @@ export function WatchExperience({
 
       <div
         ref={splitViewRef}
-        className="relative flex min-h-0 w-full flex-1 flex-col lg:grid"
+        className="relative flex w-full flex-none flex-col lg:min-h-0 lg:flex-1 lg:grid"
         style={{
           "--split-view-left": "50%",
           gridTemplateColumns: "minmax(0, var(--split-view-left)) minmax(0, 1fr)",
         } as CSSProperties}
       >
-        <div className="relative z-10 flex min-h-0 shrink-0 flex-col overflow-hidden bg-black lg:h-full">
-          <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-gray-950">
+        <div className="contents lg:relative lg:z-10 lg:flex lg:min-h-0 lg:h-full lg:shrink-0 lg:flex-col lg:overflow-hidden lg:bg-black">
+          <div className="relative order-1 aspect-video w-full shrink-0 overflow-hidden bg-gray-950 lg:order-none">
             <YouTubePlayer
               videoId={video.youtubeId}
               currentTime={currentTime}
@@ -535,10 +616,11 @@ export function WatchExperience({
             points={routePoints}
             activeIndex={activeTimestampIndex}
             onSelect={jumpToKeyframe}
+            onHide={hideMobileTimestamps}
           />
         </div>
 
-        <div className="relative z-0 min-h-0 flex-1 overflow-hidden lg:h-full">
+        <div className="relative z-0 order-2 h-[calc(100dvh-3rem-56.25vw)] min-h-[20rem] shrink-0 overflow-hidden sm:h-[calc(100dvh-3.5rem-56.25vw)] lg:order-none lg:h-full lg:min-h-0 lg:flex-1">
           <MapboxTravelMap
             keyframes={mapRoutePoints}
             markerKeyframes={routePoints}

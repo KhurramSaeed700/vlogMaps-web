@@ -124,7 +124,11 @@ export function getFlightCameraPreloadTargets({
   takeoffZoom,
   landingZoom,
 }: FlightCameraPreloadInput): FlightCameraPreloadTarget[] {
-  const targets: FlightCameraPreloadTarget[] = [overview]
+  const targets: FlightCameraPreloadTarget[] = [
+    overview,
+    { center: landingCenter, zoom: Math.min(landingZoom, 6) },
+    { center: landingCenter, zoom: landingZoom },
+  ]
   const sampleCount = sharedFlightPreloadMotion.cameraTransitionSampleCount
 
   // The takeoff viewport is already visible. Warm the landing transition next
@@ -322,11 +326,12 @@ export function getFlightOverviewSegment<T extends TimedNavigationSegment>(
 export function getFlightPreloadSegment<T extends TimedNavigationSegment>(
   segments: T[],
   currentTime: number,
+  leadSeconds: number = sharedFlightPreloadMotion.leadSeconds,
 ) {
   return getUpcomingFlightSegment(
     segments,
     currentTime,
-    sharedFlightPreloadMotion.leadSeconds,
+    Math.max(sharedFlightPreloadMotion.leadSeconds, leadSeconds),
   )
 }
 
