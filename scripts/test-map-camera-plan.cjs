@@ -34,14 +34,13 @@ test('one-second Atlantic flight is wide BEFORE moving and arrives on video time
   assert.equal(getCameraPlanZoom(plan, 11), w.zoom)
   assert.equal(getCameraPlanZoom(plan, w.end), 12)
   assert.equal(getCameraPlanZoom(plan, w.end + 0.01), null)
-  assert.ok(w.zoom < 3)
+  assert.ok(w.zoom >= 3)
 })
-test('long-haul flights hold a continent-aware corridor center', () => {
+test('long-haul flights use a readable regional scale and follow the traveler', () => {
   const plan = build([flight(10, 70)])
   const target = getCameraPlanTarget(plan, 40)
-  assert.ok(target.zoom < 3)
-  assert.ok(Math.abs(target.center[0] - -35.825) < 0.01)
-  assert.ok(Math.abs(target.center[1] - 44.78) < 0.01)
+  assert.ok(target.zoom >= 3)
+  assert.equal(target.center, null)
 })
 test('Pacific flight context uses the short path across the antimeridian', () => {
   const pacific = {
@@ -49,25 +48,21 @@ test('Pacific flight context uses the short path across the antimeridian', () =>
     coordinates: [[139.7, 35.7], [179, 42], [-150, 40], [-122.4, 37.6]],
   }
   const target = getCameraPlanTarget(build([pacific]), 40)
-  assert.ok(target.center[0] > 170 || target.center[0] < -170)
-  assert.ok(target.zoom < 3)
+  assert.equal(target.center, null)
+  assert.ok(target.zoom >= 3)
 })
-test('dense global montage stays wide between flights; no landing zoom pulses', () => {
+test('short flights recover regional detail after long flights without airport zoom pulses', () => {
   const secondFlight = {
-    ...flight(12, 13, 8000),
+    ...flight(12, 13, 800),
     coordinates: [[2.35, 48.86], [31.24, 30.04]],
   }
   const plan = build([flight(10, 11), secondFlight, flight(14, 15, 11000)])
-  assert.equal(plan.length, 1)
-  for (let time = 10; time <= 15; time += 1 / 60) {
-    assert.equal(getCameraPlanZoom(plan, time), plan[0].zoom)
+  assert.equal(plan.length, 3)
+  assert.ok(getCameraPlanZoom(plan, 12.5) > getCameraPlanZoom(plan, 10.5))
+  for (let time = 11; time < 12; time += 1 / 60) {
+    assert.ok(getCameraPlanZoom(plan, time) <= plan[1].zoom)
   }
-  const firstCenter = getCameraPlanTarget(plan, 10.5).center
-  const secondCenter = getCameraPlanTarget(plan, 12.5).center
-  assert.ok(Math.abs(firstCenter[0] - -35.825) < 0.001)
-  assert.ok(Math.abs(firstCenter[1] - 44.78) < 0.001)
-  assert.ok(Math.abs(secondCenter[0] - 16.795) < 0.001)
-  assert.ok(Math.abs(secondCenter[1] - 39.45) < 0.001)
+  assert.equal(getCameraPlanTarget(plan, 12.5).center, null)
 })
 test('seeking, pausing and dropped frames cannot accumulate animation delay', () => {
   const plan = build([flight(10, 11), flight(30, 31)])
@@ -112,7 +107,8 @@ test('rapid land movement and narrow mobile viewports also prepare early', () =>
   const road = { ...flight(10, 12, 400), routeKind: 'road' }
   const wide = build([road])
   const mobile = build([road], { ...desktop, width: 360, height: 300 })
-  assert.ok(mobile[0].zoom < wide[0].zoom)
+  assert.ok(mobile[0].zoom <= wide[0].zoom)
+  assert.ok(mobile[0].zoom >= 5.2)
   assert.equal(getCameraPlanZoom(mobile, 10), mobile[0].zoom)
 })
 test('zoom is continuous and monotonic during preparation and recovery', () => {

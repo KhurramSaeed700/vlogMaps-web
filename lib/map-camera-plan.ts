@@ -64,8 +64,7 @@ function getFlightContextCenter(
 }
 
 /** Build once per route/viewport change, never inside requestAnimationFrame.
- * Overlapping preparation/recovery windows share a cruise zoom. This prevents
- * city-level tile requests between tightly edited, consecutive country changes.
+ * Adjacent legs transition directly between their regional zoom levels.
  */
 export function buildCameraZoomPlan(
   segments: readonly CameraSegment[],
@@ -98,10 +97,11 @@ export function buildCameraZoomPlan(
     for (const coordinate of segment.coordinates) {
       latitudeScale = Math.min(latitudeScale, Math.cos(Math.min(80, Math.abs(coordinate[1])) * Math.PI / 180))
     }
-    const zoom = Math.max(viewport.minZoom, Math.min(
+    const readableZoom = isFlight ? (segment.totalDistance >= 2500 ? 3 : 4.5) : 5.2
+    const zoom = Math.max(viewport.minZoom, Math.min(viewport.maxZoom, Math.max(readableZoom, Math.min(
       viewport.maxZoom, 6.6,
       Math.log2(40075 * latitudeScale * pixels * 0.6 / (512 * visibleKm)),
-    ))
+    ))))
     const lead = Math.min(3.5, Math.max(1, (12 - zoom) / 3))
     const window: CameraZoomWindow = {
       start: segment.fromTime - lead,
@@ -117,22 +117,25 @@ export function buildCameraZoomPlan(
           }]
         : [],
     }
-    // A later, longer jump can start preparing earlier than its predecessor.
-    // Merge backwards too, so windows stay disjoint for binary search.
-    while (windows.length && window.start <= windows[windows.length - 1].end) {
-      const previous = windows.pop()!
-      window.start = Math.min(previous.start, window.start)
-      window.departure = Math.min(previous.departure, window.departure)
-      window.arrival = Math.max(previous.arrival, window.arrival)
-      window.end = Math.max(previous.end, window.end)
-      window.zoom = Math.min(previous.zoom, window.zoom)
-      window.flightContexts = [...previous.flightContexts, ...window.flightContexts]
+    // Keep each leg's scale. Sharing the widest zoom across a montage can
+    // leave a local journey at globe scale long after its flight has ended.
+    const previous = windows[windows.length - 1]
+    if (previous && window.start <= previous.end) {
+      const boundary = Math.max(previous.arrival, window.start)
+      previous.end = boundary
+      window.start = boundary
     }
     windows.push(window)
   }
-  for (const window of windows) {
+  for (let index = 0; index < windows.length; index += 1) {
+    const window = windows[index]
     window.fromZoom = Math.max(window.zoom, Math.min(viewport.maxZoom, getFollowZoom(window.start)))
     window.toZoom = Math.max(window.zoom, Math.min(viewport.maxZoom, getFollowZoom(window.end)))
+    const previous = windows[index - 1]
+    if (previous && previous.end === window.start) {
+      previous.toZoom = previous.zoom
+      window.fromZoom = previous.zoom
+    }
   }
   return windows
 }
@@ -141,13 +144,14 @@ export function buildCameraZoomPlan(
  * Seeking, pausing and dropped frames evaluate the same video-time trajectory.
  */
 export function getCameraPlanZoom(plan: readonly CameraZoomWindow[], time: number): number | null {
-  return getCameraPlanTarget(plan, time)?.zoom ?? null
+  const window = getCameraPlanWindow(plan, time)
+  return window ? getWindowZoom(window, time) : null
 }
 
-export function getCameraPlanTarget(
+function getCameraPlanWindow(
   plan: readonly CameraZoomWindow[],
   time: number,
-): CameraPlanTarget | null {
+) {
   if (!Number.isFinite(time)) return null
   let low = 0
   let high = plan.length
@@ -158,6 +162,10 @@ export function getCameraPlanTarget(
   }
   const window = plan[low]
   if (!window || time < window.start) return null
+  return window
+}
+
+function getWindowZoom(window: CameraZoomWindow, time: number) {
   let zoom: number
   if (time < window.departure) {
     zoom = window.fromZoom + (window.zoom - window.fromZoom) *
@@ -169,23 +177,16 @@ export function getCameraPlanTarget(
       ease((time - window.arrival) / (window.end - window.arrival))
   }
 
-  const contexts = window.flightContexts
-  let center: [number, number] | null = null
-  if (contexts.length > 0) {
-    let low = 0
-    let high = contexts.length
-    while (low < high) {
-      const middle = (low + high) >>> 1
-      if (contexts[middle].departure <= time) low = middle + 1
-      else high = middle
-    }
-    const previous = contexts[Math.max(0, low - 1)]
-    const upcoming = contexts[Math.min(low, contexts.length - 1)]
-    center =
-      previous && time <= previous.arrival
-        ? previous.center
-        : upcoming?.center ?? previous?.center ?? null
-  }
+  return zoom
+}
 
-  return { zoom, center }
+export function getCameraPlanTarget(
+  plan: readonly CameraZoomWindow[],
+  time: number,
+): CameraPlanTarget | null {
+  const window = getCameraPlanWindow(plan, time)
+  if (!window) return null
+  const zoom = getWindowZoom(window, time)
+  // Keep the traveler visible at regional scales, including narrow screens.
+  return { zoom, center: null }
 }

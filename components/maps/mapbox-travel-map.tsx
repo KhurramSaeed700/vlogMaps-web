@@ -1934,6 +1934,7 @@ function getPlaybackRoutePreloadTargets(
   cameraTimeline: CameraTimelineEntry[],
   currentTime: number,
   policy = readMapPreloadPolicy(),
+  cameraPlan: readonly CameraZoomWindow[] = [],
 ) {
   const bounds = getRouteTimeBounds(legs)
   if (!bounds || currentTime >= bounds.end || policy.samples === 0) {
@@ -1959,6 +1960,14 @@ function getPlaybackRoutePreloadTargets(
       return []
     }
 
+    const plannedTarget = getCameraPlanTarget(cameraPlan, time)
+    if (plannedTarget) {
+      return [{
+        center: plannedTarget.center ?? coordinate,
+        zoom: Math.min(plannedTarget.zoom, playbackRoutePreloadMaxZoom),
+        mode: "flight-overview",
+      }]
+    }
     const timelineTarget = getCameraTimelineTargetAtTime(cameraTimeline, time)
     const automaticTarget: AutomaticCameraTarget = timelineTarget
       ? {
@@ -3581,8 +3590,7 @@ export function MapboxTravelMap({
       const targetZoom = targetCameraZoomRef.current
       const followsVideoTime =
         isRealtimeMotion &&
-        targetCameraModeRef.current !== "landing-focus" &&
-        targetCameraModeRef.current !== "flight-overview"
+        targetCameraModeRef.current !== "landing-focus"
       effectiveCameraZoomTarget =
         !isCatchUp &&
         !isCameraOverview &&
@@ -3697,7 +3705,7 @@ export function MapboxTravelMap({
   }
 
   const startMarkerAnimation = () => {
-    if (animationFrameRef.current !== null) {
+    if (isRouteIntroActiveRef.current || animationFrameRef.current !== null) {
       return
     }
 
@@ -4032,6 +4040,7 @@ export function MapboxTravelMap({
     const firstTime = keyframesRef.current[0]?.time ?? 0
     const lastTime = keyframesRef.current[keyframesRef.current.length - 1]?.time ?? firstTime
     const routeDuration = Math.max(lastTime - firstTime, 1)
+    let lastRouteDrawAt = -Infinity
 
     const animateRouteIntro = (timestamp: number) => {
       const currentMap = mapInstanceRef.current
@@ -4056,14 +4065,18 @@ export function MapboxTravelMap({
       const introMarkerTime =
         getRouteTimeAtDistanceProgress(positionedLegsRef.current, progress) ?? introTime
 
-      targetRouteTimeRef.current = introTime
-      animatedRouteTimeRef.current = introTime
-      routeRevealTimeRef.current = introTime
+      targetRouteTimeRef.current = introMarkerTime
+      animatedRouteTimeRef.current = introMarkerTime
+      routeRevealTimeRef.current = introMarkerTime
       targetRouteCoordinateRef.current = introCoordinate
       animatedRouteCoordinateRef.current = introCoordinate
       syncTravelerMarker(currentMap, introMarkerTime, introCoordinate)
-      drawRouteIntroProgress(currentMap, progress, introTime)
-      syncTravelerMarkerVisibility(currentMap)
+      // Keep marker motion at display refresh rate; GeoJSON and marker lists
+      // only need 20 updates per second during the accelerated preview.
+      if (timestamp - lastRouteDrawAt >= 50) {
+        drawRouteIntroProgress(currentMap, progress, introMarkerTime)
+        lastRouteDrawAt = timestamp
+      }
 
       if (progress >= 1) {
         routeRevealTimeRef.current = lastTime
@@ -4711,8 +4724,8 @@ export function MapboxTravelMap({
           ? getFlightPathPreloadTargets(map, positionedLegs, flightLeg)
           : getRapidLandPathPreloadTargets(map, positionedLegs, rapidLandLeg!)
         routePreloadQueueRef.current = dedupeRoutePreloadTargets([
+          ...getPlaybackRoutePreloadTargets(map, positionedLegs, safeKeyframes, cameraTimelineRef.current, playbackTime, policy, cameraZoomPlanRef.current),
           ...transitionTargets,
-          ...getPlaybackRoutePreloadTargets(map, positionedLegs, safeKeyframes, cameraTimelineRef.current, playbackTime, policy),
         ]).slice(0, policy.maxTargets)
         if (routePreloadQueueRef.current.length > 0) {
           scheduleRoutePreloadStep(0)
@@ -4742,6 +4755,7 @@ export function MapboxTravelMap({
             cameraTimelineRef.current,
             playbackTime,
             policy,
+            cameraZoomPlanRef.current,
           )
           if (routePreloadQueueRef.current.length > 0) {
             scheduleRoutePreloadStep(0)
@@ -5022,6 +5036,7 @@ export function MapboxTravelMap({
         return
       }
 
+      if (isRouteIntroActiveRef.current) return
       const playbackTime = latestPlaybackTimeRef.current
       const playbackCoordinate =
         getRouteCoordinateAtTime(positionedLegsRef.current, playbackTime) ??

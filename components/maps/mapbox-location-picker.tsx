@@ -9,7 +9,7 @@ import { Crosshair, ExternalLink, Loader2, Play, Redo2, Search, Undo2, X } from 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { hasMapboxAccessToken, mapboxAccessToken } from "@/lib/mapbox"
-import { buildCameraZoomPlan, getCameraPlanTarget, getCameraPlanZoom, type CameraZoomWindow } from "@/lib/map-camera-plan"
+import { buildCameraZoomPlan, getCameraPlanTarget, type CameraZoomWindow } from "@/lib/map-camera-plan"
 import { getInterpolatedPointAtTime, type CreatorMapPoint } from "@/lib/creator-points"
 import { getFlightRouteKeyframes } from "@/lib/flight-path"
 import type { CreatorTripEndpoint, CreatorTripRoute } from "@/lib/creator-trip-route"
@@ -1722,10 +1722,12 @@ export function MapboxLocationPicker({
       const sampleTime =
         progressTime +
         ((windowEnd - progressTime) * index) / policy.samples
+      const plannedTarget = getCameraPlanTarget(cameraZoomPlanRef.current, sampleTime)
       const flightCameraTarget = getFlightTrackingCameraTarget(map, sampleTime)
       const center =
-        flightCameraTarget?.center ??
-        getRouteProgressCoordinate(segments, sampleTime)
+        plannedTarget
+          ? plannedTarget.center ?? getRouteProgressCoordinate(segments, sampleTime)
+          : flightCameraTarget?.center ?? getRouteProgressCoordinate(segments, sampleTime)
       if (!center) {
         continue
       }
@@ -1744,7 +1746,7 @@ export function MapboxLocationPicker({
       )
       appendTarget({
         center,
-        zoom: getCameraPlanZoom(cameraZoomPlanRef.current, sampleTime) ?? zoom,
+        zoom: plannedTarget?.zoom ?? zoom,
         mode: flightCameraTarget?.mode ?? "follow",
       })
     }
@@ -1843,6 +1845,7 @@ export function MapboxLocationPicker({
         const currentZoom = trackingCameraZoomRef.current ?? activeMap.getZoom()
         const lastTargetZoomCalculatedAt = trackingTargetZoomCalculatedAtRef.current
         if (
+          !landingFocusPoint &&
           plannedTarget === null &&
           (trackingTargetModeRef.current !== "follow" ||
             trackingTargetZoomRef.current === null ||
@@ -1898,8 +1901,7 @@ export function MapboxLocationPicker({
         const targetDistanceKm = haversineDistance(currentCenter, targetCenter)
         const followsVideoTime =
           isRealtimeMotion &&
-          trackingTargetModeRef.current !== "landing-focus" &&
-          trackingTargetModeRef.current !== "flight-overview"
+          trackingTargetModeRef.current !== "landing-focus"
         const catchUpProgress = easeInOut(
           (targetDistanceKm - editorTravelerTrackingCenterCatchUpStartKm) /
             (editorTravelerTrackingCenterCatchUpFullKm -
@@ -2249,8 +2251,8 @@ export function MapboxLocationPicker({
           : []
         if (typeof progressTime === "number") {
           routePreloadQueueRef.current = [
-            ...routePreloadQueueRef.current,
             ...getPlaybackPreloadTargets(progressTime),
+            ...routePreloadQueueRef.current,
           ].slice(0, policy.maxTargets)
         }
         if (routePreloadQueueRef.current.length > 0) {
