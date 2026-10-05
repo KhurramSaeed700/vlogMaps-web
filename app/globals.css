@@ -146,3 +146,36 @@
     @apply min-h-screen bg-background text-foreground;
   }
 }
+.map-search-result-popup .mapboxgl-popup-content {
+  background: #fff;
+  color: #18181b;
+  border-radius: 12px;
+  padding: 16px 32px 16px 16px;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 20%);
+}
+
+.map-search-result-popup .mapboxgl-popup-close-button {
+  color: #52525b;
+  width: 28px;
+  height: 28px;
+  font-size: 20px;
+  border-radius: 6px;
+}
+
+.map-search-result-label {
+  color: #c2410c;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 6px;
+}
+
+.map-search-result-name {
+  color: #18181b;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 0;
+  overflow-wrap: anywhere;
+}

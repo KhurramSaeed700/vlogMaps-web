@@ -31,8 +31,12 @@ const watchTimeRenderStepSeconds = 0.25
 const emptyRecommendedVideos: TravelVideo[] = []
 
 function getActiveTimestampIndex(points: CreatorMapPoint[], currentTime: number) {
-  if (points.length === 0 || currentTime < points[0].time) {
+  if (points.length === 0) {
     return -1
+  }
+
+  if (currentTime < points[0].time) {
+    return 0
   }
 
   let low = 0
@@ -316,11 +320,14 @@ export function WatchExperience({
   const currentTimeRef = useRef(0)
   const renderedCurrentTimeRef = useRef(0)
   const [routePoints, setRoutePoints] = useState<CreatorMapPoint[]>(() => loadCreatorPoints(video.id, video.keyframes))
+  const routePointsRef = useRef(routePoints)
+  const activeTimestampIndexRef = useRef(getActiveTimestampIndex(routePoints, 0))
   const [routeShapes, setRouteShapes] = useState<CreatorRouteShapes>(() => video.routeShapes ?? loadCreatorRouteShapes(video.id))
   const [isPlaying, setIsPlaying] = useState(false)
   const [autoplayCountdown, setAutoplayCountdown] = useState<number | null>(autoplayCountdownSeconds)
   const [hasEnded, setHasEnded] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
+  const [activeTimestampIndex, setActiveTimestampIndex] = useState(() => getActiveTimestampIndex(routePoints, 0))
   const [seekRequest, setSeekRequest] = useState<{ id: number; time: number } | null>(null)
   const [isSharing, setIsSharing] = useState(false)
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null)
@@ -332,12 +339,18 @@ export function WatchExperience({
     updatePlaybackPreferences({ volume })
   }, [updatePlaybackPreferences])
 
+  routePointsRef.current = routePoints
+
   useEffect(() => {
-    setRoutePoints(loadCreatorPoints(video.id, video.keyframes))
+    const nextRoutePoints = loadCreatorPoints(video.id, video.keyframes)
+    const nextActiveTimestampIndex = getActiveTimestampIndex(nextRoutePoints, 0)
+    setRoutePoints(nextRoutePoints)
     setRouteShapes(video.routeShapes ?? loadCreatorRouteShapes(video.id))
     currentTimeRef.current = 0
     renderedCurrentTimeRef.current = 0
+    activeTimestampIndexRef.current = nextActiveTimestampIndex
     setCurrentTime(0)
+    setActiveTimestampIndex(nextActiveTimestampIndex)
     setSeekRequest(null)
     setHasEnded(false)
     setIsPlaying(false)
@@ -368,6 +381,12 @@ export function WatchExperience({
     }
 
     currentTimeRef.current = time
+    const nextActiveTimestampIndex = getActiveTimestampIndex(routePointsRef.current, time)
+    if (nextActiveTimestampIndex !== activeTimestampIndexRef.current) {
+      activeTimestampIndexRef.current = nextActiveTimestampIndex
+      setActiveTimestampIndex(nextActiveTimestampIndex)
+    }
+
     if (force || Math.abs(time - renderedCurrentTimeRef.current) >= watchTimeRenderStepSeconds) {
       renderedCurrentTimeRef.current = time
       setCurrentTime(time)
@@ -386,11 +405,6 @@ export function WatchExperience({
   const currentLocation = useMemo(() => {
     return getInterpolatedPointAtTime(mapRoutePoints, currentTime)
   }, [currentTime, mapRoutePoints])
-  const activeTimestampIndex = useMemo(
-    () => getActiveTimestampIndex(routePoints, currentTime),
-    [currentTime, routePoints],
-  )
-
   const showFeedback = (message: string) => {
     if (feedbackTimeoutRef.current !== null) {
       window.clearTimeout(feedbackTimeoutRef.current)

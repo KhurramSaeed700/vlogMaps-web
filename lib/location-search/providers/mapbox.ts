@@ -18,6 +18,7 @@ interface MapboxFeature {
     place_formatted?: string
     address?: string
     relevance?: number
+    context?: Record<string, { name?: string; address_number?: string; street_name?: string; country_code?: string; country_code_alpha_2?: string }>
   }
 }
 
@@ -25,7 +26,9 @@ interface MapboxResponse {
   features?: MapboxFeature[]
 }
 
-const mapboxTypes = "country,region,postcode,district,place,locality,neighborhood,street,address,poi"
+// Geocoding v6 does not accept poi; Search Box supports POIs as well.
+const geocodingTypes = "country,region,postcode,district,place,locality,neighborhood,street,address"
+const searchBoxTypes = "country,region,postcode,district,place,locality,neighborhood,street,address,poi"
 
 function mapMapboxFeature(feature: MapboxFeature, source: LocationSearchSource): LocationSearchResult[] {
   const center = feature.geometry?.coordinates
@@ -46,6 +49,13 @@ function mapMapboxFeature(feature: MapboxFeature, source: LocationSearchSource):
       source,
       feature_type: props.feature_type,
       relevance: props.relevance,
+      address: {
+        street: props.context?.street?.name || props.context?.address?.street_name,
+        houseNumber: props.context?.address?.address_number,
+        postcode: props.context?.postcode?.name,
+        place: props.context?.place?.name || props.context?.locality?.name,
+        countryCode: props.context?.country?.country_code || props.context?.country?.country_code_alpha_2,
+      },
     },
   ]
 }
@@ -64,7 +74,7 @@ async function fetchMapboxGeocoding(query: string, context: LocationSearchContex
   url.searchParams.set("q", query)
   url.searchParams.set("access_token", getServerMapboxAccessToken())
   url.searchParams.set("limit", "8")
-  url.searchParams.set("types", mapboxTypes)
+  url.searchParams.set("types", geocodingTypes)
   url.searchParams.set("autocomplete", "true")
 
   if (context.proximity) {
@@ -80,16 +90,17 @@ async function fetchMapboxGeocoding(query: string, context: LocationSearchContex
 
 async function fetchMapboxStructuredAddress(context: LocationSearchContext) {
   const { parsedAddress } = context
-  if (!parsedAddress.primary || !parsedAddress.place) {
+  if (!parsedAddress.primary || !parsedAddress.street || !parsedAddress.houseNumber || !parsedAddress.place) {
     return [] as LocationSearchResult[]
   }
 
   const url = new URL("https://api.mapbox.com/search/geocode/v6/forward")
-  url.searchParams.set("address_line1", parsedAddress.primary)
+  url.searchParams.set("street", parsedAddress.street)
+  url.searchParams.set("address_number", parsedAddress.houseNumber)
   url.searchParams.set("place", parsedAddress.place)
   url.searchParams.set("access_token", getServerMapboxAccessToken())
   url.searchParams.set("limit", "5")
-  url.searchParams.set("types", mapboxTypes)
+  url.searchParams.set("types", geocodingTypes)
   url.searchParams.set("autocomplete", "false")
 
   if (parsedAddress.postcode) {
@@ -112,7 +123,7 @@ async function fetchMapboxSearchBoxForward(query: string, context: LocationSearc
   url.searchParams.set("q", query)
   url.searchParams.set("access_token", getServerMapboxAccessToken())
   url.searchParams.set("limit", "8")
-  url.searchParams.set("types", mapboxTypes)
+  url.searchParams.set("types", searchBoxTypes)
   url.searchParams.set("auto_complete", "true")
 
   if (context.proximity) {
@@ -137,7 +148,7 @@ export async function fetchPrimaryMapboxResults(context: LocationSearchContext) 
 }
 
 export async function fetchFallbackMapboxResults(context: LocationSearchContext) {
-  const variants = getQueryVariants(context).filter((variant) => variant.toLowerCase() !== context.query.toLowerCase()).slice(0, 5)
+  const variants = getQueryVariants(context).filter((variant) => variant.toLowerCase() !== context.query.toLowerCase()).slice(0, 2)
   const results = await Promise.all(
     variants.flatMap((variant) => [fetchMapboxGeocoding(variant, context), fetchMapboxSearchBoxForward(variant, context)]),
   )

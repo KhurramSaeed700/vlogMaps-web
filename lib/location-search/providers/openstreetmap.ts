@@ -17,6 +17,7 @@ interface PhotonFeature {
     city?: string
     state?: string
     country?: string
+    countrycode?: string
     type?: string
     osm_key?: string
     osm_value?: string
@@ -39,13 +40,13 @@ interface NominatimResult {
   category?: string
   type?: string
   addresstype?: string
+  address?: { road?: string; house_number?: string; postcode?: string; city?: string; town?: string; village?: string; country_code?: string }
 }
 
 async function fetchPhotonResults(query: string, proximity: Coordinate | null) {
   const url = new URL("https://photon.komoot.io/api/")
   url.searchParams.set("q", query)
   url.searchParams.set("limit", "8")
-  url.searchParams.set("lang", "en")
 
   if (proximity) {
     url.searchParams.set("lon", String(proximity[0]))
@@ -71,6 +72,7 @@ async function fetchPhotonResults(query: string, proximity: Coordinate | null) {
       houseAndStreet && houseAndStreet !== name ? houseAndStreet : undefined,
       props.district,
       props.city,
+      props.postcode,
     ])
     const label = [...localityParts, props.state, props.country].filter(Boolean).join(", ")
 
@@ -82,13 +84,22 @@ async function fetchPhotonResults(query: string, proximity: Coordinate | null) {
         center,
         source: "photon" as const,
         feature_type: props.type || (props.osm_key === "place" ? props.osm_value : props.osm_key),
+        address: { street: props.street, houseNumber: props.housenumber, postcode: props.postcode, place: props.city, countryCode: props.countrycode },
       },
     ]
   })
 }
 
 async function fetchNominatimResults(query: string, countryCode: CountryCode | null, bbox: BoundingBox | null) {
-  const url = new URL("https://nominatim.openstreetmap.org/search")
+  // The public OSM service prohibits client-side autocomplete. Only an
+  // explicitly configured self-hosted/contracted endpoint may serve this flow.
+  const endpoint = process.env.LOCATION_SEARCH_NOMINATIM_URL
+  if (!endpoint) return [] as LocationSearchResult[]
+  let url: URL
+  try {
+    url = new URL(endpoint)
+    if (!["https:", "http:"].includes(url.protocol) || url.hostname === "nominatim.openstreetmap.org") return [] as LocationSearchResult[]
+  } catch { return [] as LocationSearchResult[] }
   url.searchParams.set("q", query)
   url.searchParams.set("format", "jsonv2")
   url.searchParams.set("addressdetails", "1")
@@ -137,6 +148,7 @@ async function fetchNominatimResults(query: string, countryCode: CountryCode | n
         bbox: bboxResult?.every((value) => Number.isFinite(value)) ? bboxResult : undefined,
         source: "nominatim" as const,
         feature_type: result.addresstype || (result.category === "place" ? result.type : result.category),
+        address: { street: result.address?.road, houseNumber: result.address?.house_number, postcode: result.address?.postcode, place: result.address?.city || result.address?.town || result.address?.village, countryCode: result.address?.country_code },
       },
     ]
   })
@@ -153,7 +165,7 @@ export async function fetchPrimaryOpenStreetMapResults(context: LocationSearchCo
 }
 
 export async function fetchFallbackOpenStreetMapResults(context: LocationSearchContext) {
-  const variants = getQueryVariants(context).filter((variant) => variant.toLowerCase() !== context.query.toLowerCase()).slice(0, 5)
+  const variants = getQueryVariants(context).filter((variant) => variant.toLowerCase() !== context.query.toLowerCase()).slice(0, 2)
   const shouldUseNominatimFallback = context.query.trim().length >= 4
   const results = await Promise.all(
     [

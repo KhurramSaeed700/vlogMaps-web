@@ -7,7 +7,7 @@ import { useTheme } from "next-themes"
 import * as Dialog from "@radix-ui/react-dialog"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import * as Popover from "@radix-ui/react-popover"
-import { ArrowDownUp, ArrowLeftRight, ArrowUp, Bookmark, ChevronDown, Keyboard, MapPin, Moon, Pause, Pencil, Plane, Settings, Sun, Trash2, UploadCloud, X } from "lucide-react"
+import { ArrowDownUp, ArrowLeftRight, ArrowUp, Bookmark, ChevronDown, Keyboard, Map as MapIcon, MapPin, Moon, Pause, Pencil, Plane, Settings, Sun, Trash2, UploadCloud, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,7 +17,10 @@ import { MapboxLocationPicker } from "@/components/maps/mapbox-location-picker"
 import { YouTubePlayer } from "@/components/media/youtube-player"
 import { AutoplayCountdown, autoplayCountdownSeconds } from "@/components/media/autoplay-countdown"
 import { PlaybackSettingsSection } from "@/components/settings/playback-settings-section"
-import { getAirportCodeLocation } from "@/lib/airport-codes"
+import { getAirportCodeLocation, registerAirportCodeLocation } from "@/lib/airport-codes"
+import { AirportSearchInput } from "@/components/creator/airport-search-input"
+import { LandmarkSearchButton } from "@/components/creator/landmark-search-button"
+import type { LandmarkResult } from "@/lib/landmark-search"
 import { getCompletedFlightPairs } from "@/lib/flight-path"
 import {
   emptyCreatorTripRoute,
@@ -103,13 +106,14 @@ interface EditorShortcutState {
   setStopEndTime: () => void
   startFlightPoint: () => void
   startStopRecording: () => void
+  savePointFromMap: (location: { lat: number; lng: number }) => Promise<void>
 }
 
 interface FlightAirportPrompt {
   role: "takeoff" | "landing"
   timestamp: number
   resumeOnCancel: boolean
-  mode: "choose" | "airport" | "map"
+  mode: "airport" | "map"
 }
 
 interface SavedPlaceUsePrompt {
@@ -144,6 +148,7 @@ const editorShortcutGroups = [
   { keys: "Q", action: "Add point" },
   { keys: "W", action: "Add stop or finish stop" },
   { keys: "E", action: "Record flight takeoff or landing" },
+  { keys: "C", action: "Turn subtitles on or off" },
   { keys: "F", action: "Enter or exit video fullscreen" },
   { keys: "M", action: "Mute or unmute video" },
   { keys: "Esc", action: "Cancel pending point or stop" },
@@ -540,11 +545,15 @@ export function CreatorVideoEditor({
   headerActionsTargetId,
 }: CreatorVideoEditorProps) {
   const remoteLoadRequestRef = useRef(0)
+  const videoPreviewRef = useRef<HTMLDivElement>(null)
+  const landmarkMapOverlayRef = useRef<HTMLElement>(null)
+  const [landmarkSearchResult, setLandmarkSearchResult] = useState<(LandmarkResult & { requestId: number }) | null>(null)
   const editorScrollRef = useRef<HTMLElement | null>(null)
   const splitViewRef = useRef<HTMLDivElement>(null)
   const currentTimeRef = useRef(0)
   const renderedCurrentTimeRef = useRef(0)
   const editorShortcutStateRef = useRef<EditorShortcutState | null>(null)
+  const searchedLocationRef = useRef<{ lat: number; lng: number } | null>(null)
   const localStateRevisionRef = useRef(0)
   const nearbyPlaceLookupRequestRef = useRef(0)
   const nearbyPlaceLookupControllerRef = useRef<AbortController | null>(null)
@@ -1332,8 +1341,11 @@ export function CreatorVideoEditor({
     }
     draftPointRef.current = nextDraft
     setDraftPoint(nextDraft)
-    setIsAwaitingMapPlacement(true)
+    setIsAwaitingMapPlacement(!(pointType === "point" && searchedLocationRef.current))
     setIsTimestampNameEditing(false)
+    if (pointType === "point" && searchedLocationRef.current) {
+      void savePointFromMap(searchedLocationRef.current, nextDraft, true, false)
+    }
   }
 
   const startFlightPoint = () => {
@@ -1346,16 +1358,31 @@ export function CreatorVideoEditor({
       ? Math.max(currentTimeRef.current, pendingFlightTakeoff.time + 0.5)
       : currentTimeRef.current
 
+    const previousLanding = role === "takeoff"
+      ? sortedPoints.filter((point) => point.pointType === "flight" && point.flightPhase === "landing" && point.time < timestamp).at(-1)
+      : undefined
+    const previousAirportCode = previousLanding && /^[A-Z]{3,4}$/.test(previousLanding.location.trim().toUpperCase())
+      ? previousLanding.location.trim().toUpperCase()
+      : ""
+    const previousAirport = previousLanding && previousAirportCode ? {
+      code: previousAirportCode,
+      name: previousLanding.description || getAirportCodeLocation(previousAirportCode)?.name || `${previousAirportCode} airport`,
+      city: getAirportCodeLocation(previousAirportCode)?.city || "",
+      lat: previousLanding.lat,
+      lng: previousLanding.lng,
+    } : null
+    if (previousAirport) registerAirportCodeLocation(previousAirport)
+
     setResumeCountdown(null)
     setIsPlaying(false)
-    setFlightAirportCode("")
-    setFlightAirportPreview(null)
+    setFlightAirportCode(previousAirportCode)
+    setFlightAirportPreview(previousAirport)
     setAirportCodeMessage("")
     setFlightAirportPrompt({
       role,
       timestamp,
       resumeOnCancel: role === "landing" || isPlaying,
-      mode: "choose",
+      mode: "airport",
     })
   }
 
@@ -1662,12 +1689,17 @@ export function CreatorVideoEditor({
     return pendingLookup
   }
 
-  const savePointFromMap = async (value: { lat: number; lng: number }) => {
+  const savePointFromMap = async (
+    value: { lat: number; lng: number },
+    placementDraft = draftPoint,
+    wasAwaitingMapPlacement = isAwaitingMapPlacement,
+    recordingStop = isRecordingStop,
+  ) => {
+    const draftPoint = placementDraft
     if (!draftPoint) {
       return
     }
 
-    const wasAwaitingMapPlacement = isAwaitingMapPlacement
     const sourceDraft = draftPoint
     const savedTime = draftPoint.time
     const placedDraft: DraftPoint = {
@@ -1712,7 +1744,7 @@ export function CreatorVideoEditor({
       return
     }
 
-    if (isRecordingStop && !draftPoint.id && draftPoint.pointType === "stop") {
+    if (recordingStop && !draftPoint.id && draftPoint.pointType === "stop") {
       recordMapEditSnapshot()
       draftPointRef.current = placedDraft
       setDraftPoint(placedDraft)
@@ -2292,9 +2324,12 @@ export function CreatorVideoEditor({
     }
     draftPointRef.current = nextDraft
     setDraftPoint(nextDraft)
-    setIsAwaitingMapPlacement(true)
+    setIsAwaitingMapPlacement(!searchedLocationRef.current)
     setIsRecordingStop(true)
     setIsTimestampNameEditing(false)
+    if (searchedLocationRef.current) {
+      void savePointFromMap(searchedLocationRef.current, nextDraft, true, true)
+    }
   }
 
   const setStopEndTime = async () => {
@@ -2374,6 +2409,7 @@ export function CreatorVideoEditor({
       setStopEndTime,
       startFlightPoint,
       startStopRecording,
+      savePointFromMap,
     }
   })
 
@@ -2421,6 +2457,10 @@ export function CreatorVideoEditor({
 
       if (event.code === "KeyQ") {
         event.preventDefault()
+        if (shortcutState.isAwaitingMapPlacement && shortcutState.draftPoint?.pointType === "point" && searchedLocationRef.current) {
+          void shortcutState.savePointFromMap(searchedLocationRef.current)
+          return
+        }
         shortcutState.addTimestampPoint("point")
         return
       }
@@ -2428,6 +2468,10 @@ export function CreatorVideoEditor({
       if (event.code === "KeyW") {
         event.preventDefault()
         if (shortcutState.isRecordingStop) {
+          if (shortcutState.isAwaitingMapPlacement && searchedLocationRef.current) {
+            void shortcutState.savePointFromMap(searchedLocationRef.current)
+            return
+          }
           shortcutState.setStopEndTime()
           return
         }
@@ -2548,7 +2592,7 @@ export function CreatorVideoEditor({
           {draftPoint.pointType === "flight" && draftFlightLandingPoint
             ? isAwaitingMapPlacement
               ? `Click the map to set the ${activeFlightEditEndpoint} location.`
-              : "Choose an endpoint below, then use its airport code or pick it on the map."
+              : "Choose an endpoint below, then search for an airport by city, name or code, or pick it on the map."
             : isAwaitingMapPlacement
               ? "Click the map to set the new location."
               : "Drag the numbered map marker to update this timestamp location."} Current video time: {formatDuration(currentTime)}.
@@ -2573,14 +2617,14 @@ export function CreatorVideoEditor({
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-bold uppercase tracking-wide">{label}</span>
                       <span className="text-[10px] font-semibold opacity-70">
-                        {locationMode === "map" ? "Map location" : "Airport code"}
+                        {locationMode === "map" ? "Map location" : "Airport"}
                       </span>
                     </div>
                     <label className="block space-y-1">
-                      <span className="block text-xs opacity-75">Airport code</span>
-                      <Input
+                      <span className="block text-xs opacity-75">Airport</span>
+                      <AirportSearchInput
                         value={point.location === "Map point" ? "" : point.location}
-                        aria-label={`${label} airport code`}
+                        aria-label={`${label} airport`}
                         placeholder={endpoint === "takeoff" ? "CDG" : "CAI"}
                         className="h-8 border-white/70 bg-white text-slate-950 shadow-none dark:border-white/15 dark:bg-zinc-950 dark:text-zinc-100"
                         onFocus={() => setActiveFlightEditEndpoint(endpoint)}
@@ -2659,7 +2703,7 @@ export function CreatorVideoEditor({
                         className="text-left text-[10px] font-semibold text-sky-700 hover:underline dark:text-sky-300"
                         onClick={() => useDraftFlightAirportCode(endpoint)}
                       >
-                        Use airport code
+                        Search airport
                       </button>
                     )}
                   </div>
@@ -2875,11 +2919,9 @@ export function CreatorVideoEditor({
   }
 
   const renderFlightCapturePanel = () => {
-    if (!flightAirportPrompt) {
-      return null
-    }
-
+    if (!flightAirportPrompt) return null
     const roleLabel = flightAirportPrompt.role === "takeoff" ? "takeoff" : "landing"
+    const pickingOnMap = flightAirportPrompt.mode === "map"
 
     return (
       <div className="rounded-lg border border-sky-300 bg-sky-50 p-3 text-sky-950 shadow-sm dark:border-sky-400/35 dark:bg-sky-500/10 dark:text-sky-100">
@@ -2888,159 +2930,68 @@ export function CreatorVideoEditor({
             <Plane className="h-4 w-4" aria-hidden="true" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold">
-              {flightAirportPrompt.mode === "choose"
-                ? `Set flight ${roleLabel}`
-                : flightAirportPrompt.mode === "map"
-                  ? `Select ${roleLabel} on the map`
-                  : `Enter ${roleLabel} airport`}
-            </p>
-            {flightAirportPrompt.mode === "map" ? (
-              <p className="mt-0.5 text-xs leading-5 opacity-80">
-                {flightAirportPrompt.role === "takeoff"
-                  ? "Click the map for takeoff."
-                  : "Video is playing. Click the map at landing."}
+            <p className="text-sm font-bold">Enter {roleLabel} airport</p>
+            {pickingOnMap ? (
+              <p className="mt-0.5 text-xs leading-5 opacity-80" role="status">
+                Click the map to set the {roleLabel} location. Click the map button again to search for an airport.
               </p>
             ) : null}
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="-mr-1 -mt-1 h-8 w-8 shrink-0"
-            aria-label="Cancel flight entry"
-            disabled={isResolvingAirportCode}
-            onClick={cancelFlightAirportPrompt}
-          >
+          <Button type="button" variant="ghost" size="icon" className="-mr-1 -mt-1 h-8 w-8 shrink-0"
+            aria-label="Cancel flight entry" disabled={isResolvingAirportCode} onClick={cancelFlightAirportPrompt}>
             <X className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
-
-        {flightAirportPrompt.mode === "choose" ? (
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <button
-              type="button"
-              className="rounded-lg border border-sky-300 bg-white p-3 text-left transition-colors hover:border-sky-500 hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-sky-300/25 dark:bg-zinc-950/70 dark:hover:bg-sky-500/10"
-              onClick={() => {
-                setFlightAirportCode("")
-                setAirportCodeMessage("")
-                setFlightAirportPrompt((currentPrompt) =>
-                  currentPrompt ? { ...currentPrompt, mode: "airport" } : currentPrompt,
-                )
-              }}
-            >
-              <span className="block text-sm font-bold">Use airport code</span>
-              <span className="mt-1 block text-xs leading-4 opacity-70">Enter the takeoff or landing airport.</span>
-            </button>
-            <button
-              type="button"
-              className="rounded-lg border border-sky-300 bg-white p-3 text-left transition-colors hover:border-sky-500 hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-sky-300/25 dark:bg-zinc-950/70 dark:hover:bg-sky-500/10"
-              onClick={() => {
-                setAirportCodeMessage("")
-                setFlightAirportPrompt((currentPrompt) =>
-                  currentPrompt ? { ...currentPrompt, mode: "map" } : currentPrompt,
-                )
-              }}
-            >
-              <span className="flex items-center gap-1.5 text-sm font-bold">
-                <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
-                Pick on map
-              </span>
-              <span className="mt-1 block text-xs leading-4 opacity-70">Pick takeoff, play, then pick landing.</span>
-            </button>
-          </div>
-        ) : null}
-
-        {flightAirportPrompt.mode === "airport" ? (
-          <form
-            className="mt-3 space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void saveFlightAirport()
-            }}
-          >
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-              <Input
-                autoFocus
+        <form className="mt-3 space-y-3" onSubmit={(event) => {
+          event.preventDefault()
+          if (!pickingOnMap) void saveFlightAirport()
+        }}>
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <AirportSearchInput
+                key={flightAirportPrompt.mode}
+                autoFocus={!pickingOnMap}
+                disabled={pickingOnMap || isResolvingAirportCode}
                 value={flightAirportCode}
                 onChange={(event) => {
                   const airportCode = normalizeAirportCode(event.target.value)
-                  const knownAirport = getAirportCodeLocation(airportCode)
                   setFlightAirportCode(airportCode)
-                  setFlightAirportPreview(knownAirport)
+                  setFlightAirportPreview(getAirportCodeLocation(airportCode))
                   setAirportCodeMessage("")
                 }}
-                onBlur={() => {
-                  void previewFlightAirportCode()
-                }}
-                placeholder={flightAirportPrompt.role === "takeoff" ? "e.g. LHE" : "e.g. IST"}
+                onBlur={() => { if (!pickingOnMap) void previewFlightAirportCode() }}
                 autoComplete="off"
                 inputMode="text"
-                aria-label={`${roleLabel} airport code`}
+                aria-label={roleLabel + " airport"}
                 aria-invalid={airportCodeMessage ? true : undefined}
                 aria-describedby={airportCodeMessage ? "flight-airport-error" : undefined}
-                className="h-9 border-sky-300 bg-white font-semibold uppercase tracking-[0.12em] text-slate-950 dark:border-sky-300/25 dark:bg-zinc-950 dark:text-white"
+                className="h-9 border-sky-300 bg-white text-slate-950 dark:border-sky-300/25 dark:bg-zinc-950 dark:text-white"
               />
-              <Button
-                type="submit"
-                size="sm"
-                className="h-9 bg-sky-600 text-white hover:bg-sky-700"
-                disabled={isResolvingAirportCode || !flightAirportCode}
-              >
-                {isResolvingAirportCode ? "Finding..." : flightAirportPrompt.role === "takeoff" ? "Save & play" : "Complete"}
-              </Button>
             </div>
-            {isResolvingAirportCode ? (
-              <AirportSearchStatus />
-            ) : flightAirportPreview ? (
-              <AirportConfirmation airport={flightAirportPreview} />
-            ) : null}
-            <div className="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                className="text-xs font-semibold text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
-                onClick={() => {
-                  setAirportCodeMessage("")
-                  setFlightAirportPreview(null)
-                  setFlightAirportPrompt((currentPrompt) =>
-                    currentPrompt ? { ...currentPrompt, mode: "choose" } : currentPrompt,
-                  )
-                }}
-              >
-                Back to options
-              </button>
-              <span className="text-xs tabular-nums opacity-70">{formatDuration(flightAirportPrompt.timestamp)}</span>
-            </div>
-          </form>
-        ) : null}
-
-        {flightAirportPrompt.mode === "map" ? (
-          <div className="mt-3 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              className="text-xs font-semibold text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
+            <Button type="button" size="icon" variant={pickingOnMap ? "default" : "outline"}
+              className="h-9 w-9 shrink-0"
+              aria-label={pickingOnMap ? "Search " + roleLabel + " airport instead" : "Pick " + roleLabel + " on map"}
+              title={pickingOnMap ? "Return to airport search" : "Pick " + roleLabel + " on map"}
+              aria-pressed={pickingOnMap}
+              disabled={isResolvingAirportCode}
               onClick={() => {
-                setFlightAirportCode("")
                 setAirportCodeMessage("")
-                setFlightAirportPrompt((currentPrompt) =>
-                  currentPrompt ? { ...currentPrompt, mode: "airport" } : currentPrompt,
-                )
-              }}
-            >
-              Use airport code instead
-            </button>
-            <span className="text-xs tabular-nums opacity-70">
-              {flightAirportPrompt.role === "takeoff"
-                ? formatDuration(flightAirportPrompt.timestamp)
-                : "Waiting for landing"}
-            </span>
+                setFlightAirportPrompt((currentPrompt) => currentPrompt ? {
+                  ...currentPrompt, mode: currentPrompt.mode === "map" ? "airport" : "map",
+                } : currentPrompt)
+              }}>
+              <MapIcon className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button type="submit" size="sm" className="h-9 shrink-0 bg-sky-600 text-white hover:bg-sky-700"
+              disabled={pickingOnMap || isResolvingAirportCode || !flightAirportCode}>
+              {isResolvingAirportCode ? "Finding..." : flightAirportPrompt.role === "takeoff" ? "Save & play" : "Complete"}
+            </Button>
           </div>
-        ) : null}
-
+          {!pickingOnMap && isResolvingAirportCode ? <AirportSearchStatus /> : !pickingOnMap && flightAirportPreview ? <AirportConfirmation airport={flightAirportPreview} /> : null}
+          <p className="text-right text-xs tabular-nums opacity-70">{formatDuration(flightAirportPrompt.timestamp)}</p>
+        </form>
         {airportCodeMessage ? (
-          <p id="flight-airport-error" className="mt-2 text-xs font-medium text-red-700 dark:text-red-300" role="alert">
-            {airportCodeMessage}
-          </p>
+          <p id="flight-airport-error" className="mt-2 text-xs font-medium text-red-700 dark:text-red-300" role="alert">{airportCodeMessage}</p>
         ) : null}
       </div>
     )
@@ -3477,6 +3428,7 @@ export function CreatorVideoEditor({
         className="relative flex min-h-0 min-w-0 flex-col overflow-y-auto border-b border-slate-200 xl:h-full xl:border-b-0 xl:border-r"
       >
         <div
+          ref={videoPreviewRef}
           className="relative aspect-video w-full shrink-0 overflow-hidden bg-black [&_iframe]:absolute [&_iframe]:inset-0"
         >
           <YouTubePlayer
@@ -3515,7 +3467,7 @@ export function CreatorVideoEditor({
         <div className="flex flex-col">
           <div className="p-3 lg:p-4">
             <section className="space-y-2">
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-[repeat(3,minmax(0,1fr))_auto] gap-2">
                 <Button
                   size="sm"
                   className={`h-8 min-w-0 border px-2 font-semibold text-white transition-all duration-200 disabled:opacity-80 ${
@@ -3614,6 +3566,15 @@ export function CreatorVideoEditor({
                   </span>
                   <kbd className="ml-1 hidden text-[10px] font-medium leading-none text-white/60 sm:inline">[E]</kbd>
                 </Button>
+                <LandmarkSearchButton
+                  previewRef={videoPreviewRef}
+                  mapOverlayRef={landmarkMapOverlayRef}
+                  onPause={() => { setResumeCountdown(null); setIsPlaying(false) }}
+                  onDetected={(result) => {
+                    setLandmarkSearchResult({ ...result, requestId: Date.now() })
+                    setSaveMessage(`Searching the map for ${result.name}. Check the orange marker before adding a timestamp.`)
+                  }}
+                />
               </div>
               {renderFlightCapturePanel()}
               {isPlacingSavedPlace ? (
@@ -4002,14 +3963,18 @@ export function CreatorVideoEditor({
         )}
       </section>
 
-      <section className="relative min-h-[620px] min-w-0 overflow-hidden bg-slate-100 xl:h-full xl:min-h-0">
+      <section ref={landmarkMapOverlayRef} className="relative min-h-[620px] min-w-0 overflow-hidden bg-slate-100 xl:h-full xl:min-h-0">
         <MapboxLocationPicker
+          landmarkSearchResult={landmarkSearchResult}
           value={
             activeDraftMapPoint?.lat === null || activeDraftMapPoint?.lng === null || !activeDraftMapPoint
               ? null
               : { lat: activeDraftMapPoint.lat, lng: activeDraftMapPoint.lng }
           }
           points={sortedPoints}
+          onSearchLocationChange={(location) => {
+            searchedLocationRef.current = location
+          }}
           onChange={(location) => {
             if (isPlacingFlightOnMap) {
               saveFlightPointFromMap(location)

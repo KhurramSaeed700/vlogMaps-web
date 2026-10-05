@@ -1,5 +1,13 @@
 # TravelMap engineering priorities
 
+## Canonical project context
+
+- This directory (`vlogMaps-web/`) is the default working directory for web tasks.
+- At the start of each task, inspect this project's `.agents/` and `.codex/` directories and read relevant project instructions and context before editing files. Follow the applicable skill-discovery rules for any skills found there.
+- Store project-local context, skills, and Codex configuration only in these directories; do not create duplicate context directories at the parent `vlog maps/` level or in `vlogMaps-mobile/` for web work.
+- Keep `.agents/` and `.codex/` separate because they serve different tool conventions. Use this `AGENTS.md` as the shared instruction entry point instead of duplicating project policies in both directories.
+- Do not store API keys, credentials, or copies of global user configuration in context files. Inspect relevant configuration without exposing secrets.
+
 ## Map smoothness is the highest priority
 
 The watch and edit maps are the core product experience. A feature is not complete if it makes traveler motion, camera movement, route drawing, map interaction, or tile loading feel slower or less reliable.

@@ -25,11 +25,14 @@ interface YTPlayerInstance {
   destroy: () => void
   getCurrentTime: () => number
   getDuration: () => number
+  getOption?: (module: string, option: string) => unknown
   isMuted?: () => boolean
+  loadModule?: (module: string) => void
   mute: () => void
   pauseVideo: () => void
   playVideo: () => void
   seekTo: (seconds: number, allowSeekAhead?: boolean) => void
+  setOption?: (module: string, option: string, value: unknown) => void
   setVolume: (volume: number) => void
   unMute: () => void
 }
@@ -69,6 +72,10 @@ interface PendingSeek {
 interface SeekFeedback {
   direction: "backward" | "forward"
   label: string
+}
+
+interface YouTubeCaptionTrack {
+  languageCode?: string
 }
 
 declare global {
@@ -165,11 +172,13 @@ export function YouTubePlayer({
   const containerRef = useRef<HTMLDivElement>(null)
   const [seekFeedback, setSeekFeedback] = useState<SeekFeedback | null>(null)
   const [volumeFeedback, setVolumeFeedback] = useState<number | null>(null)
+  const [captionFeedback, setCaptionFeedback] = useState<string | null>(null)
   const playerRef = useRef<YTPlayerInstance | null>(null)
   const progressIntervalRef = useRef<number | null>(null)
   const pauseCommitTimeoutRef = useRef<number | null>(null)
   const seekFeedbackTimeoutRef = useRef<number | null>(null)
   const volumeFeedbackTimeoutRef = useRef<number | null>(null)
+  const captionFeedbackTimeoutRef = useRef<number | null>(null)
   const seekHoldDelayTimeoutRef = useRef<number | null>(null)
   const seekHoldIntervalRef = useRef<number | null>(null)
   const activeSeekHoldKeyRef = useRef<"KeyJ" | "KeyL" | "ArrowLeft" | "ArrowRight" | null>(null)
@@ -181,6 +190,7 @@ export function YouTubePlayer({
   const isPlayingRef = useRef(isPlaying)
   const isMutedRef = useRef(isMuted)
   const volumeRef = useRef(volume)
+  const preferredCaptionLanguageRef = useRef("en")
   const pendingSeekRef = useRef<PendingSeek | null>(null)
   const seekPollTimeoutRef = useRef<number | null>(null)
 
@@ -296,6 +306,13 @@ export function YouTubePlayer({
     }
   }
 
+  const clearCaptionFeedbackTimeout = () => {
+    if (captionFeedbackTimeoutRef.current !== null) {
+      window.clearTimeout(captionFeedbackTimeoutRef.current)
+      captionFeedbackTimeoutRef.current = null
+    }
+  }
+
   const clearSeekHoldTimers = () => {
     if (seekHoldDelayTimeoutRef.current !== null) {
       window.clearTimeout(seekHoldDelayTimeoutRef.current)
@@ -328,6 +345,15 @@ export function YouTubePlayer({
     volumeFeedbackTimeoutRef.current = window.setTimeout(() => {
       volumeFeedbackTimeoutRef.current = null
       setVolumeFeedback(null)
+    }, 900)
+  }
+
+  const showCaptionFeedback = (message: string) => {
+    clearCaptionFeedbackTimeout()
+    setCaptionFeedback(message)
+    captionFeedbackTimeoutRef.current = window.setTimeout(() => {
+      captionFeedbackTimeoutRef.current = null
+      setCaptionFeedback(null)
     }, 900)
   }
 
@@ -507,6 +533,33 @@ export function YouTubePlayer({
     player.unMute()
   }
 
+  const toggleCaptionsFromKeyboard = () => {
+    const player = playerRef.current
+    if (!player?.setOption) {
+      return
+    }
+
+    const currentTrack = player.getOption?.("captions", "track") as YouTubeCaptionTrack | undefined
+    if (currentTrack?.languageCode) {
+      preferredCaptionLanguageRef.current = currentTrack.languageCode
+      player.setOption("captions", "track", {})
+      showCaptionFeedback("Subtitles off")
+      return
+    }
+
+    player.loadModule?.("captions")
+    const availableTracks = player.getOption?.("captions", "tracklist") as YouTubeCaptionTrack[] | undefined
+    const preferredLanguage = preferredCaptionLanguageRef.current
+    const selectedTrack = availableTracks?.find((track) => track.languageCode === preferredLanguage)
+      ?? availableTracks?.find((track) => track.languageCode?.startsWith(preferredLanguage))
+      ?? availableTracks?.[0]
+
+    player.setOption("captions", "track", {
+      languageCode: selectedTrack?.languageCode ?? preferredLanguage,
+    })
+    showCaptionFeedback("Subtitles on")
+  }
+
   const toggleFullscreenFromKeyboard = () => {
     const element = wrapperRef.current
     if (!element || typeof document === "undefined") {
@@ -545,7 +598,7 @@ export function YouTubePlayer({
       if (
         allowWatchKeyboardControls &&
         (
-          ["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "KeyF", "KeyJ", "KeyK", "KeyL", "KeyM"].includes(event.code) ||
+          ["Space", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "KeyC", "KeyF", "KeyJ", "KeyK", "KeyL", "KeyM"].includes(event.code) ||
           watchShortcutDigit !== null
         ) &&
         !event.shiftKey &&
@@ -594,6 +647,13 @@ export function YouTubePlayer({
           return
         }
 
+        if (event.code === "KeyC") {
+          if (!event.repeat) {
+            toggleCaptionsFromKeyboard()
+          }
+          return
+        }
+
         if (event.code === "KeyM") {
           if (!event.repeat) {
             toggleMuteFromKeyboard()
@@ -604,7 +664,7 @@ export function YouTubePlayer({
 
       if (
         !allowKeyboard ||
-        !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "KeyF", "KeyJ", "KeyK", "KeyL", "KeyM"].includes(event.code) ||
+        !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "KeyC", "KeyF", "KeyJ", "KeyK", "KeyL", "KeyM"].includes(event.code) ||
         event.shiftKey ||
         event.altKey ||
         event.ctrlKey ||
@@ -624,6 +684,13 @@ export function YouTubePlayer({
       if (event.code === "KeyF") {
         if (!event.repeat) {
           toggleFullscreenFromKeyboard()
+        }
+        return
+      }
+
+      if (event.code === "KeyC") {
+        if (!event.repeat) {
+          toggleCaptionsFromKeyboard()
         }
         return
       }
@@ -769,6 +836,7 @@ export function YouTubePlayer({
       clearPauseCommitTimeout()
       clearSeekFeedbackTimeout()
       clearVolumeFeedbackTimeout()
+      clearCaptionFeedbackTimeout()
       clearSeekHoldTimers()
       pendingSeekRef.current = null
       createdPlayer?.destroy()
@@ -866,6 +934,14 @@ export function YouTubePlayer({
               style={{ left: `${volumeFeedback}%` }}
             />
           </div>
+        </div>
+      )}
+      {captionFeedback && (
+        <div
+          aria-live="polite"
+          className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full bg-black/75 px-4 py-2 text-xs font-semibold text-white shadow-lg ring-1 ring-white/15 backdrop-blur-sm"
+        >
+          {captionFeedback}
         </div>
       )}
     </div>

@@ -13,6 +13,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CreatorAccessGuard } from "@/components/creator/creator-access-guard"
+import { CreatorLoadingState } from "@/components/creator/creator-loading-state"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
 import { ThemeToggle } from "@/components/app-shell/theme-toggle"
 import { formatCompactNumber, formatDuration, type TravelVideo } from "@/lib/demo-data"
@@ -504,8 +505,20 @@ function CreatorDashboardContent() {
                   return (
                     <Card
                       key={video.id}
-                      className="group flex h-full flex-col overflow-hidden border-border bg-card shadow-sm transition hover:border-muted-foreground/40 hover:shadow-md"
+                      className={`group relative flex h-full flex-col overflow-hidden border-border bg-card shadow-sm transition hover:border-muted-foreground/40 hover:shadow-md ${
+                        canEditVideo ? "cursor-pointer" : ""
+                      }`}
                     >
+                      {canEditVideo && (
+                        <Link
+                          href={`/creator/video/${video.id}/edit`}
+                          aria-label={`Edit ${video.title}`}
+                          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        >
+                          <span className="sr-only">Edit {video.title}</span>
+                        </Link>
+                      )}
+
                       <div className="relative aspect-video w-full overflow-hidden bg-muted">
                         <Image
                           src={video.thumbnail || "/placeholder.svg"}
@@ -554,33 +567,30 @@ function CreatorDashboardContent() {
                               size="sm"
                               onClick={() => handleUploadVideo(video)}
                               disabled={Boolean(syncingVideoId) && !isSyncingThisVideo}
-                              className="h-10 flex-none rounded-lg px-3"
+                              className="relative z-20 h-10 flex-none rounded-lg px-3"
                               title="Upload edited video"
                             >
                               <UploadCloud className="h-4 w-4 flex-shrink-0 sm:mr-1" />
                               <span className="hidden sm:inline">{isSyncingThisVideo ? "Uploading" : "Upload"}</span>
                             </Button>
                           )}
-                          {canEditVideo && (
-                            <Link href={`/creator/video/${video.id}/edit`} className="min-w-0 flex-1">
-                              <Button variant="outline" size="sm" className="h-10 w-full rounded-lg">
-                                <Edit className="mr-1 h-4 w-4" />
-                                Edit
-                              </Button>
-                            </Link>
-                          )}
-                          <Link href={`/watch/${video.id}`} className="min-w-0 flex-1">
-                            <Button variant="outline" size="sm" className="h-10 w-full rounded-lg">
+                          <Button
+                            asChild
+                            variant="outline"
+                            size="sm"
+                            className="relative z-20 h-10 min-w-0 flex-1 rounded-lg"
+                          >
+                            <Link href={`/watch/${video.id}`}>
                               <Eye className="mr-1 h-4 w-4" />
                               Preview
-                            </Button>
-                          </Link>
+                            </Link>
+                          </Button>
                           <DropdownMenu.Root>
                             <DropdownMenu.Trigger asChild>
                               <Button
                                 variant="outline"
                                 size="icon"
-                                className="h-10 w-10 flex-none rounded-lg"
+                                className="relative z-20 h-10 w-10 flex-none rounded-lg"
                                 aria-label={`Open options for ${video.title}`}
                               >
                                 <MoreHorizontal className="h-4 w-4" />
@@ -646,7 +656,7 @@ export default function CreatorDashboardPage() {
   const { isLoaded, isSignedIn } = useUser()
 
   if (!isLoaded) {
-    return <div className="p-8 text-sm text-muted-foreground">Loading creator workspace...</div>
+    return <CreatorLoadingState title="Loading creator dashboard" />
   }
 
   if (!isSignedIn) {

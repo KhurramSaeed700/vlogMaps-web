@@ -190,9 +190,11 @@ function canRearmTimestampHighlight(currentTime: number, timestamp: number) {
 }
 
 interface MapboxLocationPickerProps {
+  landmarkSearchResult?: { name: string; lat: number; lng: number; requestId: number } | null
   value: { lat: number; lng: number } | null
   points: CreatorMapPoint[]
   onChange: (value: { lat: number; lng: number }) => void
+  onSearchLocationChange?: (value: { lat: number; lng: number } | null) => void
   activePointNumber?: number | null
   activePointType?: CreatorMapPoint["pointType"]
   tripRoute?: CreatorTripRoute
@@ -305,6 +307,7 @@ async function fetchLocationSuggestions(query: string, bias: LocationSearchBias 
 
   const url = new URL("/api/location-search", window.location.origin)
   url.searchParams.set("q", query)
+  url.searchParams.set("v", "2") // Separate improved ranking from old CDN responses.
 
   if (bias.proximity) {
     url.searchParams.set("proximity", bias.proximity.map((value) => value.toFixed(6)).join(","))
@@ -903,9 +906,11 @@ function createTimestampMarkerElement(label: string, pointType?: CreatorMapPoint
 }
 
 export function MapboxLocationPicker({
+  landmarkSearchResult,
   value,
   points,
   onChange,
+  onSearchLocationChange,
   activePointNumber = null,
   activePointType = "point",
   tripRoute,
@@ -949,6 +954,7 @@ export function MapboxLocationPicker({
   const routePreloadGenerationRef = useRef(0)
   const routePreloadPlaybackSignatureRef = useRef("")
   const activeMarkerRef = useRef<mapboxgl.Marker | null>(null)
+  const searchResultMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const highlightedPointMarkerKeysRef = useRef<Set<string>>(new Set())
   const pointMarkerHighlightTimeoutsRef = useRef<Map<string, number>>(new Map())
   const previousPointHighlightTimeRef = useRef<number | null>(null)
@@ -1013,12 +1019,14 @@ export function MapboxLocationPicker({
   const timestampRouteSegmentsRef = useRef<TimestampRouteSegment[]>([])
   const tripRouteCoordinatesRef = useRef<RouteCoordinate[]>([])
   const searchAbortRef = useRef<AbortController | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const suppressAutocompleteRef = useRef(false)
   const pendingTripRouteKeyRef = useRef<string | null>(null)
   const [isLoaded, setIsLoaded] = useState(false)
   const [mapStyle, setMapStyle] = useState<MapStyleOptionId>(persistedMapStyleRef.current)
   const [searchQuery, setSearchQuery] = useState("")
+  const [hasSearchMarker, setHasSearchMarker] = useState(false)
   const [searchResults, setSearchResults] = useState<GeocodingFeature[]>([])
   const [activeSearchIndex, setActiveSearchIndex] = useState(-1)
   const [isSearching, setIsSearching] = useState(false)
@@ -2335,8 +2343,14 @@ export function MapboxLocationPicker({
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.code === "Delete" && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.repeat && !event.isComposing && !shouldIgnoreMapKeyboardShortcut(event.target)) {
+        event.preventDefault()
+        clearSearchMarker()
+        return
+      }
       if (
-        !["KeyI", "KeyO"].includes(event.code) ||
+        !["KeyI", "KeyO", "Slash"].includes(event.code) ||
+        event.repeat ||
         event.shiftKey ||
         event.altKey ||
         event.ctrlKey ||
@@ -2348,6 +2362,11 @@ export function MapboxLocationPicker({
       }
 
       event.preventDefault()
+      if (event.code === "Slash") {
+        searchInputRef.current?.focus()
+        searchInputRef.current?.select()
+        return
+      }
       zoomMapAroundTraveler(event.code === "KeyI" ? 1 : -1)
     }
 
@@ -3570,6 +3589,16 @@ export function MapboxLocationPicker({
       }
     })
     map.on("click", (event) => {
+      // A pending timestamp placement takes priority over selecting the route.
+      if (isPlacementEnabledRef.current && !activeTripEndpointRef.current) {
+        event.preventDefault()
+        isPlacementEnabledRef.current = false
+        clearActiveRouteShapeMarker()
+        const [lng, lat] = getPointPlacementCoordinate(map, event)
+        onChangeRef.current({ lat, lng })
+        return
+      }
+
       if (window.performance.now() < routeShapeClickSuppressedUntilRef.current) {
         event.preventDefault()
         return
@@ -3642,6 +3671,9 @@ export function MapboxLocationPicker({
       tripEndMarkerRef.current?.remove()
       removeRouteLayer(map)
       removeTripRouteLayer(map)
+      searchResultMarkerRef.current?.remove()
+      searchResultMarkerRef.current = null
+      onSearchLocationChange?.(null)
       map.remove()
       mapInstanceRef.current = null
       activeMarkerRef.current = null
@@ -3802,6 +3834,10 @@ export function MapboxLocationPicker({
 
     const controller = new AbortController()
     searchAbortRef.current = controller
+    // Never let Enter/click select suggestions from the previous query while
+    // the current query is debouncing or loading.
+    setSearchResults([])
+    setActiveSearchIndex(-1)
     setSearchError(null)
     setIsSearching(true)
 
@@ -3857,6 +3893,7 @@ export function MapboxLocationPicker({
 
     try {
       const results = await fetchLocationSuggestions(query, getLocationSearchBias(), controller.signal)
+      if (controller.signal.aborted) return
       setSearchResults(results)
       setActiveSearchIndex(results.length > 0 ? 0 : -1)
       setSearchError(results.length === 0 ? "No matches found" : null)
@@ -3873,7 +3910,7 @@ export function MapboxLocationPicker({
     }
   }
 
-  const selectSearchResult = (feature: GeocodingFeature) => {
+  const selectSearchResult = (feature: GeocodingFeature, applyTripEndpoint = true) => {
     const map = mapInstanceRef.current
     suspendTravelerTrackingForInteraction()
     searchDebounceRef.current && clearTimeout(searchDebounceRef.current)
@@ -3890,6 +3927,26 @@ export function MapboxLocationPicker({
     }
 
     map.stop()
+    searchResultMarkerRef.current?.remove()
+    searchInputRef.current?.blur()
+    map.getCanvas().focus({ preventScroll: true })
+    const popupContent = document.createElement("div")
+    const popupLabel = document.createElement("p")
+    popupLabel.className = "map-search-result-label"
+    popupLabel.textContent = "Selected place"
+    const popupName = document.createElement("p")
+    popupName.className = "map-search-result-name"
+    popupName.textContent = feature.place_name
+    popupContent.append(popupLabel, popupName)
+    const searchMarker = new mapboxgl.Marker({ color: pointTimestampMarkerColor, scale: 1.15 })
+      .setLngLat(feature.center)
+      .setPopup(new mapboxgl.Popup({ offset: 32, className: "map-search-result-popup", maxWidth: "320px" }).setDOMContent(popupContent))
+      .addTo(map)
+    searchMarker.getElement().setAttribute("aria-label", `Search result: ${feature.place_name}`)
+    searchMarker.getElement().setAttribute("title", feature.place_name)
+    searchResultMarkerRef.current = searchMarker
+    setHasSearchMarker(true)
+    onSearchLocationChange?.({ lat: feature.center[1], lng: feature.center[0] })
     map.flyTo({
       center: feature.center,
       zoom: getSearchResultZoom(feature, map.getZoom()),
@@ -3898,7 +3955,7 @@ export function MapboxLocationPicker({
     })
 
     const activeTripEndpoint = activeTripEndpointRef.current
-    if (activeTripEndpoint) {
+    if (activeTripEndpoint && applyTripEndpoint) {
       onTripEndpointChangeRef.current?.(activeTripEndpoint, {
         lat: feature.center[1],
         lng: feature.center[0],
@@ -3907,7 +3964,58 @@ export function MapboxLocationPicker({
     }
   }
 
+  const selectLandmarkRef = useRef(selectSearchResult)
+  const appliedLandmarkRequestRef = useRef<number | null>(null)
+  useEffect(() => { selectLandmarkRef.current = selectSearchResult })
+  useEffect(() => {
+    if (!landmarkSearchResult || !isLoaded || appliedLandmarkRequestRef.current === landmarkSearchResult.requestId) return
+    appliedLandmarkRequestRef.current = landmarkSearchResult.requestId
+    searchDebounceRef.current && clearTimeout(searchDebounceRef.current)
+    searchAbortRef.current?.abort()
+    const controller = new AbortController()
+    searchAbortRef.current = controller
+    suppressAutocompleteRef.current = true
+    setSearchQuery(landmarkSearchResult.name)
+    setSearchResults([])
+    setSearchError(null)
+    setIsSearching(true)
+    // Run the same name search as the map input, biased to Google's landmark location.
+    void fetchLocationSuggestions(landmarkSearchResult.name, {
+      proximity: [landmarkSearchResult.lng, landmarkSearchResult.lat],
+    }, controller.signal).then((features) => {
+      if (controller.signal.aborted) return
+      const closest = features.filter((feature) => {
+        const latDelta = feature.center[1] - landmarkSearchResult.lat
+        const lngDelta = (feature.center[0] - landmarkSearchResult.lng) * Math.cos(landmarkSearchResult.lat * Math.PI / 180)
+        return Math.hypot(latDelta, lngDelta) < 0.05
+      }).sort((a, b) => Math.hypot(a.center[0] - landmarkSearchResult.lng, a.center[1] - landmarkSearchResult.lat) - Math.hypot(b.center[0] - landmarkSearchResult.lng, b.center[1] - landmarkSearchResult.lat))[0]
+      // Do not move to an unrelated similarly named place. Google's coordinates are the fallback.
+      selectLandmarkRef.current(closest ?? {
+        id: `landmark:${landmarkSearchResult.requestId}`, text: landmarkSearchResult.name,
+        place_name: landmarkSearchResult.name, center: [landmarkSearchResult.lng, landmarkSearchResult.lat],
+      }, false)
+      if (!closest) setSearchError("No nearby name match; showing Google's detected landmark location. Verify the marker.")
+    }).catch(() => {
+      if (!controller.signal.aborted) {
+        selectLandmarkRef.current({
+          id: `landmark:${landmarkSearchResult.requestId}`, text: landmarkSearchResult.name,
+          place_name: landmarkSearchResult.name, center: [landmarkSearchResult.lng, landmarkSearchResult.lat],
+        }, false)
+        setSearchError("Map search unavailable; showing Google's detected location. Verify the marker.")
+      }
+    })
+    return () => controller.abort()
+  }, [landmarkSearchResult, isLoaded])
+
+  const clearSearchMarker = () => {
+    onSearchLocationChange?.(null)
+    searchResultMarkerRef.current?.remove()
+    searchResultMarkerRef.current = null
+    setHasSearchMarker(false)
+  }
+
   const clearSearch = () => {
+    clearSearchMarker()
     searchDebounceRef.current && clearTimeout(searchDebounceRef.current)
     searchAbortRef.current?.abort()
     setSearchQuery("")
@@ -3950,7 +4058,7 @@ export function MapboxLocationPicker({
       return
     }
 
-    if (event.key === "Enter" && activeSearchIndex >= 0 && searchResults[activeSearchIndex]) {
+    if (event.key === "Enter" && !isSearching && activeSearchIndex >= 0 && searchResults[activeSearchIndex]) {
       event.preventDefault()
       selectSearchResult(searchResults[activeSearchIndex])
       return
@@ -3958,9 +4066,14 @@ export function MapboxLocationPicker({
 
     if (event.key === "Escape") {
       event.preventDefault()
+      event.stopPropagation()
+      searchDebounceRef.current && clearTimeout(searchDebounceRef.current)
+      searchAbortRef.current?.abort()
+      setIsSearching(false)
       setSearchResults([])
       setActiveSearchIndex(-1)
       setSearchError(null)
+      event.currentTarget.blur()
     }
   }
 
@@ -4002,8 +4115,17 @@ export function MapboxLocationPicker({
         <div className="flex items-center gap-2 rounded-xl bg-white/95 p-1 shadow-lg backdrop-blur-sm">
           <Search className="ml-2 h-4 w-4 shrink-0 text-slate-500" />
           <Input
+            ref={searchInputRef}
+            aria-keyshortcuts="/"
+            title="Search the map (/). Press Escape to return to editor shortcuts."
             value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
+            onChange={(event) => {
+              searchAbortRef.current?.abort()
+              setSearchResults([])
+              setActiveSearchIndex(-1)
+              setIsSearching(event.target.value.trim().length >= 2)
+              setSearchQuery(event.target.value)
+            }}
             onKeyDown={handleSearchKeyDown}
             placeholder={
               activeTripEndpoint === "start"
@@ -4028,6 +4150,22 @@ export function MapboxLocationPicker({
             {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : "Go"}
           </Button>
         </div>
+
+        {hasSearchMarker && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={clearSearchMarker}
+            aria-keyshortcuts="Shift+Delete"
+            title="Clear search marker (Shift+Delete)"
+            className="mt-2 bg-background shadow-sm"
+          >
+            <X className="h-4 w-4" />
+            Clear marker
+            <span className="text-xs text-muted-foreground">Shift+Del</span>
+          </Button>
+        )}
 
         {(searchResults.length > 0 || searchError || isSearching || googleMapsQuery) && (
           <div id="map-search-suggestions" role="listbox" className="mt-2 overflow-hidden rounded-xl bg-white/95 shadow-lg backdrop-blur-sm">

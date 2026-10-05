@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "prisma generate && next build",
+    "build": "prisma generate && next build --webpack",
     "db:generate": "prisma generate",
     "db:pull": "prisma db pull",
-    "dev": "next dev -p 3000",
+    "predev": "prisma generate",
+    "dev": "next dev --webpack -p 3000",
     "lint": "next lint",
     "start": "next start"
   },

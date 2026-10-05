@@ -1,4 +1,9 @@
 import type { BoundingBox, Coordinate, CountryCode, LocationSearchContext, ParsedAddress } from "@/lib/location-search/types"
+import { lookupCountryName } from "@/lib/location-search/countries"
+
+export function getExplicitCountryCode(value: string) {
+  return lookupCountryName(value, normalizeSearchText)
+}
 
 const pakistanAddressVariants: Array<[RegExp, string]> = [
   [/\bsayedan\b/gi, "Syedan"],
@@ -104,7 +109,8 @@ export function isValidCoordinate(value: unknown): value is Coordinate {
     typeof value[0] === "number" &&
     Number.isFinite(value[0]) &&
     typeof value[1] === "number" &&
-    Number.isFinite(value[1])
+    Number.isFinite(value[1]) &&
+    Math.abs(value[0]) <= 180 && Math.abs(value[1]) <= 90
   )
 }
 
@@ -150,8 +156,16 @@ export function normalizeSearchText(value: string) {
   return value
     .toLowerCase()
     .normalize("NFKD")
+    .replace(/ß/g, "ss")
+    .replace(/ł/g, "l")
+    .replace(/ø/g, "o")
+    .replace(/æ/g, "ae")
+    .replace(/œ/g, "oe")
+    .replace(/ı/g, "i")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/[\u064b-\u065f\u0670\u0640]/g, "")
+    .replace(/[٠-٩۰-۹]/g, (digit) => String(digit.charCodeAt(0) - (digit >= "۰" ? 0x6f0 : 0x660)))
+    .replace(/[^\p{L}\p{N}\p{M}\s]/gu, " ")
     .replace(/\s+/g, " ")
     .trim()
 }
@@ -213,32 +227,46 @@ function applyPakistanVariants(value: string) {
 }
 
 export function parseCopiedAddress(rawQuery: string): ParsedAddress {
-  const raw = rawQuery.replace(/["'`\\]/g, " ").replace(/\s+/g, " ").trim()
+  const raw = rawQuery.normalize("NFKC").replace(/[٠-٩۰-۹]/g, (digit) => String(digit.charCodeAt(0) - (digit >= "۰" ? 0x6f0 : 0x660))).replace(/["'`\\]/g, " ").replace(/\s+/g, " ").trim()
   const parts = raw
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean)
-  const countryPart = parts.find((part) => /\b(?:pakistan|united states(?: of america)?|usa|u\.s\.a\.)\b/i.test(part))
-  const postcode = parts.map((part) => part.match(/\b\d{4,6}(?:-\d{4})?\b/)?.[0]).find(Boolean) ?? null
+  // Only interpret a whole trailing component as a country: Georgia can be a
+  // city/state, and a two-letter component such as CA can be a US state.
+  const countryPart = parts.length > 1 && getExplicitCountryCode(parts[parts.length - 1]) ? parts[parts.length - 1] : undefined
+  const countryCode = countryPart ? getExplicitCountryCode(countryPart) : null
+  const postcode = parts.slice(1).map((part) => part.match(/\b(?:[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}|[A-Z]\d[A-Z]\s*\d[A-Z]\d|\d{4,6}(?:[-\s]\d{3,4})?)\b/i)?.[0]).find(Boolean) ?? null
   const usefulParts = parts.filter((part) => part !== countryPart && part !== postcode)
+  const primary = usefulParts[0] ?? null
+  const addressPattern = /^(?:(\d+[\p{L}]?(?:\s*[-/]\s*\d+[\p{L}]?)?)\s+(.+)|(.+?)\s+(\d+[\p{L}]?(?:\s*[-/]\s*\d+[\p{L}]?)?))$/u
+  const streetPattern = /(?:street|\bst\b|road|\brd\b|avenue|\bave\b|boulevard|lane|drive|way|straße|strasse|str\.|rue|via|calle|ulica|улица|проспект|شارع|路|街)/iu
+  const addressIndex = usefulParts.slice(0, 2).findIndex((part) => addressPattern.test(part) &&
+    (streetPattern.test(part) || (postcode && part === primary) || /^\d+\s/.test(part)))
+  const numberMatch = addressIndex >= 0 ? usefulParts[addressIndex].match(addressPattern) : null
+  const placeIndex = addressIndex >= 0 ? addressIndex + 1 : 1
+  const place = usefulParts[placeIndex]?.replace(postcode ?? "", "").trim() || usefulParts[placeIndex + 1]?.replace(postcode ?? "", "").trim() || null
 
   return {
     raw,
     parts,
-    primary: usefulParts[0] ?? null,
-    place: usefulParts[1] ?? null,
+    primary,
+    place,
     postcode,
-    countryCode: countryPart ? (/pakistan/i.test(countryPart) ? "pk" : "us") : null,
+    countryCode,
+    houseNumber: numberMatch?.[1] || numberMatch?.[4] || null,
+    street: numberMatch?.[2] || numberMatch?.[3] || null,
   }
 }
 
 export function createSearchContext(query: string, proximity: Coordinate | null, bbox: BoundingBox | null): LocationSearchContext {
   const parsedAddress = parseCopiedAddress(query)
   return {
-    query,
-    proximity,
-    bbox,
-    countryCode: parsedAddress.countryCode ?? getCountryCodeFromCoordinate(proximity),
+    query: parsedAddress.raw,
+    proximity: parsedAddress.place || parsedAddress.countryCode ? null : proximity,
+    bbox: parsedAddress.place || parsedAddress.countryCode ? null : bbox,
+    // A viewport is a soft ranking hint, never a hard country restriction.
+    countryCode: parsedAddress.countryCode,
     parsedAddress,
   }
 }
@@ -266,12 +294,13 @@ export function getQueryVariants(context: LocationSearchContext) {
     applyPakistanVariants(variant).forEach((nextVariant) => variants.add(nextVariant))
   })
 
-  getTypoTolerantQueries(cleanedQuery || query).forEach((variant) => variants.add(variant))
+  // Typo tolerance belongs in matching/providers, not invented spellings sent
+  // to several APIs. Keep fallback queries bounded and geographically qualified.
 
   return [...variants]
     .map((variant) => variant.replace(/\s+/g, " ").trim())
     .filter((variant, index, list) => variant.length >= 2 && list.findIndex((item) => normalizeSearchText(item) === normalizeSearchText(variant)) === index)
-    .slice(0, 8)
+    .slice(0, 3)
 }
 
 export function getTypoTolerantQueries(query: string) {

@@ -18,6 +18,8 @@ interface CreatorAccessUser {
   } | null
 }
 
+const approvedCreatorUserIds = new Set<string>()
+
 export function useCreatorAccess({
   isLoaded,
   isSignedIn,
@@ -27,7 +29,10 @@ export function useCreatorAccess({
   isSignedIn?: boolean
   user: CreatorAccessUser | null | undefined
 }): CreatorAccessState {
-  const [approvedUserId, setApprovedUserId] = useState<string | null>(null)
+  const initialUserId = isLoaded && isSignedIn ? user?.id ?? null : null
+  const [approvedUserId, setApprovedUserId] = useState<string | null>(() =>
+    initialUserId && approvedCreatorUserIds.has(initialUserId) ? initialUserId : null,
+  )
   const [isCheckingCreatorAccess, setIsCheckingCreatorAccess] = useState(false)
 
   useEffect(() => {
@@ -39,6 +44,13 @@ export function useCreatorAccess({
 
     let isMounted = true
     const checkingUserId = user.id
+
+    if (approvedCreatorUserIds.has(checkingUserId)) {
+      setApprovedUserId(checkingUserId)
+      setIsCheckingCreatorAccess(false)
+      return
+    }
+
     setApprovedUserId(null)
     setIsCheckingCreatorAccess(true)
 
@@ -52,7 +64,13 @@ export function useCreatorAccess({
       })
       .then((data) => {
         if (isMounted) {
-          setApprovedUserId(data.approved === true ? checkingUserId : null)
+          if (data.approved === true) {
+            approvedCreatorUserIds.add(checkingUserId)
+            setApprovedUserId(checkingUserId)
+          } else {
+            approvedCreatorUserIds.delete(checkingUserId)
+            setApprovedUserId(null)
+          }
         }
       })
       .catch(() => {

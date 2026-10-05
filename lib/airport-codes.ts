@@ -7,6 +7,9 @@ export interface AirportCodeLocation {
 }
 
 const airportCodeLocations: Record<string, AirportCodeLocation> = {
+  EDI: { code: "EDI", name: "Edinburgh Airport", city: "Edinburgh", lat: 55.95, lng: -3.3725 },
+  LGW: { code: "LGW", name: "London Gatwick Airport", city: "London", lat: 51.1537, lng: -0.1821 },
+  ORY: { code: "ORY", name: "Paris Orly Airport", city: "Paris", lat: 48.7262, lng: 2.3652 },
   ATL: { code: "ATL", name: "Hartsfield-Jackson Atlanta International Airport", city: "Atlanta", lat: 33.6407, lng: -84.4277 },
   CAI: { code: "CAI", name: "Cairo International Airport", city: "Cairo", lat: 30.1219, lng: 31.4056 },
   CDG: { code: "CDG", name: "Paris Charles de Gaulle Airport", city: "Paris", lat: 49.0097, lng: 2.5479 },
@@ -26,6 +29,23 @@ const airportCodeLocations: Record<string, AirportCodeLocation> = {
   SFO: { code: "SFO", name: "San Francisco International Airport", city: "San Francisco", lat: 37.6213, lng: -122.379 },
 }
 
+const airportCountries: Record<string, string> = {
+  ATL: "United States", CAI: "Egypt", CDG: "France", DCA: "United States",
+  DEL: "India", DXB: "United Arab Emirates", EWR: "United States", IAD: "United States",
+  IST: "Türkiye", JFK: "United States", KHI: "Pakistan", LAX: "United States",
+  LHE: "Pakistan", LHR: "United Kingdom", ORD: "United States", PEK: "China",
+  SFO: "United States", EDI: "United Kingdom", LGW: "United Kingdom", ORY: "France",
+}
+
+export const airportSearchOptions = Object.values(airportCodeLocations).map((airport) => ({
+  ...airport,
+  country: airportCountries[airport.code],
+}))
+
 export function getAirportCodeLocation(code: string) {
   return airportCodeLocations[code.trim().toUpperCase()] ?? null
+}
+
+export function registerAirportCodeLocation(airport: AirportCodeLocation) {
+  airportCodeLocations[airport.code] = airport
 }
