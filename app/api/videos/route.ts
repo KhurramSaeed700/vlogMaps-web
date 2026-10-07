@@ -29,5 +29,5 @@ export async function GET() {
   return NextResponse.json({
     configured: isCreatorVideosDbConfigured(),
     videos: dedupeVideosByYouTubeId(cloudVideos),
-  })
+  }, { headers: { "Cache-Control": "no-store" } })
 }

@@ -1,5 +1,6 @@
 export const sharedMapNavigationMotion = {
-  routePreviewDurationMs: 20000,
+  routePreviewDurationMs: 3000,
+  routePreviewCameraDurationMs: 1200,
   centerNormalMs: 900,
   centerFastMs: 300,
   centerCatchUpMs: 190,

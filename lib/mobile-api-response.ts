@@ -5,7 +5,8 @@ const publicHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
-  "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+  // Visibility can be revoked at any time; never serve a stale public route.
+  "Cache-Control": "no-store",
 }
 
 export function mobileJson(data: unknown, status = 200) {

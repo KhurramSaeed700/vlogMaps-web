@@ -94,7 +94,7 @@ const editorTravelerTrackingZoomCatchUpMs = sharedMapNavigationMotion.zoomCatchU
 const editorTravelerTrackingLoadingMinMs = 450
 const editorTravelerTrackingLoadingFallbackMs = 6500
 const editorTravelerTrackingTargetRefreshMs = sharedMapNavigationMotion.targetRefreshMs
-const editorTrackingAutoStartDurationMs = 10000
+const editorTrackingAutoStartDurationMs = sharedMapNavigationMotion.routePreviewDurationMs
 const editorPlaybackPreloadRefreshMs = 1500
 const editorPlaybackPreloadMaxZoom = 15.5
 const editorSeekMinTimeJumpSeconds = 1.25
@@ -2077,6 +2077,10 @@ export function MapboxLocationPicker({
     }
 
     const now = window.performance.now()
+    // Start only once data and the map are ready, including asynchronously loaded trips.
+    if (trackingAutoStartDeadlineRef.current === null && mapInstanceRef.current) {
+      fitMapToAvailablePoints(mapInstanceRef.current, sharedMapNavigationMotion.routePreviewCameraDurationMs)
+    }
     const deadline =
       trackingAutoStartDeadlineRef.current ??
       now + editorTrackingAutoStartDurationMs
@@ -3356,7 +3360,7 @@ export function MapboxLocationPicker({
     activeMarkerRef.current.setLngLat([nextValue.lng, nextValue.lat])
   }
 
-  const fitMapToAvailablePoints = (map: mapboxgl.Map) => {
+  const fitMapToAvailablePoints = (map: mapboxgl.Map, duration = 0) => {
     const route = tripRouteRef.current
     const shapes = routeShapesRef.current
     const coordinates = [
@@ -3375,9 +3379,10 @@ export function MapboxLocationPicker({
     }
 
     if (coordinates.length === 1) {
-      map.jumpTo({
+      map.easeTo({
         center: coordinates[0],
         zoom: 11,
+        duration,
       })
       return
     }
@@ -3386,7 +3391,7 @@ export function MapboxLocationPicker({
     coordinates.slice(1).forEach((coordinate) => bounds.extend(coordinate))
     map.fitBounds(bounds, {
       padding: 72,
-      duration: 0,
+      duration,
       maxZoom: 13,
     })
   }
@@ -3532,7 +3537,8 @@ export function MapboxLocationPicker({
       drawTripRoute(map)
       syncActiveMarker(map)
       if (!hasSetInitialViewRef.current) {
-        if (!persistedView) {
+        // Trackable trips animate into the overview in the auto-start effect.
+        if (!persistedView && pointsRef.current.length === 0) {
           fitMapToAvailablePoints(map)
         }
         hasSetInitialViewRef.current = true

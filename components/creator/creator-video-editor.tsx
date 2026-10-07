@@ -21,6 +21,8 @@ import { getAirportCodeLocation, registerAirportCodeLocation } from "@/lib/airpo
 import { AirportSearchInput } from "@/components/creator/airport-search-input"
 import { LandmarkSearchButton } from "@/components/creator/landmark-search-button"
 import type { LandmarkResult } from "@/lib/landmark-search"
+import { useCreatorEditorDocument } from "@/lib/use-creator-editor-document"
+import { useCreatorEditorHistory } from "@/lib/use-creator-editor-history"
 import { getCompletedFlightPairs } from "@/lib/flight-path"
 import {
   emptyCreatorTripRoute,
@@ -570,13 +572,9 @@ export function CreatorVideoEditor({
     }
   }
   const initialEditorState = initialEditorStateRef.current.state
-  const [points, setPoints] = useState<CreatorMapPoint[]>(initialEditorState.points)
-  const [tripRoute, setTripRoute] = useState<CreatorTripRoute>(initialEditorState.tripRoute)
-  const [routeShapes, setRouteShapes] = useState<CreatorRouteShapes>(initialEditorState.routeShapes)
-  const [savedPlaces, setSavedPlaces] = useState<CreatorSavedPlace[]>(initialEditorState.savedPlaces)
+  const { points, tripRoute, routeShapes, savedPlaces, setPoints, setTripRoute, setRouteShapes, setSavedPlaces, replaceDocument, restoreMapDocument } = useCreatorEditorDocument(initialEditorState)
   const [activeTripEndpoint, setActiveTripEndpoint] = useState<CreatorTripEndpoint | null>(null)
-  const [undoStack, setUndoStack] = useState<MapEditSnapshot[]>([])
-  const [redoStack, setRedoStack] = useState<MapEditSnapshot[]>([])
+  const { undoStack, redoStack, recordHistory, undoHistory, redoHistory, clearHistory } = useCreatorEditorHistory<MapEditSnapshot>()
   const [currentTime, setCurrentTime] = useState(0)
   const [seekRequest, setSeekRequest] = useState<{ id: number; time: number } | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -689,10 +687,7 @@ export function CreatorVideoEditor({
     draftPointRef.current = null
     isCompletingStopRef.current = false
     const nextState = loadRestorableCreatorVideoState(video)
-    setPoints(nextState.points)
-    setTripRoute(nextState.tripRoute)
-    setRouteShapes(nextState.routeShapes)
-    setSavedPlaces(nextState.savedPlaces)
+    replaceDocument(nextState)
     setActiveTripEndpoint(null)
     setDraftPoint(null)
     setIsAwaitingMapPlacement(false)
@@ -702,8 +697,7 @@ export function CreatorVideoEditor({
     setFlightAirportPrompt(null)
     setFlightAirportCode("")
     setAirportCodeMessage("")
-    setUndoStack([])
-    setRedoStack([])
+    clearHistory()
     commitCurrentTime(0, true)
     setSeekRequest(null)
     setIsPlaying(false)
@@ -724,7 +718,7 @@ export function CreatorVideoEditor({
     return () => {
       nearbyPlaceLookupControllerRef.current?.abort()
     }
-  }, [commitCurrentTime, video.id, video.keyframes])
+  }, [clearHistory, commitCurrentTime, replaceDocument, video.id, video.keyframes])
 
   useEffect(() => {
     if (!headerLeadingActionsTargetId) {
@@ -752,10 +746,7 @@ export function CreatorVideoEditor({
     const pendingBeforeLoad = loadPendingCreatorVideoState(video.id)
     if (pendingBeforeLoad) {
       const localState = pendingBeforeLoad.state
-      setPoints(localState.points)
-      setTripRoute(localState.tripRoute)
-      setRouteShapes(localState.routeShapes)
-      setSavedPlaces(localState.savedPlaces)
+      replaceDocument(localState)
       syncVideoRouteMetadata(
         video.id,
         localState.points.map(({ id, ...point }) => point),
@@ -784,10 +775,7 @@ export function CreatorVideoEditor({
         // A pending local revision is always newer than the database snapshot. It
         // remains authoritative until that exact revision receives an acknowledgement.
         if (pendingState) {
-          setPoints(localState.points)
-          setTripRoute(localState.tripRoute)
-          setRouteShapes(localState.routeShapes)
-          setSavedPlaces(localState.savedPlaces)
+          replaceDocument(localState)
           syncVideoRouteMetadata(
             video.id,
             localState.points.map(({ id, ...point }) => point),
@@ -804,10 +792,7 @@ export function CreatorVideoEditor({
             savedPlaces: shouldKeepLocalPlaces ? localState.savedPlaces : response.state.savedPlaces,
           }
 
-          setPoints(nextState.points)
-          setTripRoute(nextState.tripRoute)
-          setRouteShapes(nextState.routeShapes)
-          setSavedPlaces(nextState.savedPlaces)
+          replaceDocument(nextState)
           syncVideoRouteMetadata(
             video.id,
             nextState.points.map(({ id, ...point }) => point),
@@ -834,7 +819,7 @@ export function CreatorVideoEditor({
       })
 
     return () => controller.abort()
-  }, [saveAutosavedState, schedulePendingSave, video.id, video.keyframes])
+  }, [replaceDocument, saveAutosavedState, schedulePendingSave, video.id, video.keyframes])
 
   useEffect(() => {
     if (resumeCountdown === null) {
@@ -1164,15 +1149,12 @@ export function CreatorVideoEditor({
   }
 
   const recordMapEditSnapshot = () => {
-    setUndoStack((currentStack) => [...currentStack.slice(-49), createMapEditSnapshot()])
-    setRedoStack([])
+    recordHistory(createMapEditSnapshot())
   }
 
   const applyMapEditSnapshot = (snapshot: MapEditSnapshot) => {
     setResumeCountdown(null)
-    setPoints(snapshot.points)
-    setTripRoute(snapshot.tripRoute)
-    setRouteShapes(snapshot.routeShapes)
+    restoreMapDocument({ points: snapshot.points, tripRoute: snapshot.tripRoute, routeShapes: snapshot.routeShapes })
     persistEditorState({
       points: snapshot.points,
       tripRoute: snapshot.tripRoute,
@@ -1193,8 +1175,7 @@ export function CreatorVideoEditor({
       return
     }
 
-    setUndoStack((currentStack) => currentStack.slice(0, -1))
-    setRedoStack((currentStack) => [...currentStack, createMapEditSnapshot()])
+    undoHistory(createMapEditSnapshot())
     applyMapEditSnapshot(previousSnapshot)
   }
 
@@ -1204,8 +1185,7 @@ export function CreatorVideoEditor({
       return
     }
 
-    setRedoStack((currentStack) => currentStack.slice(0, -1))
-    setUndoStack((currentStack) => [...currentStack, createMapEditSnapshot()])
+    redoHistory(createMapEditSnapshot())
     applyMapEditSnapshot(nextSnapshot)
   }
 

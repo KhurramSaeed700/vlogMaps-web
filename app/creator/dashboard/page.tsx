@@ -2,11 +2,9 @@
 
 import { type FormEvent, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { RedirectToSignIn, UserButton, useUser } from "@clerk/nextjs"
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
-import { CheckCircle2, CloudOff, Edit, Eye, MapPin, MoreHorizontal, Plus, Trash2, TrendingUp, UploadCloud, Youtube } from "lucide-react"
+import { CheckCircle2, Eye, Globe, LayoutDashboard, MapPin, Plus, BookOpen, TrendingUp, Video, Youtube } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -14,9 +12,10 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CreatorAccessGuard } from "@/components/creator/creator-access-guard"
 import { CreatorLoadingState } from "@/components/creator/creator-loading-state"
+import { CreatorContentTable } from "@/components/creator/creator-content-table"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
 import { ThemeToggle } from "@/components/app-shell/theme-toggle"
-import { formatCompactNumber, formatDuration, type TravelVideo } from "@/lib/demo-data"
+import { formatCompactNumber, type TravelVideo } from "@/lib/demo-data"
 import {
   buildCreatorVideoStateSnapshot,
   createLocalCreatorVideo,
@@ -28,49 +27,11 @@ import {
   fetchCreatorCloudVideos,
   unpublishCreatorVideoFromCloud,
   uploadCreatorVideoToCloud,
+  setCreatorVideoVisibilityInCloud,
 } from "@/lib/creator-videos-cloud-client"
 import { migrateLegacyCreatorStorageToDatabase } from "@/lib/legacy-creator-storage-migration"
+import { normalizeVideoVisibility, videoVisibilityDescriptions, videoVisibilityLabels, type VideoVisibility } from "@/lib/video-visibility"
 
-const creatorDashboardSkeletonCardCount = 3
-
-function CreatorVideoGridSkeleton() {
-  return (
-    <div
-      className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3"
-      aria-hidden="true"
-    >
-      {Array.from({ length: creatorDashboardSkeletonCardCount }, (_, index) => (
-        <Card
-          key={`creator-video-skeleton-${index}`}
-          className="flex h-full flex-col overflow-hidden border-border bg-card shadow-sm"
-        >
-          <Skeleton className="aspect-video w-full rounded-none bg-muted" />
-          <CardContent className="flex flex-1 flex-col p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1 space-y-2 py-1">
-                <Skeleton className="h-4 w-11/12" />
-                <Skeleton className="h-4 w-3/5" />
-              </div>
-              <Skeleton className="h-7 w-20 shrink-0" />
-            </div>
-
-            <div className="mt-3 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2">
-              <Skeleton className="h-4 w-24" />
-              <Skeleton className="h-1 w-1 rounded-full" />
-              <Skeleton className="h-4 w-20" />
-            </div>
-
-            <div className="mt-auto flex items-center gap-2 pt-3">
-              <Skeleton className="h-10 flex-1 rounded-lg" />
-              <Skeleton className="h-10 flex-1 rounded-lg" />
-              <Skeleton className="h-10 w-10 rounded-lg" />
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  )
-}
 
 function CreatorDashboardContent() {
   const router = useRouter()
@@ -79,11 +40,13 @@ function CreatorDashboardContent() {
   const [allCreatorVideos, setAllCreatorVideos] = useState<TravelVideo[]>([])
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
   const [syncingVideoId, setSyncingVideoId] = useState<string | null>(null)
+  const [visibilityUpdatingId, setVisibilityUpdatingId] = useState<string | null>(null)
   const [isCreatingVideo, setIsCreatingVideo] = useState(false)
   const [cloudVideoIds, setCloudVideoIds] = useState<Set<string>>(() => new Set())
   const [cloudConfigured, setCloudConfigured] = useState<boolean | null>(null)
   const [syncMessage, setSyncMessage] = useState("")
   const [isLoadingCreatorVideos, setIsLoadingCreatorVideos] = useState(true)
+  const [dashboardView, setDashboardView] = useState<"overview" | "content">("content")
 
   useEffect(() => {
     if (!syncMessage) {
@@ -304,7 +267,24 @@ function CreatorDashboardContent() {
     }
   }
 
-  const creatorVideos = allCreatorVideos
+  const handleVisibilityChange = async (video: TravelVideo, visibility: VideoVisibility) => {
+    if (visibilityUpdatingId || syncingVideoId || deletingVideoId || visibility === normalizeVideoVisibility(video.visibility)) return
+    setVisibilityUpdatingId(video.id)
+    try {
+      const response = await setCreatorVideoVisibilityInCloud(video.id, visibility)
+      if (!response.updated || !response.video) {
+        setSyncMessage(response.error || "Could not update visibility. Please try again.")
+        return
+      }
+      const savedVideo = response.video
+      setAllCreatorVideos((currentVideos) => mergeTravelVideos(currentVideos, [savedVideo]))
+      setSyncMessage(`"${video.title}" is now ${videoVisibilityLabels[visibility].toLowerCase()}. ${videoVisibilityDescriptions[visibility]}`)
+    } catch {
+      setSyncMessage("Could not update visibility. Check your connection and try again.")
+    } finally {
+      setVisibilityUpdatingId(null)
+    }
+  }
 
   const stats = useMemo(() => {
     const totalViews = allCreatorVideos.reduce((sum, video) => sum + video.views, 0)
@@ -323,7 +303,7 @@ function CreatorDashboardContent() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
-        <div className="mx-auto flex max-w-screen-2xl items-center justify-between gap-2 px-3 py-2.5 sm:px-6 sm:py-3 lg:px-8">
+        <div className="flex items-center justify-between gap-2 px-3 py-2.5 sm:px-6 sm:py-3">
           <TravelMapLogo className="gap-2" textClassName="hidden sm:inline" />
 
           <div className="flex items-center gap-3">
@@ -342,15 +322,24 @@ function CreatorDashboardContent() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-screen-2xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
+      <aside className="fixed bottom-0 left-0 top-[61px] hidden w-56 flex-col border-r border-border bg-background px-3 py-6 lg:flex" aria-label="Creator navigation">
+        <nav className="space-y-1">
+          <Button variant="ghost" onClick={() => setDashboardView('overview')} aria-pressed={dashboardView === 'overview'} className={`h-11 w-full justify-start gap-3 ${dashboardView === 'overview' ? 'bg-muted font-semibold' : 'text-muted-foreground'}`}><LayoutDashboard className="h-5 w-5" />Overview</Button>
+          <Button variant="ghost" onClick={() => setDashboardView('content')} aria-pressed={dashboardView === 'content'} className={`h-11 w-full justify-start gap-3 ${dashboardView === 'content' ? 'bg-muted font-semibold' : 'text-muted-foreground'}`}><Video className="h-5 w-5" />Content</Button>
+          <Button asChild variant="ghost" className="h-11 w-full justify-start gap-3 text-muted-foreground"><Link href="/"><Globe className="h-5 w-5" />Explore TravelMap</Link></Button>
+        </nav>
+        <div className="mt-auto border-t border-border pt-4"><Button asChild variant="ghost" className="w-full justify-start gap-3 text-muted-foreground"><Link href="/creator/guidelines"><BookOpen className="h-4 w-4" />Creator guidelines</Link></Button></div>
+      </aside>
+      <main className="min-w-0 px-3 py-4 sm:px-6 sm:py-6 lg:ml-56 lg:px-8">
+        <nav aria-label="Creator sections" className="mb-5 flex gap-2 lg:hidden"><Button size="sm" variant={dashboardView === 'overview' ? 'secondary' : 'ghost'} onClick={() => setDashboardView('overview')} aria-pressed={dashboardView === 'overview'}>Overview</Button><Button size="sm" variant={dashboardView === 'content' ? 'secondary' : 'ghost'} onClick={() => setDashboardView('content')} aria-pressed={dashboardView === 'content'}>Content</Button></nav>
         <div className="mb-4 flex flex-col gap-3 sm:mb-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
-                Welcome back, {user?.firstName || "Creator"}
+                {dashboardView === 'overview' ? 'Creator overview' : 'Channel content'}
               </h1>
               <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
-                Manage travel videos, map keyframes, publishing, and route performance.
+                {stats.totalVideos} videos · {stats.publishedVideos} uploaded. Manage your travel stories and mapped journeys.
               </p>
             </div>
           </div>
@@ -360,6 +349,7 @@ function CreatorDashboardContent() {
               <Youtube className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="url"
+                aria-label="YouTube video URL"
                 value={youtubeUrl}
                 onChange={(event) => setYoutubeUrl(event.target.value)}
                 placeholder="Paste YouTube URL"
@@ -378,7 +368,7 @@ function CreatorDashboardContent() {
           </form>
         </div>
 
-        <div className="mb-4 grid grid-cols-2 gap-2 sm:mb-6 sm:gap-3 lg:grid-cols-5">
+        {dashboardView === 'overview' && (<div className="mb-4 grid grid-cols-2 gap-2 sm:mb-6 sm:gap-3 lg:grid-cols-5">
           <Card className="overflow-hidden border-border bg-card shadow-sm">
             <CardContent className="p-3 sm:p-5">
               <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
@@ -468,185 +458,18 @@ function CreatorDashboardContent() {
               </div>
             </CardContent>
           </Card>
-        </div>
+        </div>)}
 
-        <section aria-busy={isLoadingCreatorVideos} aria-label="Creator videos">
-          <div>
-            {isLoadingCreatorVideos ? (
-              <>
-                <p className="sr-only" role="status">Loading creator videos</p>
-                <CreatorVideoGridSkeleton />
-              </>
-            ) : creatorVideos.length === 0 ? (
-              <Card className="border-border bg-card shadow-sm">
-                <CardContent className="p-10 text-center">
-                  <p className="text-base font-medium text-foreground">No creator videos yet</p>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Paste a YouTube URL to create your first mapped video.
-                  </p>
-                  <Link href="/creator/video/new" className="mt-5 inline-flex">
-                    <Button className="rounded-lg">
-                      <Plus className="mr-2 h-4 w-4" />
-                      Paste YouTube URL
-                    </Button>
-                  </Link>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {creatorVideos.map((video) => {
-                  const isCloudVideo = cloudVideoIds.has(video.id)
-                  const isLiveVideo = video.status === "published"
-                  const canEditVideo = video.viewerCanEdit !== false
-                  const canDeleteVideo = isCloudVideo && canEditVideo
-                  const isSyncingThisVideo = syncingVideoId === video.id
-                  const keyframeCount = video.keyframes.length
-
-                  return (
-                    <Card
-                      key={video.id}
-                      className={`group relative flex h-full flex-col overflow-hidden border-border bg-card shadow-sm transition hover:border-muted-foreground/40 hover:shadow-md ${
-                        canEditVideo ? "cursor-pointer" : ""
-                      }`}
-                    >
-                      {canEditVideo && (
-                        <Link
-                          href={`/creator/video/${video.id}/edit`}
-                          aria-label={`Edit ${video.title}`}
-                          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                        >
-                          <span className="sr-only">Edit {video.title}</span>
-                        </Link>
-                      )}
-
-                      <div className="relative aspect-video w-full overflow-hidden bg-muted">
-                        <Image
-                          src={video.thumbnail || "/placeholder.svg"}
-                          alt={video.title}
-                          fill
-                          sizes="(min-width: 1024px) 31vw, (min-width: 768px) 48vw, 100vw"
-                          className="scale-110 object-cover object-center transition duration-300 group-hover:scale-[1.14]"
-                        />
-                        {isLiveVideo && (
-                            <span className="absolute left-3 top-3 inline-flex h-7 items-center gap-1 rounded-md border border-emerald-200 bg-white/95 px-2 text-xs font-medium text-emerald-700 shadow-sm dark:border-emerald-900/60 dark:bg-emerald-950/90 dark:text-emerald-200">
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                            Published
-                          </span>
-                        )}
-                        <div className="absolute right-3 top-3 rounded-md bg-black/75 px-2 py-1 text-xs font-medium text-white">
-                          {formatDuration(video.durationSeconds)}
-                        </div>
-                      </div>
-
-                      <CardContent className="flex flex-1 flex-col p-3">
-                        <div className="min-w-0">
-                          <div className="flex items-start justify-between gap-3">
-                            <h3 className="line-clamp-2 text-base font-semibold leading-snug text-foreground">
-                              {video.title}
-                            </h3>
-                            <span className="flex-shrink-0 rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                              {new Date(video.createdAt).toLocaleDateString()}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-muted px-3 py-2 text-sm">
-                          <span className="text-muted-foreground">
-                            Keyframes <span className="font-semibold text-foreground">{keyframeCount}</span>
-                          </span>
-                          <span className="h-1 w-1 rounded-full bg-muted-foreground/40" aria-hidden="true" />
-                          <span className="text-muted-foreground">
-                            Views <span className="font-semibold text-foreground">{formatCompactNumber(video.views)}</span>
-                          </span>
-                        </div>
-
-                        <div className="mt-auto flex items-center gap-2 pt-3">
-                          {!isLiveVideo && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleUploadVideo(video)}
-                              disabled={Boolean(syncingVideoId) && !isSyncingThisVideo}
-                              className="relative z-20 h-10 flex-none rounded-lg px-3"
-                              title="Upload edited video"
-                            >
-                              <UploadCloud className="h-4 w-4 flex-shrink-0 sm:mr-1" />
-                              <span className="hidden sm:inline">{isSyncingThisVideo ? "Uploading" : "Upload"}</span>
-                            </Button>
-                          )}
-                          <Button
-                            asChild
-                            variant="outline"
-                            size="sm"
-                            className="relative z-20 h-10 min-w-0 flex-1 rounded-lg"
-                          >
-                            <Link href={`/watch/${video.id}`}>
-                              <Eye className="mr-1 h-4 w-4" />
-                              Preview
-                            </Link>
-                          </Button>
-                          <DropdownMenu.Root>
-                            <DropdownMenu.Trigger asChild>
-                              <Button
-                                variant="outline"
-                                size="icon"
-                                className="relative z-20 h-10 w-10 flex-none rounded-lg"
-                                aria-label={`Open options for ${video.title}`}
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenu.Trigger>
-                            <DropdownMenu.Portal>
-                              <DropdownMenu.Content
-                                align="end"
-                                sideOffset={8}
-                                className="z-50 w-44 rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-lg"
-                              >
-                                {canEditVideo && (
-                                  <DropdownMenu.Item asChild>
-                                    <Link
-                                      href={`/creator/video/${video.id}/edit`}
-                                      className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-popover-foreground outline-none hover:bg-accent focus:bg-accent"
-                                    >
-                                      <Edit className="h-4 w-4" />
-                                      Quick edit
-                                    </Link>
-                                  </DropdownMenu.Item>
-                                )}
-                                {isLiveVideo && canEditVideo && (
-                                  <DropdownMenu.Item
-                                    disabled={Boolean(syncingVideoId)}
-                                    onSelect={() => {
-                                      void handleUnpublishVideo(video.id, video.title)
-                                    }}
-                                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-popover-foreground outline-none hover:bg-accent focus:bg-accent data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
-                                  >
-                                    <CloudOff className="h-4 w-4" />
-                                    {isSyncingThisVideo ? "Unpublishing..." : "Unpublish"}
-                                  </DropdownMenu.Item>
-                                )}
-                                <DropdownMenu.Item
-                                  disabled={!canDeleteVideo || deletingVideoId === video.id}
-                                  onSelect={() => {
-                                    handleDeleteVideo(video.id, video.title)
-                                  }}
-                                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-red-600 outline-none hover:bg-red-50 focus:bg-red-50 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 dark:text-red-300 dark:hover:bg-red-950/40 dark:focus:bg-red-950/40"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                  Delete
-                                </DropdownMenu.Item>
-                              </DropdownMenu.Content>
-                            </DropdownMenu.Portal>
-                          </DropdownMenu.Root>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </section>
+        <CreatorContentTable
+          videos={allCreatorVideos}
+          loading={isLoadingCreatorVideos}
+          pendingId={visibilityUpdatingId || syncingVideoId || deletingVideoId}
+          onEdit={(video) => router.push(`/creator/video/${video.id}/edit`)}
+          onVisibility={(video, visibility) => { void handleVisibilityChange(video, visibility) }}
+          onUpload={(video) => { void handleUploadVideo(video) }}
+          onUnpublish={(id, title) => { void handleUnpublishVideo(id, title) }}
+          onDelete={(id, title) => { void handleDeleteVideo(id, title) }}
+        />
       </main>
     </div>
   )

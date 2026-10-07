@@ -1,4 +1,5 @@
 import "server-only"
+import { linkAccessibleVideoWhere, publicVideoWhere } from "@/lib/video-visibility"
 
 import type { Prisma } from "@prisma/client"
 import { getPrisma } from "@/lib/prisma"
@@ -268,7 +269,7 @@ export async function listPublishedMobileVideos(query?: string) {
   const normalizedQuery = query?.trim()
   const videos = await prisma.video.findMany({
     where: {
-      status: "published",
+      ...publicVideoWhere,
       appId: { not: null },
     },
     select: publicVideoSelect,
@@ -304,7 +305,7 @@ export async function getPublishedMobileVideo(videoId: string) {
   const prisma = requirePrisma()
   const video = await prisma.video.findFirst({
     where: {
-      AND: [publicLookup(videoId), { status: "published", appId: { not: null } }],
+      AND: [publicLookup(videoId), { ...linkAccessibleVideoWhere, appId: { not: null } }],
     },
     select: publicVideoSelect,
   })
@@ -318,7 +319,7 @@ export async function getPublishedMobileRoute(
   const prisma = requirePrisma()
   const video = await prisma.video.findFirst({
     where: {
-      AND: [publicLookup(videoId), { status: "published", appId: { not: null } }],
+      AND: [publicLookup(videoId), { ...linkAccessibleVideoWhere, appId: { not: null } }],
     },
     select: {
       keyframes: {

@@ -1,5 +1,6 @@
 import type { CreatorVideoState } from "@/lib/creator-video-state"
 import type { TravelVideo } from "@/lib/demo-data"
+import type { VideoVisibility } from "@/lib/video-visibility"
 
 interface CloudVideosResponse {
   configured: boolean
@@ -177,6 +178,20 @@ export async function unpublishCreatorVideoFromCloud(videoId: string) {
     error?: string
     status?: number
   }
+}
+
+export async function setCreatorVideoVisibilityInCloud(videoId: string, visibility: VideoVisibility) {
+  const response = await fetch(`/api/creator/videos/${encodeURIComponent(videoId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ visibility }),
+    cache: "no-store",
+  })
+  if (!response.ok) {
+    const body = await readErrorResponse(response)
+    return { updated: false, video: null, error: body.error || "Unable to update video visibility." }
+  }
+  return await response.json() as { updated: boolean; video: TravelVideo | null; error?: string }
 }
 
 async function readErrorResponse(response: Response) {

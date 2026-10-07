@@ -58,6 +58,7 @@ model Video {
   creatorName       String?           @map("creator_name")
   creatorChannelUrl String?           @map("creator_channel_url")
   status            String?           @default("draft") @db.VarChar(20)
+  visibility        String            @default("public") @db.VarChar(20)
   viewCount         Int?              @default(0) @map("view_count")
   mapViewCount      Int?              @default(0) @map("map_view_count")
   likeCount         Int?              @default(0) @map("like_count")
@@ -74,6 +75,7 @@ model Video {
   @@index([creatorId], map: "idx_videos_creator_id")
   @@index([ownerUserId], map: "idx_videos_owner_user_id")
   @@index([status], map: "idx_videos_status")
+  @@index([status, visibility], map: "idx_videos_status_visibility")
   @@map("videos")
 }
 

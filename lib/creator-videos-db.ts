@@ -6,6 +6,7 @@ import { getPrisma } from "@/lib/prisma"
 import { isDatabaseConfigured } from "@/lib/database"
 import type { TravelVideo, VideoKeyframe as TravelVideoKeyframe } from "@/lib/demo-data"
 import { summarizeKeyframeLocations, summarizeVideoLocations } from "@/lib/video-locations"
+import { linkAccessibleVideoWhere, normalizeVideoVisibility, publicVideoWhere, type VideoVisibility } from "@/lib/video-visibility"
 
 type VideoWithRoute = Video & {
   editorState: VideoEditorState | null
@@ -132,6 +133,7 @@ function rowToTravelVideo(video: VideoWithRoute, options: RowToTravelVideoOption
     mapViews: video.mapViewCount || 0,
     likes: video.likeCount || 0,
     status: video.status === "published" ? "published" : "draft",
+    visibility: normalizeVideoVisibility(video.visibility),
     createdAt: (video.createdAt ?? new Date()).toISOString(),
     description: video.description || "",
     locations:
@@ -232,6 +234,7 @@ export async function saveCreatorVideoToDb({
             mapViewCount: Math.max(0, Math.round(video.mapViews)),
             likeCount: Math.max(0, Math.round(video.likes)),
             status,
+            visibility: normalizeVideoVisibility(video.visibility),
             description: video.description,
             creatorName: video.creator,
             creatorChannelUrl: video.creatorChannelUrl,
@@ -317,7 +320,7 @@ export async function listPublishedCreatorVideosFromDb() {
   try {
     const videos = await prisma.video.findMany({
       where: {
-        status: "published",
+        ...publicVideoWhere,
         appId: { not: null },
       },
       include: {
@@ -335,7 +338,7 @@ export async function listPublishedCreatorVideosFromDb() {
   }
 }
 
-export async function getCreatorVideoFromDb(videoId: string, requesterUserId?: string | null) {
+export async function getCreatorVideoFromDb(videoId: string, requesterUserIds?: OwnerUserIdInput) {
   const prisma = getPrisma()
   if (!prisma) {
     return null
@@ -346,7 +349,7 @@ export async function getCreatorVideoFromDb(videoId: string, requesterUserId?: s
       AND: [
         getVideoLookup(videoId),
         {
-          OR: [{ status: "published" }, ...(requesterUserId ? [{ ownerUserId: requesterUserId }] : [])],
+          OR: [linkAccessibleVideoWhere, ...normalizeOwnerUserIds(requesterUserIds).map((ownerUserId) => ({ ownerUserId }))],
         },
       ],
     },
@@ -470,6 +473,27 @@ export async function unpublishCreatorVideoFromDb(videoId: string, ownerUserIds:
   })
 
   return rowToTravelVideo(unpublishedVideo, { editableOwnerUserIds })
+}
+
+export async function setCreatorVideoVisibilityFromDb(videoId: string, ownerUserIds: OwnerUserIdInput, visibility: VideoVisibility) {
+  const prisma = getPrisma()
+  const editableOwnerUserIds = normalizeOwnerUserIds(ownerUserIds)
+  if (!prisma || editableOwnerUserIds.length === 0) return null
+
+  return prisma.$transaction(async (tx) => {
+    const changed = await tx.video.updateMany({
+      where: {
+        AND: [getVideoLookup(videoId), { ownerUserId: { in: editableOwnerUserIds }, status: "published" }],
+      },
+      data: { visibility, updatedAt: new Date() },
+    })
+    if (!changed.count) return null
+    const video = await tx.video.findFirst({
+      where: { AND: [getVideoLookup(videoId), { ownerUserId: { in: editableOwnerUserIds } }] },
+      include: { editorState: true, keyframes: { orderBy: { timestampSeconds: "asc" } } },
+    })
+    return video ? rowToTravelVideo(video, { editableOwnerUserIds }) : null
+  })
 }
 
 export async function getCreatorVideoStateFromDb(videoId: string, ownerUserIds: OwnerUserIdInput) {

@@ -65,16 +65,21 @@ test('public video query never grants catalog or empty-owner draft exceptions', 
       } } }) },
       '@/lib/database': {},
       '@/lib/video-locations': {},
+      '@/lib/video-visibility': { linkAccessibleVideoWhere: { status: 'published', visibility: { in: ['public', 'unlisted'] } } },
     })
     await db.getCreatorVideoFromDb('test-video', requester)
-    const visible = (status, ownerUserId) => alternatives.some((condition) =>
-      Object.entries(condition).every(([key, value]) => ({ status, ownerUserId })[key] === value))
+    const visible = (status, ownerUserId, visibility = 'public') => alternatives.some((condition) =>
+      Object.entries(condition).every(([key, value]) => value && typeof value === 'object'
+        ? value.in.includes(({ status, ownerUserId, visibility })[key])
+        : ({ status, ownerUserId, visibility })[key] === value))
     assert.equal(visible('published', 'catalog'), true)
     assert.equal(visible('published', 'someone-else'), true)
     assert.equal(visible('draft', 'catalog'), false)
     assert.equal(visible('draft', ''), false)
     assert.equal(visible('draft', 'someone-else'), false)
     assert.equal(visible('draft', 'user-owner'), requester === 'user-owner')
+    assert.equal(visible('published', 'someone-else', 'private'), false)
+    assert.equal(visible('published', 'someone-else', 'unlisted'), true)
   }
 })
 

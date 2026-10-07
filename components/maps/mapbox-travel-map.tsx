@@ -4036,6 +4036,17 @@ export function MapboxTravelMap({
     isRouteIntroActiveRef.current = true
     setIsRouteIntroActive(true)
     routeIntroStartedAtRef.current = null
+    // Count the preview from the actual animation, not the initial page render.
+    if (routeIntroAutoStartTimerRef.current !== null) {
+      window.clearTimeout(routeIntroAutoStartTimerRef.current)
+    }
+    if (!routeIntroAutoStartCancelledRef.current) {
+      setRouteIntroCountdownCycle((cycle) => cycle + 1)
+      routeIntroAutoStartTimerRef.current = window.setTimeout(() => {
+        routeIntroAutoStartTimerRef.current = null
+        startTrackingFromRouteIntroRef.current()
+      }, routeIntroDurationMs)
+    }
 
     const firstTime = keyframesRef.current[0]?.time ?? 0
     const lastTime = keyframesRef.current[keyframesRef.current.length - 1]?.time ?? firstTime
@@ -4126,11 +4137,11 @@ export function MapboxTravelMap({
       const previewBounds = buildCameraBounds(previewCoordinates)
 
       if (previewBounds) {
-        beginProgrammaticCameraMove(map, 1200)
+        beginProgrammaticCameraMove(map, sharedMapNavigationMotion.routePreviewCameraDurationMs)
         runAutomatedCameraUpdate(() => {
           map.fitBounds(previewBounds, {
             padding: getCameraPadding(map, routeIntroOverviewPaddingRatio),
-            duration: 1200,
+            duration: sharedMapNavigationMotion.routePreviewCameraDurationMs,
             maxZoom: Math.min(defaultFollowZoom, routePreloadMaxZoom),
           })
         })
@@ -4195,29 +4206,6 @@ export function MapboxTravelMap({
   }
 
   startTrackingFromRouteIntroRef.current = startTrackingFromRouteIntro
-
-  useEffect(() => {
-    if (
-      !isRouteIntroActive ||
-      routeIntroDismissedRef.current ||
-      routeIntroAutoStartCancelledRef.current
-    ) {
-      return
-    }
-
-    setRouteIntroCountdownCycle((cycle) => cycle + 1)
-    routeIntroAutoStartTimerRef.current = window.setTimeout(() => {
-      routeIntroAutoStartTimerRef.current = null
-      startTrackingFromRouteIntroRef.current()
-    }, routeIntroDurationMs)
-
-    return () => {
-      if (routeIntroAutoStartTimerRef.current !== null) {
-        window.clearTimeout(routeIntroAutoStartTimerRef.current)
-        routeIntroAutoStartTimerRef.current = null
-      }
-    }
-  }, [isRouteIntroActive, routeSignature])
 
   const fitMapToRoute = (map: mapboxgl.Map, duration?: number) => {
     const activeRouteCoordinates = routeCoordinatesRef.current

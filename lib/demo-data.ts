@@ -1,4 +1,5 @@
 import type { CreatorRouteShapes } from "@/lib/creator-route-shapes"
+import type { VideoVisibility } from "@/lib/video-visibility"
 
 export type VideoKeyframePointType = "point" | "stop" | "flight"
 export type VideoKeyframeFlightPhase = "takeoff" | "landing"
@@ -27,6 +28,7 @@ export interface TravelVideo {
   mapViews: number
   likes: number
   status: "draft" | "published"
+  visibility?: VideoVisibility
   createdAt: string
   description: string
   locations: string[]
