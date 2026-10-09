@@ -1,5 +1,7 @@
 import type React from "react"
 import { Inter } from "next/font/google"
+import { SpeedInsights } from "@vercel/speed-insights/next"
+import { Analytics } from "@vercel/analytics/next"
 import { ThemeProvider } from "@/components/app-shell/theme-provider"
 import { ClerkProviderWrapper } from "@/components/auth/clerk-provider-wrapper"
 import { Toaster } from "@/components/ui/sonner"
@@ -28,6 +30,8 @@ export default function RootLayout({
           <ClerkProviderWrapper>{children}</ClerkProviderWrapper>
           <Toaster />
         </ThemeProvider>
+        <SpeedInsights />
+        <Analytics />
       </body>
     </html>
   )
