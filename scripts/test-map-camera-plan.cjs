@@ -17,7 +17,7 @@ function load(name) {
   return module.exports
 }
 const { buildCameraZoomPlan, getCameraPlanTarget, getCameraPlanZoom } = load('map-camera-plan')
-const { getFlightLandingFocusPoint, getStationaryCameraFocusProgress } = load('map-navigation-motion')
+const { getStationaryCameraFocusProgress } = load('map-navigation-motion')
 const desktop = { width: 900, height: 700, minZoom: 0, maxZoom: 18 }
 const flight = (fromTime, toTime, totalDistance = 5840) => ({
   fromTime, toTime, totalDistance, routeKind: 'flight',
@@ -91,17 +91,16 @@ test('stationary camera targets never prepare a zoom-out before movement', () =>
   }
   assert.equal(previous, 1)
 })
-test('landing focus holds the airport until the next distinct movement timestamp', () => {
-  const points = [
-    { time: 10, lat: 40.6, lng: -73.7, pointType: 'flight', flightPhase: 'takeoff' },
-    { time: 20, lat: 49.0, lng: 2.55, pointType: 'flight', flightPhase: 'landing' },
-    { time: 20.05, lat: 49.0, lng: 2.55, pointType: 'point' },
-    { time: 24, lat: 48.86, lng: 2.35, pointType: 'point' },
-  ]
-  assert.equal(getFlightLandingFocusPoint(points, 19.99), null)
-  assert.equal(getFlightLandingFocusPoint(points, 20.1), points[1])
-  assert.equal(getFlightLandingFocusPoint(points, 23.99), points[1])
-  assert.equal(getFlightLandingFocusPoint(points, 24), null)
+test('landing recovery never anchors the camera to the airport on either page', () => {
+  const plan = build([flight(10, 20)])
+  for (const time of [20, 20.01, 20.1, 21, 23.99]) {
+    const target = getCameraPlanTarget(plan, time)
+    if (target) assert.equal(target.center, null, 'zoom recovery must use the live traveler center')
+  }
+  for (const file of ['mapbox-travel-map.tsx', 'mapbox-location-picker.tsx']) {
+    const source = fs.readFileSync(path.resolve(__dirname, '../components/maps', file), 'utf8')
+    assert.doesNotMatch(source, /landing-focus|getFlightLandingFocusPoint/)
+  }
 })
 test('rapid land movement and narrow mobile viewports also prepare early', () => {
   const road = { ...flight(10, 12, 400), routeKind: 'road' }

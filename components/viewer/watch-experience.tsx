@@ -2,9 +2,10 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
+import * as Dialog from "@radix-ui/react-dialog"
 import Image from "next/image"
 import Link from "next/link"
-import { ArrowLeft, ChevronUp, Pencil, RotateCcw, Settings, Share2 } from "lucide-react"
+import { ArrowLeft, ListVideo, Pencil, RotateCcw, Settings, Share2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SplitViewResizer } from "@/components/ui/split-view-resizer"
 import { MapboxTravelMap } from "@/components/maps/mapbox-travel-map"
@@ -93,11 +94,13 @@ const WatchTimestampList = memo(function WatchTimestampList({
   activeIndex,
   onSelect,
   onHide,
+  fullScreen = false,
 }: {
   points: CreatorMapPoint[]
   activeIndex: number
   onSelect: (time: number) => void
   onHide: () => void
+  fullScreen?: boolean
 }) {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -154,20 +157,20 @@ const WatchTimestampList = memo(function WatchTimestampList({
   return (
     <section
       aria-label="Video timestamps"
-      className="order-3 flex h-[min(62dvh,32rem)] min-h-0 shrink-0 flex-col border-t border-white/10 bg-[linear-gradient(180deg,#09090b_0%,#050506_100%)] lg:order-none lg:h-auto lg:max-h-none lg:flex-1"
+      className={`min-h-0 flex-1 flex-col bg-[linear-gradient(180deg,#09090b_0%,#050506_100%)] ${fullScreen ? "flex" : "hidden border-t border-white/10 lg:flex"}`}
     >
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-white/[0.07] px-3 lg:hidden">
+      <div className={`flex h-14 shrink-0 items-center justify-between border-b border-white/[0.07] px-3 ${fullScreen ? "" : "lg:hidden"}`}>
         <h2 className="text-xs font-semibold text-white/80">Timestamps</h2>
         <Button
           type="button"
           variant="ghost"
           size="icon"
           onClick={onHide}
-          aria-label="Hide timestamps"
-          title="Hide timestamps"
-          className="h-8 w-8 text-white/75 hover:bg-white/10 hover:text-white"
+          aria-label="Close timestamps"
+          title="Close timestamps"
+          className="h-11 w-11 text-white/75 hover:bg-white/10 hover:text-white"
         >
-          <ChevronUp className="h-4 w-4" />
+          <X className="h-5 w-5" aria-hidden="true" />
         </Button>
       </div>
       <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1.5">
@@ -330,6 +333,7 @@ export function WatchExperience({
   const [activeTimestampIndex, setActiveTimestampIndex] = useState(() => getActiveTimestampIndex(routePoints, 0))
   const [seekRequest, setSeekRequest] = useState<{ id: number; time: number } | null>(null)
   const [isSharing, setIsSharing] = useState(false)
+  const [isMobileTimestampsOpen, setIsMobileTimestampsOpen] = useState(false)
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null)
   const { preferences: navigationPreferences, updatePreferences: updateNavigationPreferences } =
     useNavigationPreferences()
@@ -456,14 +460,23 @@ export function WatchExperience({
   }, [commitCurrentTime])
 
   const hideMobileTimestamps = useCallback(() => {
-    const wrapper = wrapperRef.current
-    if (!wrapper) {
-      return
-    }
-
-    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    wrapper.scrollTo({ top: 0, behavior: prefersReducedMotion ? "auto" : "smooth" })
+    setIsMobileTimestampsOpen(false)
   }, [])
+
+  const selectMobileTimestamp = useCallback((time: number) => {
+    jumpToKeyframe(time)
+    setIsMobileTimestampsOpen(false)
+  }, [jumpToKeyframe])
+
+  useEffect(() => {
+    setIsMobileTimestampsOpen(false)
+    const desktopViewport = window.matchMedia("(min-width: 1024px)")
+    const closeOnDesktop = () => {
+      if (desktopViewport.matches) setIsMobileTimestampsOpen(false)
+    }
+    desktopViewport.addEventListener("change", closeOnDesktop)
+    return () => desktopViewport.removeEventListener("change", closeOnDesktop)
+  }, [video.id])
 
   const shareVideo = async () => {
     if (isSharing || typeof window === "undefined") {
@@ -519,6 +532,33 @@ export function WatchExperience({
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
+            <Dialog.Root open={isMobileTimestampsOpen} onOpenChange={setIsMobileTimestampsOpen}>
+              <Dialog.Trigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Open timestamps"
+                  title="Timestamps"
+                  className="h-11 w-11 text-white hover:bg-white/20 lg:hidden"
+                >
+                  <ListVideo className="h-5 w-5" aria-hidden="true" />
+                </Button>
+              </Dialog.Trigger>
+              <Dialog.Portal>
+                <Dialog.Content className="fixed inset-0 z-[100] flex h-[100dvh] w-full flex-col bg-black pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] text-white outline-none lg:hidden">
+                  <Dialog.Title className="sr-only">Video timestamps</Dialog.Title>
+                  <Dialog.Description className="sr-only">Choose a timestamp to jump to that part of the journey.</Dialog.Description>
+                  <WatchTimestampList
+                    points={routePoints}
+                    activeIndex={activeTimestampIndex}
+                    onSelect={selectMobileTimestamp}
+                    onHide={hideMobileTimestamps}
+                    fullScreen
+                  />
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
             {viewerCanEdit && editHref && (
               <Link href={editHref}>
                 <Button

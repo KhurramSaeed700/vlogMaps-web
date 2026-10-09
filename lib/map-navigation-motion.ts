@@ -1,5 +1,4 @@
 export const sharedMapNavigationMotion = {
-  routePreviewDurationMs: 3000,
   routePreviewCameraDurationMs: 1200,
   centerNormalMs: 900,
   centerFastMs: 300,
@@ -21,61 +20,7 @@ export const sharedFlightCameraMotion = {
   centerSmoothingMs: 480,
   zoomSmoothingMs: 900,
   boundedLookAheadSegments: 6,
-  landingFocusZoom: 12.4,
-  landingFocusMaxSeconds: 6,
 } as const
-
-interface FlightLandingPoint {
-  time: number
-  lat: number
-  lng: number
-  pointType?: string
-  flightPhase?: string
-}
-
-export function getFlightLandingFocusPoint<T extends FlightLandingPoint>(
-  points: readonly T[],
-  currentTime: number,
-) {
-  if (points.length === 0 || !Number.isFinite(currentTime)) {
-    return null
-  }
-
-  let low = 0
-  let high = points.length
-  while (low < high) {
-    const middle = (low + high) >>> 1
-    if (points[middle].time <= currentTime) low = middle + 1
-    else high = middle
-  }
-
-  const latestIndex = low - 1
-  for (let index = latestIndex; index >= Math.max(0, latestIndex - 5); index -= 1) {
-    const point = points[index]
-    if (currentTime - point.time > sharedFlightCameraMotion.landingFocusMaxSeconds) {
-      break
-    }
-    if (point.pointType !== "flight" || point.flightPhase !== "landing") {
-      continue
-    }
-
-    let nextDistinctTime = Number.POSITIVE_INFINITY
-    const lastCandidateIndex = Math.min(points.length - 1, index + 6)
-    for (let candidateIndex = index + 1; candidateIndex <= lastCandidateIndex; candidateIndex += 1) {
-      if (points[candidateIndex].time > point.time + 0.1) {
-        nextDistinctTime = points[candidateIndex].time
-        break
-      }
-    }
-    const focusEnd = Math.min(
-      point.time + sharedFlightCameraMotion.landingFocusMaxSeconds,
-      nextDistinctTime,
-    )
-    return currentTime < focusEnd ? point : null
-  }
-
-  return null
-}
 
 export function getFlightLandingApproachStartTime(segment: {
   fromTime: number

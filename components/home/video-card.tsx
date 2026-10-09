@@ -12,9 +12,10 @@ import type { HydratedTravelVideo } from "@/lib/youtube-client"
 
 interface HomeVideoCardProps {
   video: HydratedTravelVideo
+  prioritizeThumbnail?: boolean
 }
 
-export function HomeVideoCard({ video }: HomeVideoCardProps) {
+export function HomeVideoCard({ video, prioritizeThumbnail = false }: HomeVideoCardProps) {
   const distanceLabel = formatTravelDistance(getVideoTravelDistanceKm(video.keyframes))
   const timestampLabel = `${video.keyframes.length} ${video.keyframes.length === 1 ? "timestamp" : "timestamps"}`
   const releaseDateLabel = formatVideoReleaseDate(video.publishedAt ?? video.createdAt)
@@ -27,7 +28,8 @@ export function HomeVideoCard({ video }: HomeVideoCardProps) {
             src={video.thumbnail || "/placeholder.svg"}
             alt={video.title}
             fill
-            sizes="(min-width: 1536px) 20vw, (min-width: 1280px) 25vw, (min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
+            priority={prioritizeThumbnail}
+            sizes="(min-width: 1536px) 285px, (min-width: 1280px) calc((100vw - 92px) / 4), (min-width: 1024px) calc((100vw - 72px) / 3), (min-width: 640px) calc((100vw - 52px) / 2), calc(100vw - 32px)"
             className="object-cover transition duration-300 group-hover:scale-[1.02]"
           />
           <div className="absolute left-3 top-3">

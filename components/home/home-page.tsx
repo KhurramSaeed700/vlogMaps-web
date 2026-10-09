@@ -61,12 +61,14 @@ function dedupeVideosByYouTubeId<T extends TravelVideo>(videos: T[]) {
   })
 }
 
-export default function HomePage({ initialVideos = [] }: HomePageProps) {
+export default function HomePage({ initialVideos }: HomePageProps) {
   const router = useRouter()
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [selectedPreference, setSelectedPreference] = useState<PreferenceId>("all")
-  const [catalogVideos, setCatalogVideos] = useState<HydratedTravelVideo[]>([])
-  const [isCatalogLoading, setIsCatalogLoading] = useState(true)
+  const [catalogVideos, setCatalogVideos] = useState<HydratedTravelVideo[]>(
+    () => toResolvedFallbackVideos(initialVideos ?? []),
+  )
+  const [isCatalogLoading, setIsCatalogLoading] = useState(initialVideos === undefined)
   const [isHydratingCatalog, setIsHydratingCatalog] = useState(false)
   const [launcherError, setLauncherError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -78,11 +80,15 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
     }
 
     let isMounted = true
-    setCatalogVideos([])
-    setIsCatalogLoading(true)
     setIsHydratingCatalog(false)
 
-    fetchPublishedCloudVideos()
+    // Server-provided cards are already visible. Do not clear them during hydration
+    // or repeat the catalog request before the first thumbnail can paint.
+    const catalogRequest = initialVideos === undefined
+      ? fetchPublishedCloudVideos()
+      : Promise.resolve({ videos: initialVideos })
+
+    catalogRequest
       .then((response) => {
         if (!isMounted) {
           return []
@@ -102,7 +108,6 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
       })
       .catch(() => {
         if (isMounted) {
-          setCatalogVideos([])
           setIsCatalogLoading(false)
         }
       })
@@ -115,7 +120,7 @@ export default function HomePage({ initialVideos = [] }: HomePageProps) {
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [initialVideos])
 
   const videos = useMemo(() => {
     const filtered =

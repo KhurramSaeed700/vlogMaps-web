@@ -13,8 +13,8 @@ export function HomeVideoGrid({ isCatalogLoading, videos }: HomeVideoGridProps) 
       {isCatalogLoading &&
         Array.from({ length: homeSkeletonCardCount }, (_, index) => <HomeVideoSkeletonCard key={`home-skeleton-${index}`} />)}
 
-      {videos.map((video) => (
-        <HomeVideoCard key={video.id} video={video} />
+      {videos.map((video, index) => (
+        <HomeVideoCard key={video.id} video={video} prioritizeThumbnail={index === 0} />
       ))}
     </div>
   )

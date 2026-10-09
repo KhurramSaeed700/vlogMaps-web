@@ -1,5 +1,7 @@
 "use client"
 
+import { getTripPreviewTiming, tripPreviewCameraMs, tripPreviewCompleteHoldMs } from "@/lib/trip-preview"
+
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
@@ -33,7 +35,6 @@ import {
   getFlightCameraPreloadTargets,
   getFlightLandingApproachProgress,
   getFlightLandingApproachStartTime,
-  getFlightLandingFocusPoint,
   getFlightOverviewSegment,
   getFlightPreloadSegment,
   getMapNavigationSmoothing,
@@ -84,7 +85,7 @@ interface PositionedRoutedLeg extends RoutedLeg {
 interface CameraTarget {
   center: RouteCoordinate
   zoom: number
-  mode?: "follow" | "flight-overview" | "rapid-land-overview" | "landing-focus"
+  mode?: "follow" | "flight-overview" | "rapid-land-overview"
 }
 
 interface CameraTimelineEntry extends CameraTarget {
@@ -268,7 +269,6 @@ const keyframeMarkerZoomRefreshStep = 0.08
 const playbackSeekDriftToleranceSeconds = 2.75
 const followZoomPreferenceMinOffset = -4
 const followZoomPreferenceMaxOffset = 4
-const routeIntroDurationMs = sharedMapNavigationMotion.routePreviewDurationMs
 const routeIntroOverviewPaddingRatio = 0.16
 const routeIntroMaxPlaces = 5
 const journeyCompleteOverviewDurationMs = 1200
@@ -2447,21 +2447,6 @@ export function MapboxTravelMap({
     currentCoordinate: RouteCoordinate,
     fallbackZoom = defaultFollowZoom,
   ) => {
-    const landingFocusPoint = getFlightLandingFocusPoint(keyframesRef.current, currentTime)
-    if (landingFocusPoint) {
-      return {
-        center: [landingFocusPoint.lng, landingFocusPoint.lat],
-        zoom: clampNumber(
-          sharedFlightCameraMotion.landingFocusZoom,
-          map.getMinZoom(),
-          map.getMaxZoom(),
-        ),
-        mode: "landing-focus",
-        speedProgress: 0,
-        departureProgress: 0,
-      } satisfies AutomaticCameraTarget
-    }
-
     const plannedTarget = getCameraPlanTarget(cameraZoomPlanRef.current, currentTime)
     if (plannedTarget !== null) {
       return {
@@ -2685,11 +2670,10 @@ export function MapboxTravelMap({
     const isOverview =
       cameraTarget.mode === "flight-overview" ||
       cameraTarget.mode === "rapid-land-overview"
-    const isLandingFocus = cameraTarget.mode === "landing-focus"
     // Pausing or seeking should focus an ordinary road/stop position, but an
     // active flight must retain its overview camera so rewinding cannot leave
     // the map stranded at the previous close zoom.
-    if (options.forceTravelerFocus && !isOverview && !isLandingFocus) {
+    if (options.forceTravelerFocus && !isOverview) {
       targetCameraCenterRef.current = routeCoordinate
       targetCameraZoomRef.current = getPreferredFollowZoom(
         cameraTarget.zoom,
@@ -2698,7 +2682,7 @@ export function MapboxTravelMap({
       targetCameraModeRef.current = "follow"
       return
     }
-    targetCameraCenterRef.current = isOverview || isLandingFocus
+    targetCameraCenterRef.current = isOverview
       ? cameraTarget.center
       : interpolateCoordinate(
           routeCoordinate,
@@ -2710,7 +2694,7 @@ export function MapboxTravelMap({
               cameraTarget.speedProgress,
             ),
         )
-    targetCameraZoomRef.current = isOverview || isLandingFocus
+    targetCameraZoomRef.current = isOverview
       ? cameraTarget.zoom
       : getPreferredFollowZoom(cameraTarget.zoom)
     targetCameraSpeedProgressRef.current = cameraTarget.speedProgress
@@ -2982,6 +2966,11 @@ export function MapboxTravelMap({
       destinationNames: destinationNames.slice(0, routeIntroMaxPlaces),
     }
   }, [routeCoordinates, safeKeyframes])
+  const routeIntroTiming = useMemo(
+    () => getTripPreviewTiming(routeCoordinates, safeMarkerKeyframes.length),
+    [routeCoordinates, safeMarkerKeyframes.length],
+  )
+  const routeIntroDurationMs = routeIntroTiming.totalMs
 
   keyframesRef.current = safeKeyframes
   markerKeyframesRef.current = safeMarkerKeyframes
@@ -3026,8 +3015,8 @@ export function MapboxTravelMap({
     animatedCameraCenterRef.current = liveRouteCoordinate
     targetCameraSpeedProgressRef.current = 0
     targetCameraModeRef.current = "follow"
-    isFollowingRef.current = true
-    updateTrackingEnabled(true)
+    isFollowingRef.current = !isRouteIntroActiveRef.current
+    updateTrackingEnabled(isFollowingRef.current)
 
     const map = mapInstanceRef.current
     const marker = markerRef.current
@@ -3501,6 +3490,11 @@ export function MapboxTravelMap({
   }
 
   const animateMarker = (timestamp: number) => {
+    // A queued playback frame must never take the camera back from the intro.
+    if (isRouteIntroActiveRef.current) {
+      stopMarkerAnimation()
+      return
+    }
     const map = mapInstanceRef.current
     const marker = markerRef.current
 
@@ -3588,9 +3582,7 @@ export function MapboxTravelMap({
       const currentZoom = animatedCameraZoomRef.current
       const desiredCenter = targetCameraCenterRef.current
       const targetZoom = targetCameraZoomRef.current
-      const followsVideoTime =
-        isRealtimeMotion &&
-        targetCameraModeRef.current !== "landing-focus"
+      const followsVideoTime = isRealtimeMotion
       effectiveCameraZoomTarget =
         !isCatchUp &&
         !isCameraOverview &&
@@ -4001,8 +3993,7 @@ export function MapboxTravelMap({
     )
   }
 
-  const drawRouteIntroProgress = (map: mapboxgl.Map, progress: number, introTime: number) => {
-    const activeKeyframes = markerKeyframesRef.current
+  const drawRouteIntroProgress = (map: mapboxgl.Map, progress: number) => {
     const activePositionedLegs = positionedLegsRef.current
     const revealedRouteSegments = getRevealedRouteSegmentsByDistanceProgress(activePositionedLegs, progress)
 
@@ -4017,16 +4008,8 @@ export function MapboxTravelMap({
       return
     }
 
-    syncReachedKeyframeMarkers(
-      map,
-      activeKeyframes
-        .map((keyframe, index) => ({
-          keyframe,
-          pointNumber: index + 1,
-          markerKey: `${keyframe.time}:${index + 1}`,
-        }))
-        .filter(({ keyframe }) => keyframe.time <= introTime),
-    )
+    // All stops and flight endpoints stay visible throughout the overview.
+    // They were installed once by drawFullRoutePreview, not rebuilt per frame.
   }
 
   const startRouteIntroAnimation = (map: mapboxgl.Map) => {
@@ -4036,28 +4019,32 @@ export function MapboxTravelMap({
     isRouteIntroActiveRef.current = true
     setIsRouteIntroActive(true)
     routeIntroStartedAtRef.current = null
-    // Count the preview from the actual animation, not the initial page render.
+    // The countdown is visual only. Tracking is scheduled after the final frame.
     if (routeIntroAutoStartTimerRef.current !== null) {
       window.clearTimeout(routeIntroAutoStartTimerRef.current)
     }
     if (!routeIntroAutoStartCancelledRef.current) {
       setRouteIntroCountdownCycle((cycle) => cycle + 1)
-      routeIntroAutoStartTimerRef.current = window.setTimeout(() => {
-        routeIntroAutoStartTimerRef.current = null
-        startTrackingFromRouteIntroRef.current()
-      }, routeIntroDurationMs)
     }
+    drawFullRoutePreview(map)
 
     const firstTime = keyframesRef.current[0]?.time ?? 0
     const lastTime = keyframesRef.current[keyframesRef.current.length - 1]?.time ?? firstTime
     const routeDuration = Math.max(lastTime - firstTime, 1)
     let lastRouteDrawAt = -Infinity
+    let lastFrameAt: number | null = null
+    let visibleElapsedMs = 0
 
     const animateRouteIntro = (timestamp: number) => {
       const currentMap = mapInstanceRef.current
       const marker = markerRef.current
-      if (!currentMap || !marker || !isRouteIntroActiveRef.current || !canUpdateCamera(currentMap)) {
+      if (!currentMap || !marker || !isRouteIntroActiveRef.current) {
         routeIntroAnimationFrameRef.current = null
+        return
+      }
+      if (document.hidden || !canUpdateCamera(currentMap)) {
+        lastFrameAt = null
+        routeIntroAnimationFrameRef.current = window.requestAnimationFrame(animateRouteIntro)
         return
       }
 
@@ -4065,8 +4052,10 @@ export function MapboxTravelMap({
         routeIntroStartedAtRef.current = timestamp
       }
 
-      const elapsed = timestamp - routeIntroStartedAtRef.current
-      const progress = elapsed <= routeIntroDurationMs ? easeInOutCubic(elapsed / routeIntroDurationMs) : 1
+      visibleElapsedMs += lastFrameAt === null ? 0 : Math.min(timestamp - lastFrameAt, 100)
+      lastFrameAt = timestamp
+      const elapsed = Math.max(0, visibleElapsedMs - tripPreviewCameraMs)
+      const progress = easeInOutCubic(Math.min(elapsed / routeIntroTiming.animationMs, 1))
       const introTime = firstTime + routeDuration * progress
       const introCoordinate =
         getRouteCoordinateAtDistanceProgress(positionedLegsRef.current, progress) ??
@@ -4085,7 +4074,7 @@ export function MapboxTravelMap({
       // Keep marker motion at display refresh rate; GeoJSON and marker lists
       // only need 20 updates per second during the accelerated preview.
       if (timestamp - lastRouteDrawAt >= 50) {
-        drawRouteIntroProgress(currentMap, progress, introMarkerTime)
+        drawRouteIntroProgress(currentMap, progress)
         lastRouteDrawAt = timestamp
       }
 
@@ -4093,6 +4082,14 @@ export function MapboxTravelMap({
         routeRevealTimeRef.current = lastTime
         drawFullRoutePreview(currentMap)
         routeIntroAnimationFrameRef.current = null
+        if (!routeIntroAutoStartCancelledRef.current) {
+          routeIntroAutoStartTimerRef.current = window.setTimeout(() => {
+            routeIntroAutoStartTimerRef.current = null
+            if (!routeIntroAutoStartCancelledRef.current && isRouteIntroActiveRef.current) {
+              startTrackingFromRouteIntroRef.current()
+            }
+          }, tripPreviewCompleteHoldMs)
+        }
         return
       }
 
@@ -4133,7 +4130,11 @@ export function MapboxTravelMap({
     try {
       clearProgrammaticCameraMove()
       map.stop()
-      const previewCoordinates = routeCoordinatesRef.current.length > 1 ? routeCoordinatesRef.current : [startCoordinate]
+      const previewCoordinates = [
+        ...routeCoordinatesRef.current,
+        ...markerKeyframesRef.current.map((point) => [point.lng, point.lat] as RouteCoordinate),
+        startCoordinate,
+      ]
       const previewBounds = buildCameraBounds(previewCoordinates)
 
       if (previewBounds) {
@@ -4446,8 +4447,8 @@ export function MapboxTravelMap({
     targetCameraSpeedProgressRef.current = 0
     targetCameraModeRef.current = "follow"
     hasFocusedCurrentLocationRef.current = false
-    isFollowingRef.current = true
-    updateTrackingEnabled(true)
+    isFollowingRef.current = !isRouteIntroActiveRef.current
+    updateTrackingEnabled(isFollowingRef.current)
 
     const handleUserMapDrag = (event: unknown) => {
       if (hasOriginalMapEvent(event)) {
@@ -4528,6 +4529,7 @@ export function MapboxTravelMap({
       }
       if (
         !isJourneyCompleteRef.current &&
+        !isRouteIntroActiveRef.current &&
         !routeIntroAutoStartCancelledRef.current
       ) {
         isFollowingRef.current = true
@@ -4553,6 +4555,17 @@ export function MapboxTravelMap({
       updateKeyframeMarkerSizes(map)
       syncTravelerMarker(map, animatedRouteTimeRef.current, animatedRouteCoordinateRef.current)
       refreshViewportMarkers(map)
+
+      if (isRouteIntroActiveRef.current) {
+        // The fallback style can finish its overview before the detailed style
+        // arrives. Never restore the stale pre-intro close-up camera here.
+        if (hasFocusedCurrentLocationRef.current && !routeIntroAutoStartCancelledRef.current) {
+          beginRouteIntroPreview(map, latestPlaybackTimeRef.current, liveRouteCoordinateRef.current)
+        } else {
+          drawFullRoutePreview(map)
+        }
+        return
+      }
 
       try {
         beginProgrammaticCameraMove(map)
@@ -4960,7 +4973,9 @@ export function MapboxTravelMap({
           return
         }
 
-        if (isRouteIntroActiveRef.current && hasFocusedCurrentLocationRef.current) {
+        // Intro effects wait for the complete routed journey. Playback updates
+        // must not start an incomplete preview or overwrite its camera.
+        if (isRouteIntroActiveRef.current) {
           return
         }
 
@@ -4984,11 +4999,6 @@ export function MapboxTravelMap({
         updateFollowCameraTarget(map, nextPlaybackTime, liveRouteCoordinate, map.getZoom())
 
         if (!hasFocusedCurrentLocationRef.current) {
-          if (isFollowingRef.current && !routeIntroDismissedRef.current) {
-            beginRouteIntroPreview(map, nextPlaybackTime, liveRouteCoordinate)
-            return
-          }
-
           hasFocusedCurrentLocationRef.current = true
         }
 

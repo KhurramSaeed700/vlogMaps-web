@@ -187,21 +187,31 @@ export function HomeHeader({
         <TravelMapLogo textClassName="text-lg" />
 
         <div className="relative order-3 w-full sm:order-none sm:mx-auto sm:max-w-2xl">
-          <form onSubmit={onSubmit} className="flex w-full items-center">
+          <form
+            onSubmit={onSubmit}
+            className="flex h-11 w-full items-center gap-2 rounded-xl border border-input bg-muted/30 px-3 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
+          >
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <Input
               value={youtubeUrl}
               onChange={(event) => onYoutubeUrlChange(event.target.value)}
-              placeholder="Paste YouTube video link"
-              className="h-11 rounded-l-full rounded-r-none px-4 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              placeholder="search"
+              aria-label="Search with a YouTube video link"
+              className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
             />
             <Button
               type="submit"
+              variant="ghost"
               size="icon"
               disabled={isPending}
               aria-label="Launch YouTube video"
-              className="h-11 w-14 rounded-l-none rounded-r-full border border-l-0 bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              className="h-8 w-8 shrink-0 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground"
             >
-              <Search className="h-4 w-4" />
+              {isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-4 w-4" aria-hidden="true" />
+              )}
             </Button>
           </form>
 

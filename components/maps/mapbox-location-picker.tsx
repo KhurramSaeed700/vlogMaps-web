@@ -1,5 +1,7 @@
 "use client"
 
+import { getTripPreviewTiming } from "@/lib/trip-preview"
+
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import { readMapPreloadPolicy } from "@/lib/map-preload-policy"
 import { attachMapLoading, canPreloadMap, createWorldFallbackStyle, getMapLoadingObservation, isMapStyleReady, setDetailedMapStyle } from "@/lib/map-loading"
@@ -26,7 +28,6 @@ import {
   flightOverviewPaddingRatio,
   getFlightCameraPreloadTargets,
   getFlightLandingApproachProgress,
-  getFlightLandingFocusPoint,
   getFlightOverviewSegment,
   getFlightPreloadSegment,
   getMapNavigationSmoothing,
@@ -94,7 +95,6 @@ const editorTravelerTrackingZoomCatchUpMs = sharedMapNavigationMotion.zoomCatchU
 const editorTravelerTrackingLoadingMinMs = 450
 const editorTravelerTrackingLoadingFallbackMs = 6500
 const editorTravelerTrackingTargetRefreshMs = sharedMapNavigationMotion.targetRefreshMs
-const editorTrackingAutoStartDurationMs = sharedMapNavigationMotion.routePreviewDurationMs
 const editorPlaybackPreloadRefreshMs = 1500
 const editorPlaybackPreloadMaxZoom = 15.5
 const editorSeekMinTimeJumpSeconds = 1.25
@@ -296,7 +296,7 @@ interface TrackingLoadingState {
 interface EditorCameraTarget {
   center: RouteCoordinate
   zoom: number
-  mode?: "follow" | "flight-overview" | "rapid-land-overview" | "landing-focus"
+  mode?: "follow" | "flight-overview" | "rapid-land-overview"
 }
 
 async function fetchLocationSuggestions(query: string, bias: LocationSearchBias = {}, signal?: AbortSignal) {
@@ -1846,14 +1846,10 @@ export function MapboxLocationPicker({
         setRouteProgressMarker(activeMap, targetCoordinate, progressTime)
 
         // One O(log n) plan lookup per frame; no route scans or bounds fitting.
-        const landingFocusPoint = getFlightLandingFocusPoint(routePointsRef.current, progressTime)
-        const plannedTarget = landingFocusPoint
-          ? null
-          : getCameraPlanTarget(cameraZoomPlanRef.current, progressTime)
+        const plannedTarget = getCameraPlanTarget(cameraZoomPlanRef.current, progressTime)
         const currentZoom = trackingCameraZoomRef.current ?? activeMap.getZoom()
         const lastTargetZoomCalculatedAt = trackingTargetZoomCalculatedAtRef.current
         if (
-          !landingFocusPoint &&
           plannedTarget === null &&
           (trackingTargetModeRef.current !== "follow" ||
             trackingTargetZoomRef.current === null ||
@@ -1876,15 +1872,7 @@ export function MapboxLocationPicker({
         if (trackingTargetModeRef.current === "follow") {
           trackingTargetCenterRef.current = targetCoordinate
         }
-        if (landingFocusPoint) {
-          trackingTargetCenterRef.current = [landingFocusPoint.lng, landingFocusPoint.lat]
-          trackingTargetZoomRef.current = clampNumber(
-            sharedFlightCameraMotion.landingFocusZoom,
-            activeMap.getMinZoom(),
-            activeMap.getMaxZoom(),
-          )
-          trackingTargetModeRef.current = "landing-focus"
-        } else if (plannedTarget !== null) {
+        if (plannedTarget !== null) {
           trackingTargetCenterRef.current = plannedTarget.center ?? targetCoordinate
           trackingTargetZoomRef.current = plannedTarget.zoom
           trackingTargetModeRef.current = "flight-overview"
@@ -1907,9 +1895,7 @@ export function MapboxLocationPicker({
         const currentMapCenter = activeMap.getCenter()
         const currentCenter: RouteCoordinate = currentCenterRef ?? [currentMapCenter.lng, currentMapCenter.lat]
         const targetDistanceKm = haversineDistance(currentCenter, targetCenter)
-        const followsVideoTime =
-          isRealtimeMotion &&
-          trackingTargetModeRef.current !== "landing-focus"
+        const followsVideoTime = isRealtimeMotion
         const catchUpProgress = easeInOut(
           (targetDistanceKm - editorTravelerTrackingCenterCatchUpStartKm) /
             (editorTravelerTrackingCenterCatchUpFullKm -
@@ -2061,6 +2047,10 @@ export function MapboxLocationPicker({
   }
 
   const hasTrackableTraveler = points.length > 0
+  const editorTrackingAutoStartDurationMs = useMemo(
+    () => getTripPreviewTiming(points.map((point) => [point.lng, point.lat]), points.length).totalMs,
+    [points],
+  )
   const placementSessionToken = isPlacementEnabled
     ? `enabled:${placementSessionKey ?? "default"}`
     : "disabled"
@@ -2078,12 +2068,13 @@ export function MapboxLocationPicker({
 
     const now = window.performance.now()
     // Start only once data and the map are ready, including asynchronously loaded trips.
-    if (trackingAutoStartDeadlineRef.current === null && mapInstanceRef.current) {
+    if (mapInstanceRef.current) {
       fitMapToAvailablePoints(mapInstanceRef.current, sharedMapNavigationMotion.routePreviewCameraDurationMs)
     }
-    const deadline =
-      trackingAutoStartDeadlineRef.current ??
-      now + editorTrackingAutoStartDurationMs
+    const deadline = Math.max(
+      trackingAutoStartDeadlineRef.current ?? 0,
+      now + editorTrackingAutoStartDurationMs,
+    )
     trackingAutoStartDeadlineRef.current = deadline
     const remainingMs = Math.max(deadline - now, 0)
 
@@ -2094,7 +2085,7 @@ export function MapboxLocationPicker({
     }, remainingMs)
 
     return clearTrackingAutoStartTimer
-  }, [hasTrackableTraveler, isLoaded])
+  }, [hasTrackableTraveler, isLoaded, editorTrackingAutoStartDurationMs, points])
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -3220,6 +3211,9 @@ export function MapboxLocationPicker({
           }
 
           updateRouteLayer(map, routeSegments)
+          if (!isTrackingTravelerRef.current && !trackingAutoStartCancelledRef.current) {
+            fitMapToAvailablePoints(map)
+          }
           syncRouteProgress(map, false)
           resetRoutePreloader()
           routePreloadQueueRef.current = getPlaybackPreloadTargets(
@@ -3364,6 +3358,7 @@ export function MapboxLocationPicker({
     const route = tripRouteRef.current
     const shapes = routeShapesRef.current
     const coordinates = [
+      ...timestampRouteSegmentsRef.current.flatMap((segment) => segment.coordinates),
       ...pointsRef.current.map((point) => [point.lng, point.lat] as [number, number]),
       ...(valueRef.current ? [[valueRef.current.lng, valueRef.current.lat] as [number, number]] : []),
       ...(route?.start ? [[route.start.lng, route.start.lat] as [number, number]] : []),
@@ -4230,7 +4225,6 @@ export function MapboxLocationPicker({
               aria-hidden="true"
               className="route-intro-countdown-fill absolute inset-0 origin-left bg-orange-600"
               style={{ animationDuration: `${editorTrackingAutoStartDurationMs}ms` }}
-              onAnimationEnd={startTravelerTrackingFromAutoStart}
             />
             <span className="relative z-10 flex items-center justify-center">
               <Play className="mr-2 h-4 w-4" />
