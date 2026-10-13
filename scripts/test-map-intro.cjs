@@ -89,15 +89,33 @@ assert.equal(followStopped, true, 'a queued follow RAF cannot interrupt the over
 assert.match(editor, /if \(!isTrackingTravelerRef.current && !trackingAutoStartCancelledRef.current\) \{\s*fitMapToAvailablePoints/)
 // Execute the actual RAF callback with a fake clock: a timer must never win
 // against a slow/hidden animation, and canceled previews must not auto-follow.
-for (const canceled of [false, true]) {
+const distanceCode = watch.slice(watch.indexOf('function haversineDistance('), watch.indexOf('function buildPositionedLegs(')) +
+  watch.slice(watch.indexOf('function getRouteDistanceKm('), watch.indexOf('function normalizeRoutedLegsForManualKeyframes('))
+const calculateDistance = new Function(ts.transpileModule(distanceCode, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText + ';return getRouteDistanceKm')()
+const routes = [
+  [[0, 0], [0.01, 0.01]],
+  [[-74, 40], [-30, 55], [2, 49], [13, 52]],
+  [[10, 50], [10, 50], [10.2, 50.1]],
+  [[10, 50]],
+]
+for (const { canceled, lateRoute } of routes.flatMap(lateRoute => [false, true].map(canceled => ({ canceled, lateRoute })))) {
   const ref = current => ({ current })
   let frame, timer, tracked = 0, completed = 0
   const distances = []
+  let distanceScans = 0
+  const totalDistanceKm = calculateDistance(lateRoute)
+  const previewTiming = getTripPreviewTiming(lateRoute, 2)
   const document = { hidden: false }
   const noop = () => {}
   const deps = {
     clearRouteIntroFrame: noop, stopMarkerAnimation: noop, clearTrackingLoading: noop,
-    updateRouteIntroDistance: distance => distances.push(distance), routeIntroStats: { distanceKm: 1234.5 },
+    updateRouteIntroDistance: distance => distances.push(distance), routeIntroStats: { distanceKm: 0 },
+    getRouteDistanceKm: coordinates => {
+      distanceScans++
+      assert.equal(coordinates, lateRoute, 'preview must read the route that arrived after the map callback was created')
+      return calculateDistance(coordinates)
+    },
+    getTripPreviewTiming, markerKeyframesRef: ref([{}, {}]),
     setIsRouteIntroActive: noop, setRouteIntroCountdownCycle: noop,
     isRouteIntroActiveRef: ref(true), routeIntroStartedAtRef: ref(null),
     routeIntroAutoStartTimerRef: ref(null), routeIntroAutoStartCancelledRef: ref(canceled),
@@ -109,26 +127,30 @@ for (const canceled of [false, true]) {
     getTripPreviewDistanceProgress,
     easeInOutCubic: p => p, getRouteCoordinateAtDistanceProgress: () => [0, 0],
     getRouteCoordinateAtTime: () => [0, 0], getRouteTimeAtDistanceProgress: () => 0,
-    positionedLegsRef: ref([]), routeCoordinatesRef: ref([[0, 0]]), liveRouteCoordinateRef: ref([0, 0]),
+    positionedLegsRef: ref([]), routeCoordinatesRef: ref([]), liveRouteCoordinateRef: ref([0, 0]),
     targetRouteTimeRef: ref(0), animatedRouteTimeRef: ref(0), routeRevealTimeRef: ref(0),
     targetRouteCoordinateRef: ref([0, 0]), animatedRouteCoordinateRef: ref([0, 0]),
     syncTravelerMarker: noop, drawRouteIntroProgress: noop,
     startTrackingFromRouteIntroRef: ref(() => tracked++),
   }
   const compiled = ts.transpileModule(animation, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
-  new Function(...Object.keys(deps), compiled + ';return startRouteIntroAnimation')(...Object.values(deps))({})
+  const startPreview = new Function(...Object.keys(deps), compiled + ';return startRouteIntroAnimation')(...Object.values(deps))
+  // Map/style callbacks are installed before asynchronously resolved routes.
+  deps.routeCoordinatesRef.current = lateRoute
+  startPreview({})
   assert.equal(timer, undefined)
   assert.equal(distances.at(-1), 0, 'preview starts at zero distance')
   frame(0); document.hidden = true; frame(100000)
   assert.equal(timer, undefined, 'background time must not complete the animation')
   assert.equal(distances.at(-1), 0, 'distance must pause while the preview is hidden')
   document.hidden = false; frame(100100)
-  for (let elapsed = 100; elapsed <= short.totalMs - tripPreviewCompleteHoldMs; elapsed += 100) {
+  for (let elapsed = 100; elapsed <= Math.ceil((previewTiming.totalMs - tripPreviewCompleteHoldMs) / 100) * 100; elapsed += 100) {
     frame(100100 + elapsed)
-    const expectedProgress = getTripPreviewDistanceProgress(Math.max(0, elapsed - moduleUnderTest.exports.tripPreviewCameraMs), short.animationMs)
-    assert.ok(Math.abs(distances.at(-1) - 1234.5 * expectedProgress) < 0.000001, 'distance counts up independently of traveler easing')
+    const expectedProgress = getTripPreviewDistanceProgress(Math.max(0, elapsed - moduleUnderTest.exports.tripPreviewCameraMs), previewTiming.animationMs)
+    assert.ok(Math.abs(distances.at(-1) - totalDistanceKm * expectedProgress) < 0.000001, 'distance counts up independently of traveler easing')
   }
-  assert.equal(distances.at(-1), 1234.5, 'completion shows the exact total')
+  assert.equal(distances.at(-1), totalDistanceKm, 'completion shows the exact current-route total')
+  assert.equal(distanceScans, 1, 'route distance is scanned once, never per animation frame')
   assert.ok(distances.every((value, index) => index === 0 || value >= distances[index - 1]), 'distance never decreases during a preview')
   assert.equal(completed, 2)
   if (canceled) assert.equal(timer, undefined)

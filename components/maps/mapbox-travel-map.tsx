@@ -4031,8 +4031,11 @@ export function MapboxTravelMap({
     setIsRouteIntroActive(true)
     routeIntroStartedAtRef.current = null
     updateRouteIntroDistance(0)
-    // Cache the total once; the counter finishes two seconds before travel.
-    const previewDistanceKm = routeIntroStats.distanceKm
+    // Mapbox load callbacks may retain the first render, before routing resolved.
+    // Read current route refs once at preview start, never scan in the RAF loop.
+    const previewCoordinates = routeCoordinatesRef.current
+    const previewDistanceKm = getRouteDistanceKm(previewCoordinates)
+    const previewTiming = getTripPreviewTiming(previewCoordinates, markerKeyframesRef.current.length)
     // The countdown is visual only. Tracking is scheduled after the final frame.
     if (routeIntroAutoStartTimerRef.current !== null) {
       window.clearTimeout(routeIntroAutoStartTimerRef.current)
@@ -4070,8 +4073,8 @@ export function MapboxTravelMap({
       visibleElapsedMs += lastFrameAt === null ? 0 : Math.min(timestamp - lastFrameAt, 100)
       lastFrameAt = timestamp
       const elapsed = Math.max(0, visibleElapsedMs - tripPreviewCameraMs)
-      const progress = easeInOutCubic(Math.min(elapsed / routeIntroTiming.animationMs, 1))
-      const distanceProgress = getTripPreviewDistanceProgress(elapsed, routeIntroTiming.animationMs)
+      const progress = easeInOutCubic(Math.min(elapsed / previewTiming.animationMs, 1))
+      const distanceProgress = getTripPreviewDistanceProgress(elapsed, previewTiming.animationMs)
       const introTime = firstTime + routeDuration * progress
       const introCoordinate =
         getRouteCoordinateAtDistanceProgress(positionedLegsRef.current, progress) ??

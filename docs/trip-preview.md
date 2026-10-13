@@ -6,6 +6,8 @@ The watch map fits the entire route and all marker locations, keeps timestamp ma
 
 The compact watch-preview distance badge starts at zero and counts up linearly to the total distance, reaching it two seconds before the traveler animation completes and holding it through the final route overview. Each preview restart resets it. The route total is cached before animation; distance text updates at most ten times per second plus the final frame, without React state updates or additional route scans in the frame loop. Manual cancellation leaves the distance at the last preview position. The editor's static route overview is unchanged.
 
+Preview startup reads distance and timing from the current route refs. Mapbox's load/style callbacks can outlive their initial React render, when the route is still empty; those callbacks must not cache that initial zero total or initial timing after routing resolves.
+
 During the intro, playback synchronization and queued follow frames cannot take camera ownership. The preview waits for route resolution before starting. If the detailed style arrives after the fallback style, it refits/restarts the full overview instead of restoring the old traveler close-up. A canceled preview preserves manual camera control.
 
 The editor shows the complete saved route in a zoomed-out overview for the adaptive duration. Updated route data refreshes the overview, and newly loaded timestamps restart/extend the wait. Its CSS countdown cannot start tracking prematurely.
