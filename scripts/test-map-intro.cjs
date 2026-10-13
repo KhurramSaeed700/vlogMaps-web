@@ -87,10 +87,12 @@ assert.match(editor, /if \(!isTrackingTravelerRef.current && !trackingAutoStartC
 for (const canceled of [false, true]) {
   const ref = current => ({ current })
   let frame, timer, tracked = 0, completed = 0
+  const distances = []
   const document = { hidden: false }
   const noop = () => {}
   const deps = {
     clearRouteIntroFrame: noop, stopMarkerAnimation: noop, clearTrackingLoading: noop,
+    updateRouteIntroDistance: distance => distances.push(distance), routeIntroStats: { distanceKm: 1234.5 },
     setIsRouteIntroActive: noop, setRouteIntroCountdownCycle: noop,
     isRouteIntroActiveRef: ref(true), routeIntroStartedAtRef: ref(null),
     routeIntroAutoStartTimerRef: ref(null), routeIntroAutoStartCancelledRef: ref(canceled),
@@ -110,10 +112,18 @@ for (const canceled of [false, true]) {
   const compiled = ts.transpileModule(animation, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
   new Function(...Object.keys(deps), compiled + ';return startRouteIntroAnimation')(...Object.values(deps))({})
   assert.equal(timer, undefined)
+  assert.equal(distances.at(-1), 0, 'preview starts at zero distance')
   frame(0); document.hidden = true; frame(100000)
   assert.equal(timer, undefined, 'background time must not complete the animation')
+  assert.equal(distances.at(-1), 0, 'distance must pause while the preview is hidden')
   document.hidden = false; frame(100100)
-  for (let elapsed = 100; elapsed <= short.totalMs - tripPreviewCompleteHoldMs; elapsed += 100) frame(100100 + elapsed)
+  for (let elapsed = 100; elapsed <= short.totalMs - tripPreviewCompleteHoldMs; elapsed += 100) {
+    frame(100100 + elapsed)
+    const expectedProgress = Math.min(Math.max(0, elapsed - moduleUnderTest.exports.tripPreviewCameraMs) / short.animationMs, 1)
+    assert.ok(Math.abs(distances.at(-1) - 1234.5 * expectedProgress) < 0.000001, 'distance follows the traveler progress')
+  }
+  assert.equal(distances.at(-1), 1234.5, 'completion shows the exact total')
+  assert.ok(distances.every((value, index) => index === 0 || value >= distances[index - 1]), 'distance never decreases during a preview')
   assert.equal(completed, 2)
   if (canceled) assert.equal(timer, undefined)
   else { assert.equal(timer.ms, tripPreviewCompleteHoldMs); assert.equal(tracked, 0); timer.fn(); assert.equal(tracked, 1) }

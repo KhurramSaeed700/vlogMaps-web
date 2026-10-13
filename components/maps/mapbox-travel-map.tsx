@@ -2344,6 +2344,8 @@ export function MapboxTravelMap({
   const routeIntroAutoStartTimerRef = useRef<number | null>(null)
   const startTrackingFromRouteIntroRef = useRef<() => void>(() => {})
   const routeIntroStartedAtRef = useRef<number | null>(null)
+  const routeIntroDistanceKmRef = useRef(0)
+  const routeIntroDistanceLabelRef = useRef<HTMLSpanElement>(null)
   const isRouteIntroActiveRef = useRef(hasMapboxAccessToken)
   const routeIntroDismissedRef = useRef(false)
   const routeIntroAutoStartCancelledRef = useRef(false)
@@ -2962,7 +2964,7 @@ export function MapboxTravelMap({
         : landmarkDestinationNames
 
     return {
-      distanceLabel: formatRouteIntroDistance(getRouteDistanceKm(routeCoordinates)),
+      distanceKm: getRouteDistanceKm(routeCoordinates),
       destinationNames: destinationNames.slice(0, routeIntroMaxPlaces),
     }
   }, [routeCoordinates, safeKeyframes])
@@ -4012,6 +4014,15 @@ export function MapboxTravelMap({
     // They were installed once by drawFullRoutePreview, not rebuilt per frame.
   }
 
+  const updateRouteIntroDistance = (distanceKm: number) => {
+    routeIntroDistanceKmRef.current = distanceKm
+    const label = routeIntroDistanceLabelRef.current
+    const nextText = formatRouteIntroDistance(distanceKm)
+    if (label && label.textContent !== nextText) {
+      label.textContent = nextText
+    }
+  }
+
   const startRouteIntroAnimation = (map: mapboxgl.Map) => {
     clearRouteIntroFrame()
     stopMarkerAnimation()
@@ -4019,6 +4030,9 @@ export function MapboxTravelMap({
     isRouteIntroActiveRef.current = true
     setIsRouteIntroActive(true)
     routeIntroStartedAtRef.current = null
+    updateRouteIntroDistance(0)
+    // Cache the route total once; the traveler uses this same distance progress.
+    const previewDistanceKm = routeIntroStats.distanceKm
     // The countdown is visual only. Tracking is scheduled after the final frame.
     if (routeIntroAutoStartTimerRef.current !== null) {
       window.clearTimeout(routeIntroAutoStartTimerRef.current)
@@ -4032,6 +4046,7 @@ export function MapboxTravelMap({
     const lastTime = keyframesRef.current[keyframesRef.current.length - 1]?.time ?? firstTime
     const routeDuration = Math.max(lastTime - firstTime, 1)
     let lastRouteDrawAt = -Infinity
+    let lastDistanceUpdateAt = -Infinity
     let lastFrameAt: number | null = null
     let visibleElapsedMs = 0
 
@@ -4071,6 +4086,12 @@ export function MapboxTravelMap({
       targetRouteCoordinateRef.current = introCoordinate
       animatedRouteCoordinateRef.current = introCoordinate
       syncTravelerMarker(currentMap, introMarkerTime, introCoordinate)
+      // At most 10 small DOM text updates per second, with no React renders
+      // or route-wide calculations added to the animation loop.
+      if (timestamp - lastDistanceUpdateAt >= 100 || progress >= 1) {
+        updateRouteIntroDistance(previewDistanceKm * progress)
+        lastDistanceUpdateAt = timestamp
+      }
       // Keep marker motion at display refresh rate; GeoJSON and marker lists
       // only need 20 updates per second during the accelerated preview.
       if (timestamp - lastRouteDrawAt >= 50) {
@@ -5485,11 +5506,11 @@ export function MapboxTravelMap({
       {isRouteIntroActive && (
         <div className="pointer-events-none absolute inset-0 z-40 flex flex-col justify-between bg-gradient-to-b from-slate-950/10 via-transparent to-slate-950/45 p-3 text-white sm:p-4">
           <div
-            aria-label={`Journey distance: ${routeIntroStats.distanceLabel}`}
+            aria-label="Journey distance traveled"
             className="flex w-fit max-w-full items-center gap-1.5 self-start rounded-full border border-white/10 bg-slate-950/60 px-2.5 py-1 text-xs shadow-sm backdrop-blur-sm"
           >
             <span className="shrink-0 text-white/65">Distance</span>
-            <span className="truncate font-semibold tabular-nums">{routeIntroStats.distanceLabel}</span>
+            <span ref={routeIntroDistanceLabelRef} className="truncate font-semibold tabular-nums">{formatRouteIntroDistance(routeIntroDistanceKmRef.current)}</span>
           </div>
 
           <div className="flex w-full self-stretch sm:w-56 sm:self-end">
