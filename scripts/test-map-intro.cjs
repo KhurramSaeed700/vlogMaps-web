@@ -6,6 +6,11 @@ const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
 const moduleUnderTest = { exports: {} }
 new Function('module', 'exports', ts.transpileModule(read('lib/trip-preview.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText)(moduleUnderTest, moduleUnderTest.exports)
 const { getTripPreviewTiming, tripPreviewCompleteHoldMs } = moduleUnderTest.exports
+const { getTripPreviewDistanceProgress } = moduleUnderTest.exports
+assert.equal(getTripPreviewDistanceProgress(0, 10000), 0)
+assert.equal(getTripPreviewDistanceProgress(4000, 10000), 0.5)
+assert.equal(getTripPreviewDistanceProgress(8000, 10000), 1, 'counter reaches total two seconds before travel completes')
+assert.equal(getTripPreviewDistanceProgress(10000, 10000), 1)
 const short = getTripPreviewTiming([[0, 0], [0.01, 0.01]], 2)
 const long = getTripPreviewTiming([[-74, 40], [2, 49], [139, 35]], 60)
 assert.ok(short.totalMs >= 10000)
@@ -101,6 +106,7 @@ for (const canceled of [false, true]) {
     mapInstanceRef: ref({}), markerRef: ref({}), routeIntroAnimationFrameRef: ref(null),
     canUpdateCamera: () => true, document, routeIntroTiming: short,
     tripPreviewCameraMs: moduleUnderTest.exports.tripPreviewCameraMs, tripPreviewCompleteHoldMs,
+    getTripPreviewDistanceProgress,
     easeInOutCubic: p => p, getRouteCoordinateAtDistanceProgress: () => [0, 0],
     getRouteCoordinateAtTime: () => [0, 0], getRouteTimeAtDistanceProgress: () => 0,
     positionedLegsRef: ref([]), routeCoordinatesRef: ref([[0, 0]]), liveRouteCoordinateRef: ref([0, 0]),
@@ -119,8 +125,8 @@ for (const canceled of [false, true]) {
   document.hidden = false; frame(100100)
   for (let elapsed = 100; elapsed <= short.totalMs - tripPreviewCompleteHoldMs; elapsed += 100) {
     frame(100100 + elapsed)
-    const expectedProgress = Math.min(Math.max(0, elapsed - moduleUnderTest.exports.tripPreviewCameraMs) / short.animationMs, 1)
-    assert.ok(Math.abs(distances.at(-1) - 1234.5 * expectedProgress) < 0.000001, 'distance follows the traveler progress')
+    const expectedProgress = getTripPreviewDistanceProgress(Math.max(0, elapsed - moduleUnderTest.exports.tripPreviewCameraMs), short.animationMs)
+    assert.ok(Math.abs(distances.at(-1) - 1234.5 * expectedProgress) < 0.000001, 'distance counts up independently of traveler easing')
   }
   assert.equal(distances.at(-1), 1234.5, 'completion shows the exact total')
   assert.ok(distances.every((value, index) => index === 0 || value >= distances[index - 1]), 'distance never decreases during a preview')

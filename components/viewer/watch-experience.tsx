@@ -327,6 +327,7 @@ export function WatchExperience({
   const activeTimestampIndexRef = useRef(getActiveTimestampIndex(routePoints, 0))
   const [routeShapes, setRouteShapes] = useState<CreatorRouteShapes>(() => video.routeShapes ?? loadCreatorRouteShapes(video.id))
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isPlayerReady, setIsPlayerReady] = useState(false)
   const [autoplayCountdown, setAutoplayCountdown] = useState<number | null>(autoplayCountdownSeconds)
   const [hasEnded, setHasEnded] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -362,7 +363,11 @@ export function WatchExperience({
   }, [video.id, video.keyframes, video.routeShapes])
 
   useEffect(() => {
-    if (autoplayCountdown === null) {
+    setIsPlayerReady(false)
+  }, [video.youtubeId])
+
+  useEffect(() => {
+    if (autoplayCountdown === null || !isPlayerReady) {
       return
     }
 
@@ -377,7 +382,7 @@ export function WatchExperience({
     }, 1000)
 
     return () => window.clearTimeout(timer)
-  }, [autoplayCountdown])
+  }, [autoplayCountdown, isPlayerReady])
 
   const commitCurrentTime = useCallback((time: number, force = false) => {
     if (!Number.isFinite(time)) {
@@ -656,12 +661,13 @@ export function WatchExperience({
               isMuted={false}
               showControls
               allowWatchKeyboardControls
+              onReady={() => setIsPlayerReady(true)}
               onTimeChange={commitCurrentTime}
               onPlayingChange={handlePlayingChange}
               onVolumeChange={handleVolumeChange}
               onEnded={handleVideoEnded}
             />
-            <AutoplayCountdown seconds={autoplayCountdown} />
+            <AutoplayCountdown seconds={isPlayerReady ? autoplayCountdown : null} />
             {hasEnded ? (
               <WatchRecommendations videos={recommendedVideos} onReplay={replayVideo} />
             ) : null}

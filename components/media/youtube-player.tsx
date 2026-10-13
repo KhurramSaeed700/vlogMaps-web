@@ -53,6 +53,7 @@ interface YTNamespace {
       events?: {
         onReady?: (event: YTEvent) => void
         onStateChange?: (event: YTEvent) => void
+        onAutoplayBlocked?: (event: { target: YTPlayerInstance }) => void
       }
     },
   ) => YTPlayerInstance
@@ -173,6 +174,9 @@ export function YouTubePlayer({
   const [seekFeedback, setSeekFeedback] = useState<SeekFeedback | null>(null)
   const [volumeFeedback, setVolumeFeedback] = useState<number | null>(null)
   const [captionFeedback, setCaptionFeedback] = useState<string | null>(null)
+  const [autoplayMuted, setAutoplayMuted] = useState(false)
+  const [autoplayNeedsTap, setAutoplayNeedsTap] = useState(false)
+  const autoplayMutedRef = useRef(false)
   const playerRef = useRef<YTPlayerInstance | null>(null)
   const progressIntervalRef = useRef<number | null>(null)
   const pauseCommitTimeoutRef = useRef<number | null>(null)
@@ -738,6 +742,9 @@ export function YouTubePlayer({
   useEffect(() => {
     let isMounted = true
     let createdPlayer: YTPlayerInstance | null = null
+    autoplayMutedRef.current = false
+    setAutoplayMuted(false)
+    setAutoplayNeedsTap(false)
 
     loadYouTubeApi().then((YT) => {
       if (!containerRef.current || !isMounted) {
@@ -757,6 +764,19 @@ export function YouTubePlayer({
           rel: 0,
         },
         events: {
+          onAutoplayBlocked: (event) => {
+            if (!isMounted || !isPlayingRef.current) return
+            if (!autoplayMutedRef.current) {
+              autoplayMutedRef.current = true
+              setAutoplayMuted(true)
+              clearPauseCommitTimeout()
+              event.target.mute()
+              event.target.playVideo()
+              return
+            }
+            setAutoplayNeedsTap(true)
+            onPlayingChangeRef.current?.(false)
+          },
           onReady: (event) => {
             if (!isMounted) {
               event.target.destroy()
@@ -797,6 +817,7 @@ export function YouTubePlayer({
             }
 
             if (event.data === YT.PlayerState.PLAYING) {
+              setAutoplayNeedsTap(false)
               clearPauseCommitTimeout()
               startProgressInterval()
               onPlayingChangeRef.current?.(true)
@@ -889,7 +910,7 @@ export function YouTubePlayer({
       return
     }
 
-    if (isMuted) {
+    if (isMuted || autoplayMutedRef.current) {
       player.mute()
       return
     }
@@ -904,6 +925,28 @@ export function YouTubePlayer({
       className="relative h-full w-full [&_iframe]:block [&_iframe]:h-full [&_iframe]:w-full"
     >
       <div ref={containerRef} className="h-full w-full" />
+      {(autoplayMuted || autoplayNeedsTap) && (
+        <button
+          type="button"
+          className="absolute right-3 top-3 z-20 rounded-full border border-white/20 bg-black/80 px-3 py-2 text-xs font-semibold text-white shadow-lg hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
+          onClick={() => {
+            const player = playerRef.current
+            if (!player) return
+            autoplayMutedRef.current = false
+            setAutoplayMuted(false)
+            setAutoplayNeedsTap(false)
+            player.setVolume(volumeRef.current)
+            if (!isMutedRef.current) player.unMute()
+            if (autoplayNeedsTap) {
+              isPlayingRef.current = true
+              onPlayingChangeRef.current?.(true)
+              player.playVideo()
+            }
+          }}
+        >
+          {autoplayNeedsTap ? "Tap to play" : "Turn sound on"}
+        </button>
+      )}
       {seekFeedback && (
         <div
           aria-live="polite"

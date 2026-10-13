@@ -1,6 +1,6 @@
 "use client"
 
-import { getTripPreviewTiming, tripPreviewCameraMs, tripPreviewCompleteHoldMs } from "@/lib/trip-preview"
+import { getTripPreviewTiming, getTripPreviewDistanceProgress, tripPreviewCameraMs, tripPreviewCompleteHoldMs } from "@/lib/trip-preview"
 
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import mapboxgl from "mapbox-gl"
@@ -4031,7 +4031,7 @@ export function MapboxTravelMap({
     setIsRouteIntroActive(true)
     routeIntroStartedAtRef.current = null
     updateRouteIntroDistance(0)
-    // Cache the route total once; the traveler uses this same distance progress.
+    // Cache the total once; the counter finishes two seconds before travel.
     const previewDistanceKm = routeIntroStats.distanceKm
     // The countdown is visual only. Tracking is scheduled after the final frame.
     if (routeIntroAutoStartTimerRef.current !== null) {
@@ -4071,6 +4071,7 @@ export function MapboxTravelMap({
       lastFrameAt = timestamp
       const elapsed = Math.max(0, visibleElapsedMs - tripPreviewCameraMs)
       const progress = easeInOutCubic(Math.min(elapsed / routeIntroTiming.animationMs, 1))
+      const distanceProgress = getTripPreviewDistanceProgress(elapsed, routeIntroTiming.animationMs)
       const introTime = firstTime + routeDuration * progress
       const introCoordinate =
         getRouteCoordinateAtDistanceProgress(positionedLegsRef.current, progress) ??
@@ -4089,7 +4090,7 @@ export function MapboxTravelMap({
       // At most 10 small DOM text updates per second, with no React renders
       // or route-wide calculations added to the animation loop.
       if (timestamp - lastDistanceUpdateAt >= 100 || progress >= 1) {
-        updateRouteIntroDistance(previewDistanceKm * progress)
+        updateRouteIntroDistance(previewDistanceKm * distanceProgress)
         lastDistanceUpdateAt = timestamp
       }
       // Keep marker motion at display refresh rate; GeoJSON and marker lists

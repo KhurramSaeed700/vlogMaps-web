@@ -2,6 +2,12 @@ type Coordinate = readonly [number, number]
 
 export const tripPreviewCameraMs = 1200
 export const tripPreviewCompleteHoldMs = 3000
+export const tripPreviewDistanceFinishLeadMs = 2000
+
+export function getTripPreviewDistanceProgress(elapsedMs: number, animationMs: number) {
+  const countDurationMs = Math.max(1, animationMs - tripPreviewDistanceFinishLeadMs)
+  return Math.min(1, Math.max(0, elapsedMs / countDurationMs))
+}
 
 // Calculated once when the route changes, never inside a playback frame.
 export function getTripPreviewTiming(coordinates: readonly Coordinate[], destinationCount: number) {
