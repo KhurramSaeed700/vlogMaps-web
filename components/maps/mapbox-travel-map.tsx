@@ -5484,33 +5484,12 @@ export function MapboxTravelMap({
 
       {isRouteIntroActive && (
         <div className="pointer-events-none absolute inset-0 z-40 flex flex-col justify-between bg-gradient-to-b from-slate-950/10 via-transparent to-slate-950/45 p-3 text-white sm:p-4">
-          <div className="w-full max-w-sm rounded-lg border border-white/10 bg-slate-950/35 p-3 shadow-lg backdrop-blur-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-semibold uppercase text-white/60">Route intro</p>
-                <h2 className="mt-0.5 text-base font-semibold sm:text-lg">Journey preview</h2>
-              </div>
-              <div className="rounded-lg border border-white/10 bg-white/10 px-2.5 py-1.5 text-right">
-                <p className="text-[10px] font-semibold uppercase text-white/55">Distance</p>
-                <p className="text-sm font-semibold">{routeIntroStats.distanceLabel}</p>
-              </div>
-            </div>
-
-            {routeIntroStats.destinationNames.length > 0 && (
-              <div className="mt-2.5">
-                <p className="text-[10px] font-semibold uppercase text-white/60">Major places</p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {routeIntroStats.destinationNames.map((name, index) => (
-                    <span
-                      key={`${name}-${index}`}
-                      className="max-w-full truncate rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-xs font-medium text-white/90"
-                    >
-                      {name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+          <div
+            aria-label={`Journey distance: ${routeIntroStats.distanceLabel}`}
+            className="flex w-fit max-w-full items-center gap-1.5 self-start rounded-full border border-white/10 bg-slate-950/60 px-2.5 py-1 text-xs shadow-sm backdrop-blur-sm"
+          >
+            <span className="shrink-0 text-white/65">Distance</span>
+            <span className="truncate font-semibold tabular-nums">{routeIntroStats.distanceLabel}</span>
           </div>
 
           <div className="flex w-full self-stretch sm:w-56 sm:self-end">
