@@ -5,6 +5,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import { UserButton, useUser } from "@clerk/nextjs"
 import Image from "next/image"
 import Link from "next/link"
+import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
 import { Check, ChevronRight, Loader2, Moon, Play, Search, Settings, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
@@ -221,6 +222,7 @@ export function HomeHeader({
         </div>
 
         <div className="ml-auto flex items-center gap-3">
+          <ReportProblemButton compact />
           {!isLoaded ? (
             <div className="h-9 w-[72px] sm:h-10" aria-hidden="true" />
           ) : isSignedIn ? (

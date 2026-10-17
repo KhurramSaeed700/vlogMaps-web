@@ -1,10 +1,11 @@
 import type mapboxgl from "mapbox-gl"
 import land from "@/lib/world-land.json"
 import { mapboxAccessToken } from "@/lib/mapbox"
+import { diagnosticEvent, reportHandledError } from "@/lib/monitoring/diagnostics"
 
 const sourceId = "travelmap-world"
 const landLayerId = "travelmap-world-land"
-const observations = new WeakMap<object, { latencyMs: number; samples: number; pending: Map<string, number> }>()
+const observations = new WeakMap<object, { latencyMs: number; samples: number; pending: Map<string, number>; preloadReady: boolean; styleGeneration: number }>()
 const styleRequests = new WeakMap<object, number>()
 
 export function createWorldFallbackStyle(): mapboxgl.StyleSpecification {
@@ -26,7 +27,13 @@ export function isMapStyleReady(map: mapboxgl.Map) {
 }
 
 export function canPreloadMap(map: mapboxgl.Map) {
-  return isMapStyleReady(map) && map.getStyle().name !== "TravelMap coarse world"
+  const observation = observations.get(map)
+  if (!observation?.preloadReady || !isMapStyleReady(map) || map.getStyle().name === "TravelMap coarse world") return false
+  const container = map.getContainer()
+  if (container.clientWidth === 0 || container.clientHeight === 0) return false
+  // Fullscreen hides sibling maps without necessarily changing their DOM dimensions.
+  const fullscreen = typeof document === "undefined" ? null : document.fullscreenElement
+  return !fullscreen || fullscreen.contains(container)
 }
 
 function mergeWorldFallback(style: mapboxgl.StyleSpecification) {
@@ -58,13 +65,17 @@ export async function setDetailedMapStyle(map: mapboxgl.Map, url: string) {
     if (!response.ok) throw new Error(`Map style request failed (${response.status})`)
     const style = await response.json() as mapboxgl.StyleSpecification
     if (styleRequests.get(map) !== request || !observations.has(map)) return false
+    const observation = observations.get(map)!
+    observation.preloadReady = false
+    observation.styleGeneration += 1
     map.setStyle(mergeWorldFallback(style), {
       diff: false,
       localFontFamily: undefined,
       localIdeographFontFamily: undefined,
     })
     return true
-  } catch {
+  } catch (error) {
+    reportHandledError(error, "map.style")
     // Keep the currently rendered fallback or detailed style on network failure.
     return false
   }
@@ -95,7 +106,16 @@ export function getMapLoadingObservation(map?: object | null) {
 }
 
 export function attachMapLoading(map: mapboxgl.Map, getDetailedStyle: () => string) {
-  const observation = { latencyMs: 0, samples: 0, pending: new Map<string, number>() }
+  const mapError = (event: { error?: Error }) => reportHandledError(event.error ?? new Error("Mapbox map error"), "map.runtime")
+  const contextLost = () => {
+    diagnosticEvent("map.webgl_context_lost")
+    reportHandledError(new Error("Map graphics context was lost"), "map.webgl")
+  }
+  const contextRestored = () => diagnosticEvent("map.webgl_context_restored")
+  map.on("error", mapError)
+  map.on("webglcontextlost", contextLost)
+  map.on("webglcontextrestored", contextRestored)
+  const observation = { latencyMs: 0, samples: 0, pending: new Map<string, number>(), preloadReady: false, styleGeneration: 0 }
   observations.set(map, observation)
   const keyFor = (event: mapboxgl.MapDataEvent) => {
     if (event.dataType !== "source") return null
@@ -116,7 +136,18 @@ export function attachMapLoading(map: mapboxgl.Map, getDetailedStyle: () => stri
     observation.latencyMs = observation.samples ? observation.latencyMs * 0.8 + elapsed * 0.2 : elapsed
     observation.samples += 1
   }
+  let renderedGeneration = 0
+  const styleRendered = () => {
+    if (renderedGeneration === observation.styleGeneration) observation.preloadReady = true
+  }
   const styleReady = () => {
+    observation.preloadReady = false
+    renderedGeneration = ++observation.styleGeneration
+    map.off("render", styleRendered)
+    // SourceCache.transform is assigned on render, before tiles finish loading.
+    // Starting preloadOnly earlier can fail asynchronously with a tileZoom error.
+    map.once("render", styleRendered)
+    diagnosticEvent("map.style_ready")
     observation.pending.clear()
     installWorldFallback(map)
   }
@@ -127,7 +158,11 @@ export function attachMapLoading(map: mapboxgl.Map, getDetailedStyle: () => stri
   // Render the bundled geography first, then request the detailed style.
   map.once("load", detail)
   map.once("remove", () => {
+    map.off("error", mapError)
+    map.off("webglcontextlost", contextLost)
+    map.off("webglcontextrestored", contextRestored)
     map.off("style.load", styleReady)
+    map.off("render", styleRendered)
     map.off("sourcedataloading", loading)
     map.off("sourcedata", loaded)
     map.off("load", detail)

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { diagnosticEvent, reportHandledError } from "@/lib/monitoring/diagnostics"
 
 interface YouTubePlayerProps {
   videoId: string
@@ -54,6 +55,7 @@ interface YTNamespace {
         onReady?: (event: YTEvent) => void
         onStateChange?: (event: YTEvent) => void
         onAutoplayBlocked?: (event: { target: YTPlayerInstance }) => void
+        onError?: (event: YTEvent) => void
       }
     },
   ) => YTPlayerInstance
@@ -118,7 +120,7 @@ function loadYouTubeApi() {
   return youtubeApiLoader
 }
 
-function shouldIgnorePlayerShortcut(target: EventTarget | null) {
+function shouldIgnorePlayerShortcut(target: EventTarget | null, allowButton = false) {
   if (!(target instanceof HTMLElement)) {
     return false
   }
@@ -128,7 +130,7 @@ function shouldIgnorePlayerShortcut(target: EventTarget | null) {
     tagName === "input" ||
     tagName === "textarea" ||
     tagName === "select" ||
-    tagName === "button" ||
+    (tagName === "button" && !allowButton) ||
     target.isContentEditable ||
     Boolean(target.closest('[role="combobox"]'))
   )
@@ -174,10 +176,15 @@ export function YouTubePlayer({
   const [seekFeedback, setSeekFeedback] = useState<SeekFeedback | null>(null)
   const [volumeFeedback, setVolumeFeedback] = useState<number | null>(null)
   const [captionFeedback, setCaptionFeedback] = useState<string | null>(null)
+  const [isBrowserFullscreen, setIsFullscreen] = useState(false)
+  const [isExpanded, setIsExpanded] = useState(false)
+  const isFullscreen = isBrowserFullscreen || isExpanded
+  const [fullscreenError, setFullscreenError] = useState<string | null>(null)
   const [autoplayMuted, setAutoplayMuted] = useState(false)
   const [autoplayNeedsTap, setAutoplayNeedsTap] = useState(false)
   const autoplayMutedRef = useRef(false)
   const playerRef = useRef<YTPlayerInstance | null>(null)
+  const lastDiagnosticPlayerStateRef = useRef<number | null>(null)
   const progressIntervalRef = useRef<number | null>(null)
   const pauseCommitTimeoutRef = useRef<number | null>(null)
   const seekFeedbackTimeoutRef = useRef<number | null>(null)
@@ -199,70 +206,35 @@ export function YouTubePlayer({
   const seekPollTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
-    if (!allowKeyboard && !allowWatchKeyboardControls) {
-      return
+    const handleFullscreenChange = () => {
+      const element = wrapperRef.current
+      const fullscreen = document.fullscreenElement
+      diagnosticEvent("fullscreen.changed", { active: Boolean(fullscreen) })
+      setIsFullscreen(Boolean(element && fullscreen && (fullscreen === element || element.contains(fullscreen))))
+      // Focus once on a fullscreen transition, never steal iframe focus on a timer.
+      if (fullscreen === element || !fullscreen) element?.focus({ preventScroll: true })
     }
+    document.addEventListener("fullscreenchange", handleFullscreenChange)
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange)
+  }, [])
 
-    let restoreFocusTimeout: number | null = null
-    let attachedIframe: HTMLIFrameElement | null = null
-
-    const restorePageFocus = () => {
-      if (restoreFocusTimeout !== null) {
-        window.clearTimeout(restoreFocusTimeout)
+  useEffect(() => {
+    if (!isExpanded) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    wrapperRef.current?.focus({ preventScroll: true })
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        setIsExpanded(false)
       }
-
-      restoreFocusTimeout = window.setTimeout(() => {
-        restoreFocusTimeout = null
-        const iframe = wrapperRef.current?.querySelector("iframe")
-        if (document.activeElement === iframe) {
-          iframe?.blur()
-          window.focus()
-          wrapperRef.current?.focus()
-        }
-      }, 300)
     }
-
-    const handleWindowBlur = () => {
-      restoreFocusTimeout = window.setTimeout(() => {
-        restoreFocusTimeout = null
-        const iframe = wrapperRef.current?.querySelector("iframe")
-        if (document.activeElement === iframe) {
-          iframe?.blur()
-          window.focus()
-          wrapperRef.current?.focus()
-        }
-      }, 300)
-    }
-
-    const attachIframeFocusHandler = () => {
-      const iframe = wrapperRef.current?.querySelector("iframe")
-      if (iframe === attachedIframe) {
-        return
-      }
-
-      attachedIframe?.removeEventListener("focus", restorePageFocus)
-      attachedIframe = iframe ?? null
-      attachedIframe?.addEventListener("focus", restorePageFocus)
-    }
-
-    attachIframeFocusHandler()
-    const observer = new MutationObserver(attachIframeFocusHandler)
-    if (wrapperRef.current) {
-      observer.observe(wrapperRef.current, { childList: true, subtree: true })
-    }
-
-    window.addEventListener("blur", handleWindowBlur)
-
+    document.addEventListener("keydown", handleEscape, true)
     return () => {
-      if (restoreFocusTimeout !== null) {
-        window.clearTimeout(restoreFocusTimeout)
-      }
-
-      attachedIframe?.removeEventListener("focus", restorePageFocus)
-      observer.disconnect()
-      window.removeEventListener("blur", handleWindowBlur)
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener("keydown", handleEscape, true)
     }
-  }, [allowKeyboard, allowWatchKeyboardControls])
+  }, [isExpanded])
 
   useEffect(() => {
     onReadyRef.current = onReady
@@ -564,18 +536,37 @@ export function YouTubePlayer({
     showCaptionFeedback("Subtitles on")
   }
 
-  const toggleFullscreenFromKeyboard = () => {
+  const toggleFullscreenFromKeyboard = async () => {
     const element = wrapperRef.current
     if (!element || typeof document === "undefined") {
       return
     }
 
-    if (document.fullscreenElement) {
-      document.exitFullscreen?.()
+    setFullscreenError(null)
+    diagnosticEvent("fullscreen.requested", { videoId, expanded: isExpanded, active: Boolean(document.fullscreenElement) })
+    if (isExpanded) {
+      setIsExpanded(false)
       return
     }
-
-    element.requestFullscreen?.()
+    const wasFullscreen = Boolean(document.fullscreenElement)
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen?.()
+        return
+      }
+      if (!element.requestFullscreen) {
+        setIsExpanded(true)
+        return
+      }
+      await element.requestFullscreen()
+    } catch (error) {
+      diagnosticEvent("fullscreen.rejected", { videoId, errorName: error instanceof Error ? error.name : "UnknownError", fallback: !wasFullscreen })
+      if (!wasFullscreen) setIsExpanded(true)
+      else {
+        reportHandledError(error, "player.fullscreen_exit", { videoId })
+        setFullscreenError("Could not exit fullscreen. Press Escape to exit.")
+      }
+    }
   }
 
   const seekToDurationPercentage = (percentage: number) => {
@@ -598,6 +589,7 @@ export function YouTubePlayer({
     }
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.isComposing || event.defaultPrevented) return
       const watchShortcutDigit = getWatchShortcutDigit(event)
       if (
         allowWatchKeyboardControls &&
@@ -609,7 +601,7 @@ export function YouTubePlayer({
         !event.altKey &&
         !event.ctrlKey &&
         !event.metaKey &&
-        !shouldIgnorePlayerShortcut(event.target)
+        !shouldIgnorePlayerShortcut(event.target, event.code === "KeyF")
       ) {
         event.preventDefault()
 
@@ -742,6 +734,8 @@ export function YouTubePlayer({
   useEffect(() => {
     let isMounted = true
     let createdPlayer: YTPlayerInstance | null = null
+    diagnosticEvent("player.loaded", { videoId })
+    lastDiagnosticPlayerStateRef.current = null
     autoplayMutedRef.current = false
     setAutoplayMuted(false)
     setAutoplayNeedsTap(false)
@@ -757,6 +751,7 @@ export function YouTubePlayer({
         videoId,
         playerVars: {
           controls: showControls ? 1 : 0,
+          fs: 0,
           disablekb: allowKeyboard || allowWatchKeyboardControls ? 0 : 1,
           autoplay: autoPlay ? 1 : 0,
           mute: isMuted ? 1 : 0,
@@ -766,6 +761,7 @@ export function YouTubePlayer({
         events: {
           onAutoplayBlocked: (event) => {
             if (!isMounted || !isPlayingRef.current) return
+            diagnosticEvent("player.autoplay_blocked", { videoId, mutedRetry: autoplayMutedRef.current })
             if (!autoplayMutedRef.current) {
               autoplayMutedRef.current = true
               setAutoplayMuted(true)
@@ -783,6 +779,7 @@ export function YouTubePlayer({
               return
             }
             playerRef.current = event.target
+            diagnosticEvent("player.ready", { videoId, durationSeconds: Math.floor(event.target.getDuration()) })
             event.target.setVolume(volumeRef.current)
             if (isMutedRef.current) {
               event.target.mute()
@@ -793,7 +790,16 @@ export function YouTubePlayer({
               event.target.playVideo()
             }
           },
+          onError: (event) => {
+            if (!isMounted) return
+            reportHandledError(new Error(`YouTube player error ${event.data}`), "player.youtube", { videoId, errorCode: event.data })
+            onPlayingChangeRef.current?.(false)
+          },
           onStateChange: (event) => {
+            if ([YT.PlayerState.PLAYING, YT.PlayerState.PAUSED, YT.PlayerState.ENDED].includes(event.data) && lastDiagnosticPlayerStateRef.current !== event.data) {
+              lastDiagnosticPlayerStateRef.current = event.data
+              diagnosticEvent("player.state", { videoId, state: event.data, timeSeconds: Math.floor(event.target.getCurrentTime()) })
+            }
             const pendingSeek = pendingSeekRef.current
             if (pendingSeek) {
               clearProgressInterval()
@@ -922,8 +928,9 @@ export function YouTubePlayer({
     <div
       ref={wrapperRef}
       tabIndex={-1}
-      className="relative h-full w-full [&_iframe]:block [&_iframe]:h-full [&_iframe]:w-full"
+      className={`${isExpanded ? "fixed inset-0 z-[100] h-[100dvh] w-screen" : "relative h-full w-full"} flex flex-col bg-black [&_iframe]:block [&_iframe]:h-full [&_iframe]:w-full`}
     >
+      <div className="relative min-h-0 flex-1">
       <div ref={containerRef} className="h-full w-full" />
       {(autoplayMuted || autoplayNeedsTap) && (
         <button
@@ -987,6 +994,18 @@ export function YouTubePlayer({
           {captionFeedback}
         </div>
       )}
+      </div>
+      <div className="flex min-h-8 shrink-0 items-center justify-end gap-3 bg-black px-2 text-xs text-white">
+        {fullscreenError && <span role="status" className="mr-auto">{fullscreenError}</span>}
+        <button
+          type="button"
+          onClick={() => { void toggleFullscreenFromKeyboard() }}
+          aria-label={isFullscreen ? "Exit video fullscreen" : "Enter video fullscreen"}
+          className="min-h-8 rounded px-2 hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
+        >
+          {isFullscreen ? "Exit fullscreen (Esc)" : "Fullscreen"}
+        </button>
+      </div>
     </div>
   )
 }

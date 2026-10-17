@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef } from "react"
 import type { CreatorVideoState } from "@/lib/creator-video-state"
 import { saveCreatorVideoState } from "@/lib/creator-video-state-client"
+import { diagnosticEvent, reportHandledError } from "@/lib/monitoring/diagnostics"
 import {
   clearCreatorVideoStateLocalCache,
   saveCreatorVideoStateLocalCache,
@@ -109,6 +110,7 @@ export function useCreatorVideoStateAutosave({ videoId, onStatusChange }: Creato
     try {
       const response = await saveCreatorVideoState(videoId, pendingState.state)
       if (response?.configured && response.saved) {
+        diagnosticEvent("editor.saved", { videoId })
         retryDelayRef.current = minimumRetryDelayMs
         const clearedLatestRevision = clearPendingCreatorVideoState(videoId, pendingState.revision)
         if (clearedLatestRevision) {
@@ -120,10 +122,12 @@ export function useCreatorVideoStateAutosave({ videoId, onStatusChange }: Creato
         return
       }
 
+      reportHandledError(new Error("Editor save was not confirmed"), "editor.autosave", { videoId, configured: response?.configured ?? false })
       statusChangeRef.current("retrying")
       schedulePendingSave(retryDelayRef.current)
       retryDelayRef.current = Math.min(retryDelayRef.current * 2, maximumRetryDelayMs)
-    } catch {
+    } catch (error) {
+      reportHandledError(error, "editor.autosave", { videoId })
       statusChangeRef.current("retrying")
       schedulePendingSave(retryDelayRef.current)
       retryDelayRef.current = Math.min(retryDelayRef.current * 2, maximumRetryDelayMs)

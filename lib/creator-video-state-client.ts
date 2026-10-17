@@ -1,4 +1,5 @@
 import type { CreatorVideoState, CreatorVideoStateResponse } from "@/lib/creator-video-state"
+import { diagnosticEvent } from "@/lib/monitoring/diagnostics"
 
 function getCreatorVideoStateUrl(videoId: string) {
   return `/api/creator/video-state/${encodeURIComponent(videoId)}`
@@ -11,6 +12,7 @@ export async function loadCreatorVideoState(videoId: string, signal?: AbortSigna
   })
 
   if (!response.ok) {
+    diagnosticEvent("editor.load_failed", { videoId, status: response.status, requestId: response.headers.get("X-Request-Id") })
     return null
   }
 
@@ -31,6 +33,7 @@ export async function saveCreatorVideoState(videoId: string, state: CreatorVideo
   })
 
   if (!response.ok) {
+    diagnosticEvent("editor.save_failed", { videoId, status: response.status, requestId: response.headers.get("X-Request-Id") })
     return null
   }
 

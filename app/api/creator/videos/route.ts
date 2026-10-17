@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { reportServerFailure } from "@/lib/monitoring/server"
 import {
   CreatorVideoPersistenceError,
   isCreatorVideosDbConfigured,
@@ -14,10 +15,15 @@ const maxCreatorUploadBodyBytes = 750_000
 
 function creatorApiErrorResponse(error: unknown) {
   if (error instanceof CreatorAuthorizationError || error instanceof CreatorVideoPersistenceError) {
+    if (error.status >= 500) {
+      const { requestId } = reportServerFailure(error, "api.creator_video")
+      return NextResponse.json({ error: "The save service is temporarily unavailable.", requestId }, { status: error.status, headers: { "X-Request-Id": requestId } })
+    }
     return NextResponse.json({ error: error.message }, { status: error.status })
   }
 
-  return NextResponse.json({ error: "Unable to process creator video." }, { status: 500 })
+  const { requestId } = reportServerFailure(error, "api.creator_video")
+  return NextResponse.json({ error: "Unable to process creator video.", requestId }, { status: 500, headers: { "X-Request-Id": requestId } })
 }
 
 export async function GET() {

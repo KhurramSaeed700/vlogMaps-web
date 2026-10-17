@@ -9,6 +9,7 @@ const noop = () => {}
 const ref = current => ({ current })
 const player = { mute: () => calls.push('mute'), playVideo: () => calls.push('play'), setVolume: noop, getDuration: () => 60 }
 const deps = {
+  diagnosticEvent: noop, reportHandledError: noop, videoId: "test",
   isMounted: true, isPlayingRef: ref(true), autoplayMutedRef: ref(false),
   setAutoplayMuted: value => calls.push(['muted', value]),
   setAutoplayNeedsTap: value => calls.push(['tap', value]),

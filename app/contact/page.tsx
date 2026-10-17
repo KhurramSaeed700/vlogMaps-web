@@ -1,18 +1,15 @@
 import { ContentPageShell } from "@/components/app-shell/content-page-shell"
-import { Button } from "@/components/ui/button"
+import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
 
 export default function ContactPage() {
   return (
     <ContentPageShell
       title="Contact"
-      description="A simple support page so users have somewhere intentional to go while the full support flow is being built."
+      description="Tell us about problems with videos, maps, or the editor."
     >
       <div className="space-y-4 text-sm text-gray-600">
-        <p>For now, the cleanest next step is to connect this page to your real support inbox or help desk.</p>
-        <p>Good launch additions would be creator support, DMCA/copyright reporting, and account recovery guidance.</p>
-        <a href="mailto:support@travelmap.example">
-          <Button>Contact Support</Button>
-        </a>
+        <p>Having trouble with a video, map, or editor? Describe what happened in a problem report. Please avoid including private information.</p>
+        <ReportProblemButton />
       </div>
     </ContentPageShell>
   )

@@ -11,6 +11,7 @@ const mocks = {
   'next/font/google': { Inter: () => ({ className: 'font' }) },
   '@vercel/speed-insights/next': { SpeedInsights: 'SpeedInsights' },
   '@vercel/analytics/next': { Analytics: 'Analytics' },
+  '@/components/monitoring/monitoring-navigation': { MonitoringNavigation: 'MonitoringNavigation' },
   '@/components/app-shell/theme-provider': { ThemeProvider: 'ThemeProvider' },
   '@/components/auth/clerk-provider-wrapper': { ClerkProviderWrapper: 'ClerkProviderWrapper' },
   '@/components/ui/sonner': { Toaster: 'Toaster' },

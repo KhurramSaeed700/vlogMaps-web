@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server"
+import { reportServerFailure } from "@/lib/monitoring/server"
 import { NextResponse } from "next/server"
 import { getCreatorVideoFromDb, isCreatorVideoOwnedByUser, isCreatorVideosDbConfigured } from "@/lib/creator-videos-db"
 import { getPrisma } from "@/lib/prisma"
@@ -36,7 +37,8 @@ export async function GET(_request: Request, context: RouteContext) {
       if (linkedUser) requesterUserIds.push(linkedUser.id)
     }
     cloudVideo = await getCreatorVideoFromDb(id, requesterUserIds)
-  } catch {
+  } catch (error) {
+    const { requestId } = reportServerFailure(error, "api.watch_video")
     return NextResponse.json(
       {
         configured: true,
@@ -45,7 +47,7 @@ export async function GET(_request: Request, context: RouteContext) {
         editHref: null,
         error: "The video service is temporarily unavailable.",
       },
-      { status: 503 },
+      { status: 503, headers: { "X-Request-Id": requestId } },
     )
   }
 

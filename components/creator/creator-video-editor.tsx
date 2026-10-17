@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { createPortal } from "react-dom"
 import Link from "next/link"
+import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
 import { useTheme } from "next-themes"
 import * as Dialog from "@radix-ui/react-dialog"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
@@ -3172,6 +3173,7 @@ export function CreatorVideoEditor({
                         <p className="text-sm font-semibold text-foreground">Editor settings</p>
                         <p className="mt-0.5 text-xs text-muted-foreground">Control playback and appearance.</p>
                       </div>
+                      <div className="px-2.5 py-2"><ReportProblemButton /></div>
                       <PlaybackSettingsSection
                         preferences={playbackPreferences}
                         onChange={updatePlaybackPreferences}

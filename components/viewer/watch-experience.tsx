@@ -5,6 +5,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import * as Dialog from "@radix-ui/react-dialog"
 import Image from "next/image"
 import Link from "next/link"
+import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
 import { ArrowLeft, ListVideo, Pencil, RotateCcw, Settings, Share2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SplitViewResizer } from "@/components/ui/split-view-resizer"
@@ -628,6 +629,7 @@ export function WatchExperience({
             >
               <Share2 className="h-5 w-5" />
             </Button>
+            <ReportProblemButton compact />
           </div>
         </div>
       </header>

@@ -1,3 +1,5 @@
+import { reportHandledError } from "@/lib/monitoring/diagnostics"
+
 export type RouteCoordinate = [number, number]
 export type RoutePreference = "fastest" | "shortest"
 export type RoutedLegKind = "road" | "flight"
@@ -392,6 +394,7 @@ async function fetchDirectionsGeometry(
     resolution = await request
   } catch (error) {
     routedLegCache.delete(key)
+    reportHandledError(error, "map.directions", { routePreference })
     throw error
   }
 

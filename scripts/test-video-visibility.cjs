@@ -79,12 +79,13 @@ async function main() {
   assert.equal(parser.parseTravelVideoPayload({ ...payload, visibility: 'unknown' }).success, false)
   assert.equal(parser.parseTravelVideoPayload(payload).data.visibility, undefined)
 
-  let watchUser = null
+  let watchUser = null, failWatch = false
   const watch = load('app/api/videos/[id]/route.ts', {
+    '@/lib/monitoring/server': { reportServerFailure: () => ({ requestId: 'test-request-reference' }) },
     '@clerk/nextjs/server': { auth: async () => ({ userId: watchUser }) },
     'next/server': { NextResponse: { json: (body, options) => ({ body, status: options?.status || 200, headers: options?.headers }) } },
     '@/lib/prisma': { getPrisma: () => ({ user: { findUnique: async ({ where }) => where.clerkUserId === 'clerk-owner' ? { id: 'owner' } : null } }) },
-    '@/lib/creator-videos-db': { ...db, isCreatorVideosDbConfigured: () => true, isCreatorVideoOwnedByUser: async (_id, owners) => owners.includes('owner') },
+    '@/lib/creator-videos-db': { ...db, getCreatorVideoFromDb: async (...args) => { if (failWatch) throw new Error('private connection details'); return db.getCreatorVideoFromDb(...args) }, isCreatorVideosDbConfigured: () => true, isCreatorVideoOwnedByUser: async (_id, owners) => owners.includes('owner') },
   })
   const getWatch = id => watch.GET(new Request('http://localhost/test'), { params: Promise.resolve({ id }) })
   for (const user of [null, 'stranger', 'clerk-owner']) {
@@ -95,6 +96,12 @@ async function main() {
   }
   watchUser = null
   assert.equal((await getWatch('published-unlisted')).status, 200)
+  failWatch = true
+  const failure = await getWatch('published-unlisted')
+  assert.equal(failure.status, 503)
+  assert.equal(failure.headers['X-Request-Id'], 'test-request-reference')
+  assert.ok(!JSON.stringify(failure.body).includes('private connection details'))
+  failWatch = false
 
   class CreatorAuthorizationError extends Error { constructor(status) { super('Denied'); this.status = status } }
   let authStatus = 200, updated = 0, unpublished = 0

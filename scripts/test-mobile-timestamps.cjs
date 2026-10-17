@@ -8,6 +8,7 @@ const states = []; let cursor = 0
 const noop = () => {}
 const points = [{ id: 'point', time: 12, lat: 0, lng: 0, location: 'Test stop', description: '', pointType: 'stop' }]
 const mocks = {
+  '@/components/monitoring/report-problem-button': { ReportProblemButton: 'ReportProblemButton' },
   react: {
     memo: fn => fn, useCallback: fn => fn, useEffect: noop, useLayoutEffect: noop,
     useMemo: fn => fn(), useRef: current => ({ current }),

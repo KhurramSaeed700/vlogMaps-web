@@ -10,6 +10,7 @@ function load(file, clock = { now: () => 0 }) {
   }).outputText
   const result = { exports: {} }
   new Function('module', 'exports', 'require', 'performance', code)(result, result.exports, (name) => {
+    if (name === '@/lib/monitoring/diagnostics') return { diagnosticEvent() {}, reportHandledError() {} }
     if (name === '@/lib/world-land.json') return require('../lib/world-land.json')
     if (name === '@/lib/mapbox') return { mapboxAccessToken: 'test-token' }
     throw new Error(`Unexpected dependency: ${name}`)
@@ -44,6 +45,7 @@ test('tile-independent style readiness, fallback reinstatement, measurements and
     on, off,
     once: (name, fn) => { const once = e => { off(name, once); fn(e) }; on(name, once) },
     getStyle: () => style,
+    getContainer: () => ({ clientWidth: 800, clientHeight: 600 }),
     getSource: id => style.sources[id],
     setStyle: value => { requested = value },
     setPaintProperty: () => {},
@@ -64,7 +66,19 @@ test('tile-independent style readiness, fallback reinstatement, measurements and
   assert.equal(api.isMapStyleReady(map), true)
   emit('style.load')
   assert.equal(api.isMapStyleReady(map), true)
-  assert.equal(api.canPreloadMap(map), true)
+  assert.equal(api.canPreloadMap(map), false, 'Source transforms must be initialized by a render first')
+  emit('render')
+  assert.equal(api.canPreloadMap(map), true, 'Preloading must not wait for unfinished visible tiles')
+  const previousDocument = global.document
+  global.document = { fullscreenElement: { contains: () => false } }
+  assert.equal(api.canPreloadMap(map), false, 'Video fullscreen hides the sibling map even when its size remains nonzero')
+  global.document.fullscreenElement = { contains: () => true }
+  assert.equal(api.canPreloadMap(map), true, 'A fullscreen map itself remains usable')
+  global.document = previousDocument
+  const originalContainer = map.getContainer
+  map.getContainer = () => ({ clientWidth: 0, clientHeight: 0 })
+  assert.equal(api.canPreloadMap(map), false)
+  map.getContainer = originalContainer
   const tile = { dataType: 'source', sourceId: 'remote', coord: { overscaledZ: 4, wrap: 0, canonical: { x: 2, y: 3 } } }
   emit('sourcedataloading', tile)
   time = 2000
