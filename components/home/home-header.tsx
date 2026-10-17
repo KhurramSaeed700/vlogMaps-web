@@ -1,23 +1,22 @@
 "use client"
 
-import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import { UserButton, useUser } from "@clerk/nextjs"
 import Image from "next/image"
 import Link from "next/link"
-import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
 import { Check, ChevronRight, Loader2, Moon, Play, Search, Settings, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
+import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { preferenceOptions, type PreferenceId } from "@/components/home/home-preferences"
-import { NavigationSettingsSection } from "@/components/settings/navigation-settings-section"
 import { PlaybackSettingsSection } from "@/components/settings/playback-settings-section"
 import { formatCompactNumber, formatDuration } from "@/lib/demo-data"
 import { useCreatorAccess } from "@/lib/use-creator-access"
-import { useNavigationPreferences } from "@/lib/use-navigation-preferences"
 import { usePlaybackPreferences } from "@/lib/use-playback-preferences"
+import { homeTourStartEvent } from "@/lib/home-tour"
 import {
   extractYouTubeId,
   getYouTubeThumbnailUrl,
@@ -93,6 +92,7 @@ function YouTubeLinkPreview({
 }
 
 interface HomeHeaderProps {
+  onReadyChange?: (ready: boolean) => void
   isPending: boolean
   launcherError: string | null
   selectedPreference: PreferenceId
@@ -102,7 +102,32 @@ interface HomeHeaderProps {
   onYoutubeUrlChange: (value: string) => void
 }
 
+function HomeHeaderSkeleton({ signedIn }: { signedIn?: boolean }) {
+  return (
+    <div className="absolute inset-x-0 top-0" role="status" aria-label="Loading navigation">
+      <div aria-hidden="true" className="mx-auto flex max-w-screen-2xl flex-wrap items-center gap-3 px-4 py-3 motion-safe:animate-pulse sm:flex-nowrap sm:gap-4">
+        <div className="flex shrink-0 items-center gap-3">
+          <div className="h-9 w-9 rounded-full bg-muted-foreground/15" />
+          <div className="h-5 w-[88px] rounded bg-muted-foreground/15" />
+        </div>
+        <div className="order-3 h-11 w-full rounded-xl bg-muted-foreground/10 sm:order-none sm:mx-auto sm:max-w-2xl" />
+        <div className="ml-auto flex shrink-0 items-center gap-3">
+          {signedIn !== false ? (
+            <>
+              <div className="hidden h-9 w-[10.5rem] rounded-full bg-muted-foreground/10 sm:block" />
+              <div className="h-9 w-9 rounded-full bg-muted-foreground/15" />
+            </>
+          ) : <div className="h-9 w-[72px] rounded-full bg-muted-foreground/10" />}
+          <div className="h-9 w-9 rounded-full bg-muted-foreground/10" />
+        </div>
+      </div>
+      <span className="sr-only">Loading navigation…</span>
+    </div>
+  )
+}
+
 export function HomeHeader({
+  onReadyChange,
   isPending,
   launcherError,
   selectedPreference,
@@ -114,10 +139,10 @@ export function HomeHeader({
   const [isThemeMounted, setIsThemeMounted] = useState(false)
   const [isCreatorNavigationPending, setIsCreatorNavigationPending] = useState(false)
   const [youtubePreview, setYoutubePreview] = useState<YouTubePreviewState | null>(null)
+  const avatarContainerRef = useRef<HTMLDivElement>(null)
+  const [readyAvatarUserId, setReadyAvatarUserId] = useState<string | null>(null)
   const { resolvedTheme, setTheme } = useTheme()
   const { isLoaded, isSignedIn, user } = useUser()
-  const { preferences: navigationPreferences, updatePreferences: updateNavigationPreferences } =
-    useNavigationPreferences()
   const { preferences: playbackPreferences, updatePreferences: updatePlaybackPreferences } =
     usePlaybackPreferences()
   const { isApprovedCreator, isCheckingCreatorAccess } = useCreatorAccess({
@@ -136,6 +161,45 @@ export function HomeHeader({
     preferenceOptions.find((option) => option.id === selectedPreference)?.label ?? "All"
   const previewVideoId = useMemo(() => extractYouTubeId(youtubeUrl), [youtubeUrl])
   const visiblePreview = youtubePreview?.videoId === previewVideoId ? youtubePreview : null
+  const isNavbarReady = Boolean(isThemeMounted && isLoaded && !isCheckingCreatorAccess &&
+    (!isSignedIn || (user?.id && readyAvatarUserId === user.id)))
+
+  useEffect(() => {
+    onReadyChange?.(isNavbarReady)
+  }, [isNavbarReady, onReadyChange])
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !user?.id) {
+      setReadyAvatarUserId(null)
+      return
+    }
+    const container = avatarContainerRef.current
+    if (!container) return
+    const userId = user.id
+    let imageFailed = false
+    const checkAvatar = () => {
+      const button = container.querySelector("button")
+      if (!button) return
+      const image = button.querySelector("img")
+      if (user.hasImage && !image && !imageFailed) return
+      if (image && !image.complete) return
+      setReadyAvatarUserId(userId)
+    }
+    const handleImageEvent = (event: Event) => {
+      if (event.type === "error") imageFailed = true
+      checkAvatar()
+    }
+    const observer = new MutationObserver(checkAvatar)
+    observer.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] })
+    container.addEventListener("load", handleImageEvent, true)
+    container.addEventListener("error", handleImageEvent, true)
+    checkAvatar()
+    return () => {
+      observer.disconnect()
+      container.removeEventListener("load", handleImageEvent, true)
+      container.removeEventListener("error", handleImageEvent, true)
+    }
+  }, [isLoaded, isSignedIn, user?.id, user?.hasImage])
 
   useEffect(() => {
     setIsThemeMounted(true)
@@ -183,8 +247,13 @@ export function HomeHeader({
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
-      <div className="mx-auto flex max-w-screen-2xl flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-4">
+    <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur" aria-busy={!isNavbarReady} data-home-header-ready={isNavbarReady}>
+      {!isNavbarReady && <HomeHeaderSkeleton signedIn={isLoaded ? Boolean(isSignedIn) : undefined} />}
+      <div
+        aria-hidden={!isNavbarReady}
+        inert={!isNavbarReady}
+        className={`mx-auto flex max-w-screen-2xl flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-4 ${isNavbarReady ? "" : "invisible pointer-events-none"}`}
+      >
         <TravelMapLogo textClassName="text-lg" />
 
         <div className="relative order-3 w-full sm:order-none sm:mx-auto sm:max-w-2xl">
@@ -251,6 +320,7 @@ export function HomeHeader({
                   </Button>
                 </Link>
               )}
+              <div ref={avatarContainerRef} className="h-9 w-9 shrink-0">
               <UserButton
                 signInUrl="/auth/login"
                 appearance={{
@@ -259,6 +329,7 @@ export function HomeHeader({
                   },
                 }}
               />
+              </div>
             </>
           ) : (
             <Link href="/auth/login" className="block">
@@ -277,6 +348,7 @@ export function HomeHeader({
                 className="h-9 w-9 min-w-9 shrink-0 rounded-full border-border bg-background p-0 text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground"
                 aria-label="Open settings menu"
                 title="Settings"
+                data-home-tour="settings"
               >
                 <Settings className="h-4 w-4" />
               </Button>
@@ -291,6 +363,10 @@ export function HomeHeader({
                   <p className="text-sm font-semibold text-foreground">Settings</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">Preference: {selectedPreferenceLabel}</p>
                 </div>
+                <DropdownMenu.Item className={menuItemClass} onSelect={() => window.dispatchEvent(new Event(homeTourStartEvent))}>
+                  <Play className="h-4 w-4 text-muted-foreground" />
+                  <span>Show quick tour</span>
+                </DropdownMenu.Item>
 
                 <div className="px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                   User preferences
@@ -311,13 +387,6 @@ export function HomeHeader({
                     </DropdownMenu.Item>
                   )
                 })}
-
-                <DropdownMenu.Separator className="my-2 h-px bg-border" />
-
-                <NavigationSettingsSection
-                  preferences={navigationPreferences}
-                  onChange={updateNavigationPreferences}
-                />
 
                 <DropdownMenu.Separator className="my-2 h-px bg-border" />
 

@@ -34,10 +34,14 @@ export function useCreatorAccess({
     initialUserId && approvedCreatorUserIds.has(initialUserId) ? initialUserId : null,
   )
   const [isCheckingCreatorAccess, setIsCheckingCreatorAccess] = useState(false)
+  const [checkedUserId, setCheckedUserId] = useState<string | null>(() =>
+    initialUserId && approvedCreatorUserIds.has(initialUserId) ? initialUserId : null,
+  )
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn || !user?.id) {
       setApprovedUserId(null)
+      setCheckedUserId(null)
       setIsCheckingCreatorAccess(false)
       return
     }
@@ -47,6 +51,7 @@ export function useCreatorAccess({
 
     if (approvedCreatorUserIds.has(checkingUserId)) {
       setApprovedUserId(checkingUserId)
+      setCheckedUserId(checkingUserId)
       setIsCheckingCreatorAccess(false)
       return
     }
@@ -80,6 +85,7 @@ export function useCreatorAccess({
       })
       .finally(() => {
         if (isMounted) {
+          setCheckedUserId(checkingUserId)
           setIsCheckingCreatorAccess(false)
         }
       })
@@ -91,6 +97,7 @@ export function useCreatorAccess({
 
   return {
     isApprovedCreator: Boolean(isLoaded && isSignedIn && user?.id && approvedUserId === user.id),
-    isCheckingCreatorAccess,
+    isCheckingCreatorAccess: Boolean(isLoaded && isSignedIn && user?.id &&
+      (isCheckingCreatorAccess || checkedUserId !== user.id)),
   }
 }

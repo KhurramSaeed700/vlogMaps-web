@@ -5,20 +5,21 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import * as Dialog from "@radix-ui/react-dialog"
 import Image from "next/image"
 import Link from "next/link"
-import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
 import { ArrowLeft, ListVideo, Pencil, RotateCcw, Settings, Share2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SplitViewResizer } from "@/components/ui/split-view-resizer"
+import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
 import { MapboxTravelMap } from "@/components/maps/mapbox-travel-map"
 import { AutoplayCountdown, autoplayCountdownSeconds } from "@/components/media/autoplay-countdown"
 import { YouTubePlayer } from "@/components/media/youtube-player"
-import { NavigationSettingsSection } from "@/components/settings/navigation-settings-section"
+import { WatchVideoSearch } from "@/components/viewer/watch-video-search"
+import { WatchGuidedTour } from "@/components/viewer/watch-guided-tour"
+import { watchTourStartEvent } from "@/lib/watch-tour"
 import { PlaybackSettingsSection } from "@/components/settings/playback-settings-section"
 import { formatDuration, type TravelVideo } from "@/lib/demo-data"
 import { getFlightRouteKeyframes } from "@/lib/flight-path"
 import { getInterpolatedPointAtTime, loadCreatorPoints, type CreatorMapPoint } from "@/lib/creator-points"
 import { loadCreatorRouteShapes, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
-import { useNavigationPreferences } from "@/lib/use-navigation-preferences"
 import { usePlaybackPreferences } from "@/lib/use-playback-preferences"
 import type { HydratedTravelVideo } from "@/lib/youtube-client"
 
@@ -31,6 +32,14 @@ interface WatchExperienceProps {
 
 const watchTimeRenderStepSeconds = 0.25
 const emptyRecommendedVideos: TravelVideo[] = []
+
+function getTimestampScrollTop(container: HTMLDivElement, row: HTMLButtonElement) {
+  // offsetTop may be relative to the video column, not this scroll container.
+  const rowTop = row.getBoundingClientRect().top - container.getBoundingClientRect().top
+    - container.clientTop + container.scrollTop
+  const centeredTop = rowTop + row.offsetHeight / 2 - container.clientHeight / 2
+  return Math.min(Math.max(0, centeredTop), Math.max(0, container.scrollHeight - container.clientHeight))
+}
 
 function getActiveTimestampIndex(points: CreatorMapPoint[], currentTime: number) {
   if (points.length === 0) {
@@ -117,20 +126,18 @@ const WatchTimestampList = memo(function WatchTimestampList({
       return
     }
 
-    const updateCenterPadding = () => {
-      const rowHeight = rowRefs.current.find((row) => row)?.offsetHeight ?? 0
-      const centerPadding = Math.max((scrollContainer.clientHeight - rowHeight) / 2, 0)
-      scrollContainer.style.paddingBlock = `${centerPadding}px`
+    const updateScrollLayout = () => {
+      // Keep list edges compact; native scroll bounds handle the first and last rows.
+      scrollContainer.style.paddingBlock = "6px"
 
       const activeRow = rowRefs.current[activeIndexRef.current]
-      if (activeRow) {
-        scrollContainer.scrollTop =
-          activeRow.offsetTop + activeRow.offsetHeight / 2 - scrollContainer.clientHeight / 2
+      if (activeRow && scrollContainer.clientHeight > 0) {
+        scrollContainer.scrollTop = getTimestampScrollTop(scrollContainer, activeRow)
       }
     }
 
-    updateCenterPadding()
-    const resizeObserver = new ResizeObserver(updateCenterPadding)
+    updateScrollLayout()
+    const resizeObserver = new ResizeObserver(updateScrollLayout)
     resizeObserver.observe(scrollContainer)
 
     return () => resizeObserver.disconnect()
@@ -143,17 +150,17 @@ const WatchTimestampList = memo(function WatchTimestampList({
 
     const scrollContainer = scrollContainerRef.current
     const activeRow = rowRefs.current[activeIndex]
-    if (!scrollContainer || !activeRow) {
+    if (!scrollContainer || !activeRow || scrollContainer.clientHeight === 0) {
       return
     }
 
-    const targetTop = activeRow.offsetTop + activeRow.offsetHeight / 2 - scrollContainer.clientHeight / 2
+    const targetTop = getTimestampScrollTop(scrollContainer, activeRow)
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
     scrollContainer.scrollTo({
       top: targetTop,
       behavior: prefersReducedMotion ? "auto" : "smooth",
     })
-  }, [activeIndex])
+  }, [activeIndex, points])
 
   return (
     <section
@@ -330,6 +337,22 @@ export function WatchExperience({
   const [isPlaying, setIsPlaying] = useState(false)
   const [isPlayerReady, setIsPlayerReady] = useState(false)
   const [autoplayCountdown, setAutoplayCountdown] = useState<number | null>(autoplayCountdownSeconds)
+  const [isWatchTourOpen, setIsWatchTourOpen] = useState(false)
+  const watchTourOpenRef = useRef(false)
+  const playbackBeforeTourRef = useRef(false)
+  const playbackIntentRef = useRef(false)
+  playbackIntentRef.current = isPlaying
+  const handleWatchTourOpenChange = useCallback((open: boolean) => {
+    if (open === watchTourOpenRef.current) return
+    watchTourOpenRef.current = open
+    setIsWatchTourOpen(open)
+    if (open) {
+      playbackBeforeTourRef.current = playbackIntentRef.current
+      setIsPlaying(false)
+    } else if (playbackBeforeTourRef.current) {
+      setIsPlaying(true)
+    }
+  }, [])
   const [hasEnded, setHasEnded] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [activeTimestampIndex, setActiveTimestampIndex] = useState(() => getActiveTimestampIndex(routePoints, 0))
@@ -337,8 +360,6 @@ export function WatchExperience({
   const [isSharing, setIsSharing] = useState(false)
   const [isMobileTimestampsOpen, setIsMobileTimestampsOpen] = useState(false)
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null)
-  const { preferences: navigationPreferences, updatePreferences: updateNavigationPreferences } =
-    useNavigationPreferences()
   const { preferences: playbackPreferences, updatePreferences: updatePlaybackPreferences } =
     usePlaybackPreferences()
   const handleVolumeChange = useCallback((volume: number) => {
@@ -368,7 +389,7 @@ export function WatchExperience({
   }, [video.youtubeId])
 
   useEffect(() => {
-    if (autoplayCountdown === null || !isPlayerReady) {
+    if (autoplayCountdown === null || !isPlayerReady || isWatchTourOpen) {
       return
     }
 
@@ -383,7 +404,7 @@ export function WatchExperience({
     }, 1000)
 
     return () => window.clearTimeout(timer)
-  }, [autoplayCountdown, isPlayerReady])
+  }, [autoplayCountdown, isPlayerReady, isWatchTourOpen])
 
   const commitCurrentTime = useCallback((time: number, force = false) => {
     if (!Number.isFinite(time)) {
@@ -439,6 +460,7 @@ export function WatchExperience({
   }, [commitCurrentTime])
 
   const handlePlayingChange = useCallback((nextIsPlaying: boolean) => {
+    if (watchTourOpenRef.current && nextIsPlaying) return
     if (nextIsPlaying) {
       setAutoplayCountdown(null)
     }
@@ -520,8 +542,8 @@ export function WatchExperience({
   return (
     <div ref={wrapperRef} className="flex h-[100dvh] flex-col overflow-y-auto bg-black text-white lg:overflow-hidden">
       <header className="sticky top-0 z-50 shrink-0 bg-black/75 p-1.5 backdrop-blur-sm sm:p-2 lg:relative">
-        <div className="flex w-full items-center justify-between gap-3">
-          <div className="flex items-center">
+        <div className="flex w-full flex-wrap items-center justify-between gap-2 sm:flex-nowrap sm:gap-3">
+          <div className="flex shrink-0 items-center">
             <Link href="/">
               <Button
                 variant="ghost"
@@ -532,12 +554,14 @@ export function WatchExperience({
                 <ArrowLeft className="h-5 w-5" />
               </Button>
             </Link>
-            <span className="ml-1.5 rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/70 sm:ml-2 sm:px-2.5 sm:py-1 sm:text-[11px]">
+            <span className="ml-1.5 hidden rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/70 sm:ml-2 sm:inline-flex sm:px-2.5 sm:py-1 sm:text-[11px]">
               Watch Page
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          <WatchVideoSearch key={video.id} />
+
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             <Dialog.Root open={isMobileTimestampsOpen} onOpenChange={setIsMobileTimestampsOpen}>
               <Dialog.Trigger asChild>
                 <Button
@@ -586,8 +610,8 @@ export function WatchExperience({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label="Open navigation settings"
-                  title="Navigation settings"
+                  aria-label="Open playback settings"
+                  title="Playback settings"
                   className="h-9 w-9 text-white hover:bg-white/20 sm:h-10 sm:w-10 [&_svg]:size-5"
                 >
                   <Settings className="h-5 w-5" />
@@ -600,15 +624,14 @@ export function WatchExperience({
                   className="z-[70] max-h-[calc(100dvh-4rem)] w-[min(calc(100vw-2rem),20rem)] overflow-y-auto rounded-lg border border-white/15 bg-slate-950 p-2 text-white shadow-2xl"
                 >
                   <div className="px-2.5 pb-2 pt-1">
-                    <p className="text-sm font-semibold text-white">Navigation settings</p>
-                    <p className="mt-0.5 text-xs text-white/55">Control how the map returns to your journey.</p>
+                    <p className="text-sm font-semibold text-white">Playback settings</p>
                   </div>
-                  <NavigationSettingsSection
-                    preferences={navigationPreferences}
-                    onChange={updateNavigationPreferences}
-                    tone="dark"
-                  />
-                  <DropdownMenu.Separator className="my-2 h-px bg-white/10" />
+                  <DropdownMenu.Item
+                    className="mb-2 cursor-pointer rounded-md px-2.5 py-2 text-sm outline-none focus:bg-white/10"
+                    onSelect={() => window.setTimeout(() => window.dispatchEvent(new Event(watchTourStartEvent)), 0)}
+                  >
+                    Show watch-page tour
+                  </DropdownMenu.Item>
                   <PlaybackSettingsSection
                     preferences={playbackPreferences}
                     onChange={updatePlaybackPreferences}
@@ -652,7 +675,7 @@ export function WatchExperience({
         } as CSSProperties}
       >
         <div className="contents lg:relative lg:z-10 lg:flex lg:min-h-0 lg:h-full lg:shrink-0 lg:flex-col lg:overflow-hidden lg:bg-black">
-          <div className="relative order-1 aspect-video w-full shrink-0 overflow-hidden bg-gray-950 lg:order-none">
+          <div data-watch-tour="player" className="relative order-1 aspect-video w-full shrink-0 overflow-hidden bg-gray-950 lg:order-none">
             <YouTubePlayer
               videoId={video.youtubeId}
               currentTime={currentTime}
@@ -669,7 +692,7 @@ export function WatchExperience({
               onVolumeChange={handleVolumeChange}
               onEnded={handleVideoEnded}
             />
-            <AutoplayCountdown seconds={isPlayerReady ? autoplayCountdown : null} />
+            <AutoplayCountdown seconds={isPlayerReady && !isWatchTourOpen ? autoplayCountdown : null} />
             {hasEnded ? (
               <WatchRecommendations videos={recommendedVideos} onReplay={replayVideo} />
             ) : null}
@@ -682,7 +705,7 @@ export function WatchExperience({
           />
         </div>
 
-        <div className="relative z-0 order-2 h-[calc(100dvh-3rem-56.25vw)] min-h-[20rem] shrink-0 overflow-hidden sm:h-[calc(100dvh-3.5rem-56.25vw)] lg:order-none lg:h-full lg:min-h-0 lg:flex-1">
+        <div data-watch-tour="map" className="relative z-0 order-2 h-[calc(100dvh-6.5rem-56.25vw)] min-h-[20rem] shrink-0 overflow-hidden sm:h-[calc(100dvh-3.5rem-56.25vw)] lg:order-none lg:h-full lg:min-h-0 lg:flex-1">
           <MapboxTravelMap
             keyframes={mapRoutePoints}
             markerKeyframes={routePoints}
@@ -692,8 +715,6 @@ export function WatchExperience({
             isPlaying={isPlaying}
             isJourneyComplete={hasEnded}
             followZoomPreferenceKey={video.id}
-            autoResumeTracking={navigationPreferences.autoResumeTracking}
-            trackingResumeDelayMs={navigationPreferences.resumeDelaySeconds * 1000}
             onLocationClick={(keyframe) => jumpToKeyframe(keyframe.time)}
             className="h-full w-full"
           />
@@ -708,6 +729,7 @@ export function WatchExperience({
           className="hidden lg:flex [&>span:first-child]:opacity-40 [&>span:last-child]:opacity-100"
         />
       </div>
+      <WatchGuidedTour enabled={isPlayerReady} canEdit={Boolean(viewerCanEdit && editHref)} onOpenChange={handleWatchTourOpenChange} />
     </div>
   )
 }

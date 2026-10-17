@@ -71,8 +71,6 @@ interface MapboxTravelMapProps {
   isPlaying?: boolean
   isJourneyComplete?: boolean
   followZoomPreferenceKey?: string
-  autoResumeTracking?: boolean
-  trackingResumeDelayMs?: number
   onLocationClick?: (keyframe: Keyframe) => void
   className?: string
 }
@@ -208,7 +206,6 @@ const cameraZoomOutSmoothingMs = sharedMapNavigationMotion.zoomOutMs
 const cameraZoomInSmoothingMs = sharedMapNavigationMotion.zoomInMs
 const cameraZoomCatchUpSmoothingMs = sharedMapNavigationMotion.zoomCatchUpMs
 const cameraZoomDeadband = 0.08
-const manualCameraOverrideDurationMs = 6500
 const visualPlaybackExtrapolationMaxSeconds = 0.24
 const visualPlaybackNormalSmoothingMs = 170
 const visualPlaybackCatchUpSmoothingMs = 85
@@ -2309,8 +2306,6 @@ export function MapboxTravelMap({
   isPlaying = true,
   isJourneyComplete = false,
   followZoomPreferenceKey,
-  autoResumeTracking = true,
-  trackingResumeDelayMs = manualCameraOverrideDurationMs,
   onLocationClick,
   className = "w-full h-full",
 }: MapboxTravelMapProps) {
@@ -2386,10 +2381,6 @@ export function MapboxTravelMap({
   const hasFocusedCurrentLocationRef = useRef(false)
   const isFollowingRef = useRef(true)
   const isTrackingEnabledRef = useRef(true)
-  const isManualCameraOverrideRef = useRef(false)
-  const manualFollowResumeTimerRef = useRef<number | null>(null)
-  const autoResumeTrackingRef = useRef(autoResumeTracking)
-  const trackingResumeDelayMsRef = useRef(trackingResumeDelayMs)
   const appliedMapStyleRef = useRef<MapStyleOptionId>("streets")
   const isProgrammaticCameraMoveRef = useRef(false)
   const programmaticCameraMoveTimeoutRef = useRef<number | null>(null)
@@ -2551,7 +2542,7 @@ export function MapboxTravelMap({
   }
 
   const rememberFollowZoomFromMap = (map: mapboxgl.Map) => {
-    if ((!isFollowingRef.current && !isManualCameraOverrideRef.current) || !canUpdateCamera(map)) {
+    if ((!isFollowingRef.current && !isUserZoomingWhileFollowingRef.current) || !canUpdateCamera(map)) {
       return false
     }
 
@@ -2593,17 +2584,6 @@ export function MapboxTravelMap({
       window.queueMicrotask(() => {
         isAutomatedCameraUpdateRef.current = false
       })
-    }
-  }
-
-  const clearManualFollowResume = (clearOverride = true) => {
-    if (manualFollowResumeTimerRef.current !== null) {
-      window.clearTimeout(manualFollowResumeTimerRef.current)
-      manualFollowResumeTimerRef.current = null
-    }
-
-    if (clearOverride) {
-      isManualCameraOverrideRef.current = false
     }
   }
 
@@ -2732,96 +2712,22 @@ export function MapboxTravelMap({
     )
   }
 
-  const resumeFollowFromManualOverride = () => {
-    const map = mapInstanceRef.current
-    if (
-      !map ||
-      !hasUsableMapSize(map) ||
-      !autoResumeTrackingRef.current ||
-      !isTrackingEnabledRef.current ||
-      !isManualCameraOverrideRef.current
-    ) {
-      clearManualFollowResume()
-      return
-    }
-
-    clearManualFollowResume()
-    isFollowingRef.current = true
-    updateTrackingEnabled(true)
-
-    const currentCenter = map.getCenter()
-    animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
-    animatedCameraZoomRef.current = map.getZoom()
-    const routeTime = animatedRouteTimeRef.current || targetRouteTimeRef.current
-    const routeCoordinate = animatedRouteCoordinateRef.current ?? liveRouteCoordinateRef.current
-    updateFollowCameraTarget(map, routeTime, routeCoordinate, map.getZoom())
-    visualCatchUpUntilRef.current = window.performance.now() + visualCatchUpDurationMs
-    startMarkerAnimation()
-  }
-
-  const scheduleManualFollowResume = () => {
-    if (
-      !autoResumeTrackingRef.current ||
-      !isTrackingEnabledRef.current ||
-      !isManualCameraOverrideRef.current
-    ) {
-      return
-    }
-
-    clearManualFollowResume(false)
-    manualFollowResumeTimerRef.current = window.setTimeout(
-      resumeFollowFromManualOverride,
-      trackingResumeDelayMsRef.current,
-    )
-  }
-
   const suspendFollowForManualInteraction = (map: mapboxgl.Map) => {
-    if (
-      !isTrackingEnabledRef.current &&
-      !isFollowingRef.current &&
-      !isManualCameraOverrideRef.current
-    ) {
+    if (!isTrackingEnabledRef.current && !isFollowingRef.current) {
       return
     }
 
-    const didCancelRouteIntroAutoStart = cancelRouteIntroAutoStart()
-    clearManualFollowResume(false)
+    cancelRouteIntroAutoStart()
     clearRouteIntroAnimation()
     clearTrackingLoading()
     clearProgrammaticCameraMove()
-    const shouldAutoResume =
-      !didCancelRouteIntroAutoStart &&
-      autoResumeTrackingRef.current &&
-      isTrackingEnabledRef.current
-    isManualCameraOverrideRef.current = shouldAutoResume
     isFollowingRef.current = false
-    if (!shouldAutoResume) {
-      updateTrackingEnabled(false)
-    }
+    updateTrackingEnabled(false)
 
     const currentCenter = map.getCenter()
     animatedCameraCenterRef.current = [currentCenter.lng, currentCenter.lat]
     animatedCameraZoomRef.current = map.getZoom()
-
   }
-
-  useEffect(() => {
-    autoResumeTrackingRef.current = autoResumeTracking
-    trackingResumeDelayMsRef.current = Math.max(1000, trackingResumeDelayMs)
-
-    if (!isManualCameraOverrideRef.current) {
-      return
-    }
-
-    if (!autoResumeTracking) {
-      clearManualFollowResume()
-      isFollowingRef.current = false
-      updateTrackingEnabled(false)
-      return
-    }
-
-    scheduleManualFollowResume()
-  }, [autoResumeTracking, trackingResumeDelayMs])
 
   useEffect(() => {
     onLocationClickRef.current = onLocationClick
@@ -2992,7 +2898,6 @@ export function MapboxTravelMap({
     clearRouteIntroAnimation(routeIntroDismissedRef.current)
     routeIntroAutoStartCancelledRef.current = false
     setIsRouteIntroAutoStartCancelled(false)
-    clearManualFollowResume()
     clearKeyframeMarkers()
     previousPlaybackTimeRef.current = null
     previousPlaybackUpdatedAtRef.current = null
@@ -4276,7 +4181,6 @@ export function MapboxTravelMap({
       return
     }
 
-    clearManualFollowResume()
     clearRouteIntroAnimation()
     clearTrackingLoading()
     stopMarkerAnimation()
@@ -4481,19 +4385,11 @@ export function MapboxTravelMap({
       }
     }
 
-    const handleUserMapInteractionEnd = () => {
-      scheduleManualFollowResume()
-    }
-
     const handleUserMapPointerDown = () => {
       const didCancelRouteIntro = cancelRouteIntroAutoStart()
       if (!didCancelRouteIntro && isTrackingEnabledRef.current) {
         suspendFollowForManualInteraction(map)
       }
-    }
-
-    const handleUserMapPointerUp = () => {
-      scheduleManualFollowResume()
     }
 
     const handleUserMapWheel = () => {
@@ -4530,7 +4426,6 @@ export function MapboxTravelMap({
       scheduleViewportMarkerRefresh(map, true)
       if (isUserZoomingWhileFollowingRef.current) {
         rememberFollowZoomFromMap(map)
-        scheduleManualFollowResume()
       }
       isUserZoomingWhileFollowingRef.current = false
     }
@@ -4606,14 +4501,9 @@ export function MapboxTravelMap({
     map.on("load", handleInitialLoad)
     map.on("style.load", handleStyleLoad)
     map.on("dragstart", handleUserMapDrag)
-    map.on("dragend", handleUserMapInteractionEnd)
     map.on("rotatestart", handleUserMapDrag)
-    map.on("rotateend", handleUserMapInteractionEnd)
     map.on("pitchstart", handleUserMapDrag)
-    map.on("pitchend", handleUserMapInteractionEnd)
     map.getCanvas().addEventListener("pointerdown", handleUserMapPointerDown)
-    map.getCanvas().addEventListener("pointerup", handleUserMapPointerUp)
-    map.getCanvas().addEventListener("pointercancel", handleUserMapPointerUp)
     map.getCanvas().addEventListener("wheel", handleUserMapWheel, { passive: true })
     map.on("zoomstart", handleMapZoomStart)
     map.on("move", handleMapMove)
@@ -4624,7 +4514,6 @@ export function MapboxTravelMap({
       stopMarkerAnimation()
       cancelViewportMarkerRefresh()
       clearRouteIntroAnimation(routeIntroDismissedRef.current)
-      clearManualFollowResume()
       clearTrackingLoading(false)
       clearProgrammaticCameraMove()
       destroyRoutePreloader()
@@ -4633,14 +4522,9 @@ export function MapboxTravelMap({
       map.off("load", handleInitialLoad)
       map.off("style.load", handleStyleLoad)
       map.off("dragstart", handleUserMapDrag)
-      map.off("dragend", handleUserMapInteractionEnd)
       map.off("rotatestart", handleUserMapDrag)
-      map.off("rotateend", handleUserMapInteractionEnd)
       map.off("pitchstart", handleUserMapDrag)
-      map.off("pitchend", handleUserMapInteractionEnd)
       map.getCanvas().removeEventListener("pointerdown", handleUserMapPointerDown)
-      map.getCanvas().removeEventListener("pointerup", handleUserMapPointerUp)
-      map.getCanvas().removeEventListener("pointercancel", handleUserMapPointerUp)
       map.getCanvas().removeEventListener("wheel", handleUserMapWheel)
       map.off("zoomstart", handleMapZoomStart)
       map.off("move", handleMapMove)
@@ -5333,7 +5217,6 @@ export function MapboxTravelMap({
     }
 
     clearTrackingLoading()
-    clearManualFollowResume()
     clearRouteIntroAnimation()
     isFollowingRef.current = false
     updateTrackingEnabled(false)
@@ -5411,7 +5294,6 @@ export function MapboxTravelMap({
       return
     }
 
-    clearManualFollowResume()
     clearRouteIntroAnimation()
     const followTime = Number.isFinite(animatedRouteTimeRef.current)
       ? animatedRouteTimeRef.current
@@ -5447,7 +5329,6 @@ export function MapboxTravelMap({
 
   const toggleTravelerTracking = () => {
     if (isTrackingEnabledRef.current) {
-      clearManualFollowResume()
       clearRouteIntroAnimation()
       clearTrackingLoading()
       isFollowingRef.current = false
@@ -5460,7 +5341,6 @@ export function MapboxTravelMap({
 
   const fitToRoute = () => {
     if (mapInstanceRef.current) {
-      clearManualFollowResume()
       clearRouteIntroAnimation()
       clearTrackingLoading()
       isFollowingRef.current = false

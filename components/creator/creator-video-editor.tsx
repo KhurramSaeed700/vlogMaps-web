@@ -2,8 +2,8 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { createPortal } from "react-dom"
-import Link from "next/link"
 import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
+import Link from "next/link"
 import { useTheme } from "next-themes"
 import * as Dialog from "@radix-ui/react-dialog"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
@@ -17,6 +17,8 @@ import { SplitViewResizer } from "@/components/ui/split-view-resizer"
 import { MapboxLocationPicker } from "@/components/maps/mapbox-location-picker"
 import { YouTubePlayer } from "@/components/media/youtube-player"
 import { AutoplayCountdown, autoplayCountdownSeconds } from "@/components/media/autoplay-countdown"
+import { EditorGuidedTour } from "@/components/creator/editor-guided-tour"
+import { editorTourStartEvent } from "@/lib/editor-tour"
 import { PlaybackSettingsSection } from "@/components/settings/playback-settings-section"
 import { getAirportCodeLocation, registerAirportCodeLocation } from "@/lib/airport-codes"
 import { AirportSearchInput } from "@/components/creator/airport-search-input"
@@ -579,6 +581,28 @@ export function CreatorVideoEditor({
   const [currentTime, setCurrentTime] = useState(0)
   const [seekRequest, setSeekRequest] = useState<{ id: number; time: number } | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isEditorTourOpen, setIsEditorTourOpen] = useState(false)
+  const editorTourOpenRef = useRef(false)
+  const playbackIntentRef = useRef(false)
+  const playbackBeforeTourRef = useRef(false)
+  const scrollBeforeTourRef = useRef({ windowTop: 0, panelTop: 0 })
+  playbackIntentRef.current = isPlaying
+  const handleEditorTourOpenChange = useCallback((open: boolean) => {
+    if (open === editorTourOpenRef.current) return
+    editorTourOpenRef.current = open
+    setIsEditorTourOpen(open)
+    if (open) {
+      playbackBeforeTourRef.current = playbackIntentRef.current
+      scrollBeforeTourRef.current = { windowTop: window.scrollY, panelTop: editorScrollRef.current?.scrollTop ?? 0 }
+      setIsPlaying(false)
+    } else {
+      if (playbackBeforeTourRef.current) setIsPlaying(true)
+      window.requestAnimationFrame(() => {
+        editorScrollRef.current?.scrollTo({ top: scrollBeforeTourRef.current.panelTop, behavior: "instant" })
+        window.scrollTo({ top: scrollBeforeTourRef.current.windowTop, behavior: "instant" })
+      })
+    }
+  }, [])
   const [resumeCountdown, setResumeCountdown] = useState<number | null>(resumeAutoplayDelaySeconds)
   const [draftPoint, setDraftPoint] = useState<DraftPoint | null>(null)
   const [draftFlightLandingPoint, setDraftFlightLandingPoint] = useState<DraftPoint | null>(null)
@@ -670,6 +694,7 @@ export function CreatorVideoEditor({
   }, [])
 
   const handleEditorPlayingChange = useCallback((nextIsPlaying: boolean) => {
+    if (editorTourOpenRef.current && nextIsPlaying) return
     if (nextIsPlaying) {
       setResumeCountdown(null)
     }
@@ -823,7 +848,7 @@ export function CreatorVideoEditor({
   }, [replaceDocument, saveAutosavedState, schedulePendingSave, video.id, video.keyframes])
 
   useEffect(() => {
-    if (resumeCountdown === null) {
+    if (resumeCountdown === null || isEditorTourOpen) {
       return
     }
 
@@ -846,7 +871,7 @@ export function CreatorVideoEditor({
     }, 1000)
 
     return () => window.clearTimeout(timer)
-  }, [resumeCountdown])
+  }, [resumeCountdown, isEditorTourOpen])
 
   useEffect(() => {
     const scrollContainer = editorScrollRef.current
@@ -2396,6 +2421,7 @@ export function CreatorVideoEditor({
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (editorTourOpenRef.current) return
       const shortcutState = editorShortcutStateRef.current
       if (!shortcutState) {
         return
@@ -3174,6 +3200,12 @@ export function CreatorVideoEditor({
                         <p className="mt-0.5 text-xs text-muted-foreground">Control playback and appearance.</p>
                       </div>
                       <div className="px-2.5 py-2"><ReportProblemButton /></div>
+                      <DropdownMenu.Item
+                        className="mb-2 cursor-pointer rounded-md px-2.5 py-2 text-sm outline-none focus:bg-accent"
+                        onSelect={() => window.setTimeout(() => window.dispatchEvent(new Event(editorTourStartEvent)), 0)}
+                      >
+                        Show editor tutorial
+                      </DropdownMenu.Item>
                       <PlaybackSettingsSection
                         preferences={playbackPreferences}
                         onChange={updatePlaybackPreferences}
@@ -3410,6 +3442,7 @@ export function CreatorVideoEditor({
         className="relative flex min-h-0 min-w-0 flex-col overflow-y-auto border-b border-slate-200 xl:h-full xl:border-b-0 xl:border-r"
       >
         <div
+          data-editor-tour="player"
           ref={videoPreviewRef}
           className="relative aspect-video w-full shrink-0 overflow-hidden bg-black [&_iframe]:absolute [&_iframe]:inset-0"
         >
@@ -3431,7 +3464,7 @@ export function CreatorVideoEditor({
             onPlayingChange={handleEditorPlayingChange}
             onVolumeChange={handleVolumeChange}
           />
-          <AutoplayCountdown seconds={resumeCountdown} />
+          <AutoplayCountdown seconds={isEditorTourOpen ? null : resumeCountdown} />
         </div>
 
         {uploadMessage && (
@@ -3448,7 +3481,7 @@ export function CreatorVideoEditor({
 
         <div className="flex flex-col">
           <div className="p-3 lg:p-4">
-            <section className="space-y-2">
+            <section data-editor-tour="capture" className="space-y-2">
               <div className="grid grid-cols-[repeat(3,minmax(0,1fr))_auto] gap-2">
                 <Button
                   size="sm"
@@ -3460,6 +3493,8 @@ export function CreatorVideoEditor({
                   disabled={Boolean(pendingFlightTakeoff) || Boolean(flightAirportPrompt) || isPlacingPoint || isPlacingSavedPlace}
                   onClick={() => addTimestampPoint("point")}
                   aria-pressed={isPlacingPoint}
+                  data-editor-tour="point"
+                  aria-keyshortcuts="Q"
                   aria-label={isPlacingPoint ? "Point ready for map placement" : "Add point"}
                   title={isPlacingPoint ? "Click the map to place this point" : "Add a point at the current video time"}
                 >
@@ -3469,7 +3504,7 @@ export function CreatorVideoEditor({
                     <MapPin className="mr-2 h-4 w-4" />
                   )}
                   <span className="truncate">{isPlacingPoint ? "Place Point" : "Point"}</span>
-                  <kbd className="ml-1 hidden text-[10px] font-medium leading-none text-white/55 sm:inline">[Q]</kbd>
+                  <kbd className="ml-1 shrink-0 text-[10px] font-medium leading-none text-white/55">[Q]</kbd>
                 </Button>
                 <Button
                   size="sm"
@@ -3498,6 +3533,8 @@ export function CreatorVideoEditor({
                           ? "End the stop at the current video time"
                           : "Start recording a stop"
                   }
+                  data-editor-tour="stop"
+                  aria-keyshortcuts="W"
                   onClick={isRecordingStop ? setStopEndTime : startStopRecording}
                   aria-pressed={isRecordingStop}
                   aria-label={
@@ -3516,7 +3553,7 @@ export function CreatorVideoEditor({
                         : "End Stop"
                       : "Stop"}
                   </span>
-                  <kbd className="ml-1 hidden text-[10px] font-medium leading-none text-white/55 sm:inline">[W]</kbd>
+                  <kbd className="ml-1 shrink-0 text-[10px] font-medium leading-none text-white/55">[W]</kbd>
                 </Button>
                 <Button
                   type="button"
@@ -3527,6 +3564,8 @@ export function CreatorVideoEditor({
                       : "border-transparent bg-sky-600 hover:bg-sky-700"
                   }`}
                   disabled={Boolean(draftPoint) || isRecordingStop || isResolvingAirportCode || Boolean(flightAirportPrompt) || isPlacingSavedPlace}
+                  data-editor-tour="flight"
+                  aria-keyshortcuts="E"
                   onClick={startFlightPoint}
                   aria-pressed={isCapturingFlight}
                   aria-label={pendingFlightTakeoff ? "Record flight landing" : flightAirportPrompt ? `Set flight ${flightAirportPrompt.role}` : "Record flight takeoff"}
@@ -3546,17 +3585,19 @@ export function CreatorVideoEditor({
                           ? "Set Takeoff"
                           : "Flight"}
                   </span>
-                  <kbd className="ml-1 hidden text-[10px] font-medium leading-none text-white/60 sm:inline">[E]</kbd>
+                  <kbd className="ml-1 shrink-0 text-[10px] font-medium leading-none text-white/60">[E]</kbd>
                 </Button>
-                <LandmarkSearchButton
-                  previewRef={videoPreviewRef}
-                  mapOverlayRef={landmarkMapOverlayRef}
-                  onPause={() => { setResumeCountdown(null); setIsPlaying(false) }}
-                  onDetected={(result) => {
-                    setLandmarkSearchResult({ ...result, requestId: Date.now() })
-                    setSaveMessage(`Searching the map for ${result.name}. Check the orange marker before adding a timestamp.`)
-                  }}
-                />
+                <span data-editor-tour="landmark" className="inline-flex">
+                  <LandmarkSearchButton
+                    previewRef={videoPreviewRef}
+                    mapOverlayRef={landmarkMapOverlayRef}
+                    onPause={() => { setResumeCountdown(null); setIsPlaying(false) }}
+                    onDetected={(result) => {
+                      setLandmarkSearchResult({ ...result, requestId: Date.now() })
+                      setSaveMessage(`Searching the map for ${result.name}. Check the orange marker before adding a timestamp.`)
+                    }}
+                  />
+                </span>
               </div>
               {renderFlightCapturePanel()}
               {isPlacingSavedPlace ? (
@@ -3646,7 +3687,7 @@ export function CreatorVideoEditor({
             </section>
 
             <section className="mt-3 space-y-2 border-t border-slate-200 pt-4 dark:border-white/10">
-              <div className="flex items-center justify-between">
+              <div data-editor-tour="timestamps" className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-semibold text-slate-950 dark:text-zinc-100">Timestamps</h2>
                   <Badge variant="secondary">{displayedRows.length}</Badge>
@@ -3666,7 +3707,7 @@ export function CreatorVideoEditor({
                   </Button>
                   <Dialog.Root open={isTripRouteDialogOpen} onOpenChange={setIsTripRouteDialogOpen}>
                     <Dialog.Trigger asChild>
-                      <Button variant="ghost" size="sm">
+                      <Button data-editor-tour="trip-route" variant="ghost" size="sm">
                         <ArrowLeftRight className="mr-2 h-4 w-4" />
                         Trip route
                       </Button>
@@ -3727,7 +3768,7 @@ export function CreatorVideoEditor({
                     </Dialog.Portal>
                   </Dialog.Root>
                   <Button variant="ghost" size="sm" asChild>
-                    <Link href={`/watch/${video.id}`}>
+                    <Link data-editor-tour="preview" href={`/watch/${video.id}`}>
                       <MapPin className="mr-2 h-4 w-4" />
                       Preview
                     </Link>
@@ -3945,7 +3986,7 @@ export function CreatorVideoEditor({
         )}
       </section>
 
-      <section ref={landmarkMapOverlayRef} className="relative min-h-[620px] min-w-0 overflow-hidden bg-slate-100 xl:h-full xl:min-h-0">
+      <section data-editor-tour="map" ref={landmarkMapOverlayRef} className="relative min-h-[620px] min-w-0 overflow-hidden bg-slate-100 xl:h-full xl:min-h-0">
         <MapboxLocationPicker
           landmarkSearchResult={landmarkSearchResult}
           value={
@@ -4013,6 +4054,10 @@ export function CreatorVideoEditor({
         className="hidden xl:flex"
       />
       </div>
+      <EditorGuidedTour
+        enabled={!isLoadingSavedState && isThemeMounted && Boolean(headerActionsElement)}
+        onOpenChange={handleEditorTourOpenChange}
+      />
     </>
   )
 }

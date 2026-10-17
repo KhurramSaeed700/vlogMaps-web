@@ -32,20 +32,20 @@ deps.isPlayingRef.current = true
 events.onReady({ target: player })
 assert.deepEqual(calls, ['play'], 'late readiness honors countdown playback intent')
 const watch = fs.readFileSync(require('node:path').join(__dirname, '../components/viewer/watch-experience.tsx'), 'utf8')
-const countdownBody = watch.slice(watch.indexOf('    if (autoplayCountdown === null || !isPlayerReady)'), watch.indexOf('  }, [autoplayCountdown, isPlayerReady])'))
+const countdownBody = watch.slice(watch.indexOf('    if (autoplayCountdown === null || !isPlayerReady || isWatchTourOpen)'), watch.indexOf('  }, [autoplayCountdown, isPlayerReady, isWatchTourOpen])'))
 const countdownCode = ts.transpileModule(`const effect = () => {${countdownBody}}`, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
-for (const ready of [false, true]) {
+for (const ready of [false, true]) for (const touring of [false, true]) {
   const countdownCalls = []
   let tick
   const countdownDeps = {
-    autoplayCountdown: 1, isPlayerReady: ready,
+    autoplayCountdown: 1, isPlayerReady: ready, isWatchTourOpen: touring,
     window: { setTimeout(fn) { tick = fn; return 1 }, clearTimeout: noop },
     setAutoplayCountdown: value => countdownCalls.push(['countdown', value]),
     setIsPlaying: value => countdownCalls.push(['playing', value]),
   }
   new Function(...Object.keys(countdownDeps), countdownCode + ';return effect')(...Object.values(countdownDeps))()
-  assert.equal(Boolean(tick), ready, 'countdown waits for the ready player')
+  assert.equal(Boolean(tick), ready && !touring, 'countdown waits for the ready player')
   if (tick) tick()
-  assert.deepEqual(countdownCalls, ready ? [['countdown', null], ['playing', true]] : [], 'countdown completion starts playback')
+  assert.deepEqual(countdownCalls, ready && !touring ? [['countdown', null], ['playing', true]] : [], 'countdown completion starts playback')
 }
 console.log('YouTube autoplay passed: muted retry, bounded retries, paused intent, and late player readiness.')

@@ -10,6 +10,7 @@ import {
   type PreferenceId,
 } from "@/components/home/home-preferences"
 import { HomeVideoGrid } from "@/components/home/video-grid"
+import { HomeGuidedTour } from "@/components/home/home-guided-tour"
 import { fetchPublishedCloudVideos } from "@/lib/creator-videos-cloud-client"
 import { createInstantWatchVideo } from "@/lib/creator-videos"
 import type { TravelVideo } from "@/lib/demo-data"
@@ -64,6 +65,7 @@ function dedupeVideosByYouTubeId<T extends TravelVideo>(videos: T[]) {
 export default function HomePage({ initialVideos }: HomePageProps) {
   const router = useRouter()
   const [youtubeUrl, setYoutubeUrl] = useState("")
+  const [isHeaderReady, setIsHeaderReady] = useState(false)
   const [selectedPreference, setSelectedPreference] = useState<PreferenceId>("all")
   const [catalogVideos, setCatalogVideos] = useState<HydratedTravelVideo[]>(
     () => toResolvedFallbackVideos(initialVideos ?? []),
@@ -161,6 +163,7 @@ export default function HomePage({ initialVideos }: HomePageProps) {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <HomeHeader
+        onReadyChange={setIsHeaderReady}
         isPending={isPending}
         launcherError={launcherError}
         selectedPreference={selectedPreference}
@@ -186,6 +189,7 @@ export default function HomePage({ initialVideos }: HomePageProps) {
 
         <HomeVideoGrid isCatalogLoading={isCatalogLoading} videos={videos} />
       </main>
+      <HomeGuidedTour enabled={isHeaderReady && !isCatalogLoading && videos.length > 0} />
     </div>
   )
 }

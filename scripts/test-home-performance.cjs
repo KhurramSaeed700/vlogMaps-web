@@ -42,6 +42,7 @@ async function main() {
     'lucide-react': { Loader2: 'loader' },
     '@/components/home/home-header': { HomeHeader: 'header' },
     '@/components/home/video-grid': { HomeVideoGrid: 'grid' },
+    '@/components/home/home-guided-tour': { HomeGuidedTour: 'tour' },
     '@/components/home/home-preferences': { getSavedPreference() {}, saveSelectedPreference() {} },
     '@/lib/creator-videos-cloud-client': { fetchPublishedCloudVideos() { throw new Error('No fetch during render') } },
     '@/lib/creator-videos': { createInstantWatchVideo() {} },
@@ -52,6 +53,7 @@ async function main() {
   assert.equal(grid.props.isCatalogLoading, false)
   assert.equal(grid.props.videos[0].title, 'Trip', 'Cards must exist before effects/hydration')
   assert.equal(grid.props.videos[0].isMetadataLoading, false)
+  assert.equal(nodes.find(node => node.type === 'tour').props.enabled, false, 'Tutorial also waits for the complete navbar')
 
   const cards = load('components/home/video-grid.tsx', {
     'react/jsx-runtime': runtime,

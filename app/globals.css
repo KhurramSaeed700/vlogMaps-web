@@ -179,3 +179,48 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+/* Tutorial miniatures animate only while the tour portal is mounted. */
+.tour-demo-route {
+  stroke-dasharray: 280;
+  animation: tour-route-draw 5s ease-in-out infinite;
+}
+.tour-demo-traveler {
+  offset-path: path("M24 102 Q62 102 76 69 T130 62 T198 24");
+  animation: tour-travel 5s ease-in-out infinite;
+}
+.tour-demo-progress { animation: tour-progress 5s ease-in-out infinite; }
+.tour-demo-volume { animation: tour-volume 5s ease-in-out infinite; }
+.tour-demo-selected { animation: tour-selection 5s ease-in-out infinite; }
+.tour-demo-key { animation: tour-key-press 5s ease-in-out infinite; }
+.tour-demo-caret { animation: tour-caret 1s step-end infinite; }
+@keyframes tour-route-draw {
+  0%, 10% { stroke-dashoffset: 280; }
+  75%, 100% { stroke-dashoffset: 0; }
+}
+@keyframes tour-travel {
+  0%, 10% { offset-distance: 0%; }
+  75%, 100% { offset-distance: 100%; }
+}
+@keyframes tour-progress {
+  0%, 10% { width: 12%; }
+  75%, 100% { width: 84%; }
+}
+@keyframes tour-volume {
+  0%, 15%, 100% { width: 35%; }
+  50%, 80% { width: 65%; }
+}
+@keyframes tour-selection {
+  0%, 20%, 100% { opacity: 0.65; }
+  35%, 85% { opacity: 1; }
+}
+@keyframes tour-key-press {
+  0%, 20%, 100% { transform: translateY(0); }
+  30%, 45% { transform: translateY(2px); background: #e0e7ff; color: #4f46e5; }
+}
+@keyframes tour-caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .tour-demo * { animation: none !important; }
+  .tour-demo-traveler { offset-distance: 65%; }
+  .tour-demo-progress, .tour-demo-volume { width: 60%; }
+}
