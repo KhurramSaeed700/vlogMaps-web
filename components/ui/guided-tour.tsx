@@ -106,10 +106,10 @@ export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focu
   const stepContent = renderStepContent?.(step, stepIndex)
   const placement = target ? getGuidedTourPlacement(target, viewport, panelHeight, Boolean(stepContent || step.preview)) : null
   const highlight = target ? {
-    top: Math.max(0, target.top - 6),
-    left: Math.max(0, target.left - 6),
-    right: Math.min(viewport.width, target.left + target.width + 6),
-    bottom: Math.min(viewport.height, target.bottom + 6),
+    top: target.top - 6,
+    left: target.left - 6,
+    right: target.left + target.width + 6,
+    bottom: target.bottom + 6,
   } : null
   const spotlightClip = highlight ? `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${highlight.left}px ${highlight.top}px, ${highlight.right}px ${highlight.top}px, ${highlight.right}px ${highlight.bottom}px, ${highlight.left}px ${highlight.bottom}px, ${highlight.left}px ${highlight.top}px)` : undefined
   const finish = () => changeOpen(false)
@@ -123,7 +123,7 @@ export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focu
           <div aria-hidden="true" className="pointer-events-none">
             <div
               aria-hidden="true"
-              className="pointer-events-none fixed z-[101] rounded-xl border-[5px] border-white shadow-[0_0_0_1px_rgba(255,255,255,0.4)]"
+              className="pointer-events-none fixed z-[101] box-border rounded-xl border-2 border-white"
               style={{ top: highlight.top, left: highlight.left, width: Math.max(0, highlight.right - highlight.left), height: Math.max(0, highlight.bottom - highlight.top) }}
             />
           </div>
@@ -140,18 +140,18 @@ export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focu
             event.preventDefault()
             previousFocusRef.current?.focus({ preventScroll: true })
           }}
-          className="fixed z-[103] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl bg-white p-6 pb-0 text-slate-800 shadow-[0_12px_44px_rgba(15,23,42,0.22)] focus:outline-none"
+          className="fixed z-[103] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl border border-border bg-popover p-6 pb-0 text-popover-foreground shadow-[0_12px_44px_rgba(15,23,42,0.22)] focus:outline-none"
           style={placement ? { top: placement.top, left: placement.left, width: placement.width, maxHeight: placement.maxHeight } : { visibility: "hidden" }}
         >
           <Dialog.Close asChild>
-            <Button variant="ghost" size="icon" className="absolute right-3 top-3 h-7 w-7 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Skip tutorial"><X className="h-3.5 w-3.5" /></Button>
+            <Button variant="ghost" size="icon" className="absolute right-3 top-3 h-7 w-7 rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground" aria-label="Skip tutorial"><X className="h-3.5 w-3.5" /></Button>
           </Dialog.Close>
           {chapters.length > 1 && (
-            <label className="mb-3 block pr-7 text-xs text-slate-500">
+            <label className="mb-3 block pr-7 text-xs text-muted-foreground">
               <span className="sr-only">Jump to chapter</span>
               <select
                 aria-label="Jump to tutorial chapter"
-                className="h-7 max-w-full rounded-md border-0 bg-white pr-2 text-xs text-slate-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                className="h-7 max-w-full rounded-md border-0 bg-popover pr-2 text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                 value={chapters.filter((chapter) => chapter.index <= stepIndex).at(-1)?.index ?? 0}
                 onChange={(event) => setStepIndex(Number(event.target.value))}
               >
@@ -159,14 +159,14 @@ export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focu
               </select>
             </label>
           )}
-          <Dialog.Title className="pr-5 text-[21px] font-bold leading-7 tracking-[-0.02em] text-slate-800">{step.title}</Dialog.Title>
-          <Dialog.Description className="mt-1.5 text-sm leading-6 text-slate-500">{step.description}</Dialog.Description>
+          <Dialog.Title className="pr-5 text-[21px] font-bold leading-7 tracking-[-0.02em] text-popover-foreground">{step.title}</Dialog.Title>
+          <Dialog.Description className="mt-1.5 text-sm leading-6 text-muted-foreground">{step.description}</Dialog.Description>
           {stepContent || (step.preview ? <TourStepPreview key={stepIndex} kind={step.preview} /> : null)}
-          <div className="sticky bottom-0 -mx-6 mt-2 flex items-center justify-between gap-2 rounded-b-2xl bg-white px-6 py-4">
-            <span aria-label={`${label}: step ${stepIndex + 1} of ${steps.length}`} className="text-sm tabular-nums text-slate-500">{stepIndex + 1} of {steps.length}</span>
+          <div className="sticky bottom-0 -mx-6 mt-2 flex items-center justify-between gap-2 rounded-b-2xl bg-popover px-6 py-4">
+            <span aria-label={`${label}: step ${stepIndex + 1} of ${steps.length}`} className="text-sm tabular-nums text-muted-foreground">{stepIndex + 1} of {steps.length}</span>
             <div className="flex items-center gap-1">
-              {stepIndex > 0 && <Button variant="ghost" size="sm" className="h-8 px-2 text-xs text-slate-400 hover:bg-slate-50 hover:text-slate-700" onClick={() => setStepIndex((index) => index - 1)} aria-label="Previous tutorial step">Back</Button>}
-              <Button variant="ghost" size="sm" className="h-8 px-1 text-sm font-bold text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700" onClick={() => lastStep ? finish() : setStepIndex((index) => index + 1)}>
+              {stepIndex > 0 && <Button variant="ghost" size="sm" className="h-8 px-2 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground" onClick={() => setStepIndex((index) => index - 1)} aria-label="Previous tutorial step">Back</Button>}
+              <Button variant="ghost" size="sm" className="h-8 px-1 text-sm font-bold text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-400/10 dark:hover:text-indigo-200" onClick={() => lastStep ? finish() : setStepIndex((index) => index + 1)}>
                 {lastStep ? "Got it" : "Next tip"}
               </Button>
             </div>

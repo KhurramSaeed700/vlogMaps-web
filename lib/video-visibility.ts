@@ -9,7 +9,7 @@ export const videoVisibilityLabels: Record<VideoVisibility, string> = {
 
 export const videoVisibilityDescriptions: Record<VideoVisibility, string> = {
   private: "Only you can watch on TravelMap.",
-  unlisted: "Anyone with the link can watch; hidden from feeds and search.",
+  unlisted: "Anyone with the link can watch; only you see it on your homepage.",
   public: "Anyone can find and watch on TravelMap.",
 }
 

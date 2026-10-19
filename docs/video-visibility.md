@@ -3,7 +3,7 @@
 Use the visibility control on an uploaded video in the creator dashboard to choose Private, Unlisted or Public. The selected setting is shown in its visibility column. Changes are saved to the database; failures leave the previous selection unchanged.
 
 - Public: visible in web/mobile feeds, search, creator listings and recommendations, and accessible by link.
-- Unlisted: hidden from those discovery surfaces, but anyone with the link can watch and read the route.
+- Unlisted: shown on the signed-in owner’s homepage, hidden from everyone else’s discovery surfaces. Anyone with the link can still watch and read the route.
 - Private: only the owning creator can view the TravelMap video and route through the authenticated web API. Other viewers receive 404. Anonymous mobile APIs cannot read it.
 
 Visibility is independent of publication status. A private uploaded video remains uploaded and editable. Unpublish still turns it into an owner-only draft. Existing uploads retain Public visibility. Editor saves preserve the database visibility so an older editor tab cannot accidentally make a private video public again.

@@ -24,7 +24,7 @@ async function main() {
   const page = load('app/page.tsx', {
     'react/jsx-runtime': runtime,
     '@/components/home/home-page': { default: 'home' },
-    '@/lib/creator-videos-db': { listPublishedCreatorVideosFromDb: async () => videos },
+    '@/lib/home-feed': { listHomeFeedVideos: async () => videos },
   })
   assert.equal(page.dynamic, 'force-dynamic', 'Visibility-sensitive catalog must not be cached')
   const result = await page.default()

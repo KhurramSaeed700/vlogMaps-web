@@ -32,7 +32,7 @@ export function HomeVideoCard({ video, prioritizeThumbnail = false }: HomeVideoC
             sizes="(min-width: 1536px) 285px, (min-width: 1280px) calc((100vw - 92px) / 4), (min-width: 1024px) calc((100vw - 72px) / 3), (min-width: 640px) calc((100vw - 52px) / 2), calc(100vw - 32px)"
             className="object-cover transition duration-300 group-hover:scale-[1.02]"
           />
-          <div className="absolute left-3 top-3" data-home-tour="live-map">
+          <div className="absolute left-3 top-3 flex w-fit" data-home-tour="live-map">
             <Badge className="border-0 bg-black/75 text-white">Live map</Badge>
           </div>
           <div className="absolute bottom-3 right-3 rounded bg-black/80 px-2 py-1 text-xs text-white">

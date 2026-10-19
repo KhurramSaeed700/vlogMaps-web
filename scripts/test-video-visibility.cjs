@@ -30,7 +30,7 @@ function matches(row, where) {
 }
 const rows = ['public', 'unlisted', 'private'].flatMap(visibility => ['published', 'draft'].map(status => ({
   id: `${status}-${visibility}`, appId: `${status}-${visibility}`, status, visibility, ownerUserId: 'owner',
-  title: 'Test', youtubeId: 'abcdefghijk', editorState: null, keyframes: [], locations: [], tags: [],
+  title: 'Test', youtubeId: `test-${status}-${visibility}`, editorState: null, keyframes: [], locations: [], tags: [],
   _count: { keyframes: 0 },
 })))
 const findFirst = async ({ where }) => rows.find(row => matches(row, where)) || null
@@ -52,6 +52,29 @@ async function main() {
   assert.equal(visibility.normalizeVideoVisibility('unknown'), 'private')
   assert.deepEqual((await db.listPublishedCreatorVideosFromDb()).map(video => video.id), ['published-public'])
   assert.deepEqual((await mobile.listPublishedMobileVideos()).map(video => video.id), ['published-public'])
+  assert.deepEqual((await db.listPublishedCreatorVideosFromDb('stranger')).map(video => video.id), ['published-public'])
+  assert.deepEqual((await db.listPublishedCreatorVideosFromDb(['clerk-owner', 'owner'])).map(video => video.id), ['published-public', 'published-unlisted'])
+  let feedUser = null
+  const feed = load('lib/home-feed.ts', {
+    '@clerk/nextjs/server': { auth: async () => ({ userId: feedUser }) },
+    '@/lib/prisma': { getPrisma: () => ({ user: { findUnique: async ({ where }) => where.clerkUserId === 'clerk-owner' ? { id: 'owner' } : null } }) },
+    '@/lib/creator-videos-db': db,
+  })
+  const catalog = load('app/api/videos/route.ts', {
+    'next/server': { NextResponse: { json: (body, options) => ({ body, headers: options?.headers }) } },
+    '@/lib/home-feed': feed,
+    '@/lib/creator-videos-db': { isCreatorVideosDbConfigured: () => true },
+  })
+  for (const user of [null, 'stranger', 'clerk-owner']) {
+    feedUser = user
+    const expected = user === 'clerk-owner' ? ['published-public', 'published-unlisted'] : ['published-public']
+    assert.deepEqual((await feed.listHomeFeedVideos()).map(video => video.id), expected)
+    const response = await catalog.GET()
+    assert.deepEqual(response.body.videos.map(video => video.id), expected)
+    assert.equal(response.headers['Cache-Control'], 'private, no-store')
+    assert.equal(response.headers.Vary, 'Cookie')
+  }
+
   for (const row of rows) {
     const accessible = row.status === 'published' && row.visibility !== 'private'
     for (const requester of [undefined, '', 'stranger', 'owner', ['clerk-id', 'owner']]) {

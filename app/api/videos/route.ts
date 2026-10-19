@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { listPublishedCreatorVideosFromDb, isCreatorVideosDbConfigured } from "@/lib/creator-videos-db"
+import { isCreatorVideosDbConfigured } from "@/lib/creator-videos-db"
+import { listHomeFeedVideos } from "@/lib/home-feed"
 import type { TravelVideo } from "@/lib/demo-data"
 
 export const dynamic = "force-dynamic"
@@ -24,10 +25,10 @@ function dedupeVideosByYouTubeId(videos: TravelVideo[]) {
 }
 
 export async function GET() {
-  const cloudVideos = await listPublishedCreatorVideosFromDb()
+  const cloudVideos = await listHomeFeedVideos()
 
   return NextResponse.json({
     configured: isCreatorVideosDbConfigured(),
     videos: dedupeVideosByYouTubeId(cloudVideos),
-  }, { headers: { "Cache-Control": "no-store" } })
+  }, { headers: { "Cache-Control": "private, no-store", "Vary": "Cookie" } })
 }

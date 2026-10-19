@@ -311,16 +311,23 @@ export async function listCreatorVideosFromDb(ownerUserIds: OwnerUserIdInput, op
   return videos.map((video) => rowToTravelVideo(video, { editableOwnerUserIds }))
 }
 
-export async function listPublishedCreatorVideosFromDb() {
+export async function listPublishedCreatorVideosFromDb(requesterOwnerUserIds?: OwnerUserIdInput) {
   const prisma = getPrisma()
   if (!prisma) {
     return []
   }
 
+  const ownerUserIds = normalizeOwnerUserIds(requesterOwnerUserIds)
+
   try {
     const videos = await prisma.video.findMany({
       where: {
-        ...publicVideoWhere,
+        ...(ownerUserIds.length > 0
+          ? { status: "published", OR: [
+              { visibility: "public" },
+              { visibility: "unlisted", ownerUserId: { in: ownerUserIds } },
+            ] }
+          : publicVideoWhere),
         appId: { not: null },
       },
       include: {

@@ -39,8 +39,8 @@ export function EditorToolPractice({ kind }: { kind: EditorPracticeKind }) {
   }, [kind])
 
   return (
-    <section aria-label={`${kind === "stop-end" ? "End stop" : name === "point" ? "Point" : "Start stop"} shortcut practice`} className="mt-4 space-y-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
-      <p className="text-[11px] text-slate-500">Practice only · Your video stays unchanged</p>
+    <section aria-label={`${kind === "stop-end" ? "End stop" : name === "point" ? "Point" : "Start stop"} shortcut practice`} className="mt-4 space-y-3 rounded-xl border border-border bg-muted/50 p-3">
+      <p className="text-[11px] text-muted-foreground">Practice only · Your video stays unchanged</p>
       <div className="flex items-center gap-3">
         <Button
           ref={keyButtonRef}
@@ -50,11 +50,11 @@ export function EditorToolPractice({ kind }: { kind: EditorPracticeKind }) {
           aria-label={`Try ${key}: ${kind === "stop-end" ? "end stop" : `add ${name}`}`}
           aria-keyshortcuts={key}
           onClick={() => dispatch({ type: "key" })}
-          className="h-11 w-11 shrink-0 border-slate-200 bg-white font-mono text-lg font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-600"
+          className="h-11 w-11 shrink-0 border-input bg-background font-mono text-lg font-bold text-foreground hover:bg-accent hover:text-accent-foreground"
         >
           <kbd>{key}</kbd>
         </Button>
-        <p role="status" aria-live="polite" className="text-sm leading-5 text-slate-600">{prompt}</p>
+        <p role="status" aria-live="polite" className="text-sm leading-5 text-foreground">{prompt}</p>
       </div>
       <button
         ref={mapButtonRef}
@@ -70,16 +70,16 @@ export function EditorToolPractice({ kind }: { kind: EditorPracticeKind }) {
       >
         <svg viewBox="0 0 280 96" preserveAspectRatio="none" aria-hidden="true" className="absolute inset-0 h-full w-full">
           <path d="M-10 25 L290 70 M60 -10 L105 106 M205 -10 L155 106" stroke="currentColor" strokeWidth="10" className="text-white/80" />
-          <path d="M-10 25 L290 70 M60 -10 L105 106 M205 -10 L155 106" stroke="currentColor" strokeWidth="1" className="text-slate-500/30" />
+          <path d="M-10 25 L290 70 M60 -10 L105 106 M205 -10 L155 106" stroke="currentColor" strokeWidth="1" className="text-muted-foreground/30" />
         </svg>
         {state.marker ? (
           <MapPin aria-hidden="true" className={`absolute h-7 w-7 -translate-x-1/2 -translate-y-full ${kind === "point" ? "fill-orange-500/30 text-orange-600" : "fill-teal-500/30 text-teal-600"}`} style={{ left: `${state.marker.x}%`, top: `${state.marker.y}%` }} />
-        ) : <span className="relative rounded bg-white/85 px-2 py-1 text-xs text-slate-500">{state.phase === "place" ? "Click here to place it" : "Practice map"}</span>}
+        ) : <span className="relative rounded bg-background/90 px-2 py-1 text-xs text-muted-foreground">{state.phase === "place" ? "Click here to place it" : "Practice map"}</span>}
       </button>
       {finished && (
         <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-1 text-xs font-medium text-emerald-600"><Check className="h-3.5 w-3.5" aria-hidden="true" />Step complete</span>
-          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700" onClick={() => dispatch({ type: "reset" })}>Try again</Button>
+          <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400"><Check className="h-3.5 w-3.5" aria-hidden="true" />Step complete</span>
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-400/10 dark:hover:text-indigo-200" onClick={() => dispatch({ type: "reset" })}>Try again</Button>
         </div>
       )}
     </section>
