@@ -7,12 +7,13 @@ import { ContentPageShell } from "@/components/app-shell/content-page-shell"
 import { CreatorAccessGuard } from "@/components/creator/creator-access-guard"
 import { CreatorVideoEditor } from "@/components/creator/creator-video-editor"
 import { fetchCreatorCloudVideoById } from "@/lib/creator-videos-cloud-client"
+import { getVideoPlaylistId } from "@/lib/playlist-mapping"
 import type { TravelVideo } from "@/lib/demo-data"
 
 const creatorEditorHeaderActionsId = "creator-editor-header-actions"
 const creatorEditorHeaderLeadingActionsId = "creator-editor-header-leading-actions"
 
-export function CreatorVideoEditorPage({ id }: { id: string }) {
+export function CreatorVideoEditorPage({ id, playlistId }: { id: string; playlistId?: string }) {
   const router = useRouter()
   const { isLoaded: isUserLoaded, user } = useUser()
   const [video, setVideo] = useState<TravelVideo | null | undefined>(undefined)
@@ -27,7 +28,7 @@ export function CreatorVideoEditorPage({ id }: { id: string }) {
       .then((response) => {
         if (isMounted) {
           if (response.video && response.video.id !== id) {
-            router.replace(`/creator/video/${response.video.id}/edit`)
+            router.replace(`/creator/video/${response.video.id}/edit${playlistId ? `?${new URLSearchParams({ playlist: playlistId })}` : ""}`)
           }
           setVideo(response.video ?? null)
         }
@@ -41,7 +42,7 @@ export function CreatorVideoEditorPage({ id }: { id: string }) {
     return () => {
       isMounted = false
     }
-  }, [id, router])
+  }, [id, router, playlistId])
 
   return (
     <ContentPageShell
@@ -75,7 +76,9 @@ export function CreatorVideoEditorPage({ id }: { id: string }) {
           <p>Video not found.</p>
         ) : video ? (
           <CreatorVideoEditor
+            key={video.id}
             video={video}
+            playlistId={playlistId ?? getVideoPlaylistId(video)}
             headerLeadingActionsTargetId={creatorEditorHeaderLeadingActionsId}
             headerActionsTargetId={creatorEditorHeaderActionsId}
           />

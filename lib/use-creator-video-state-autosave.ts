@@ -190,7 +190,20 @@ export function useCreatorVideoStateAutosave({ videoId, onStatusChange }: Creato
     return true
   }, [schedulePendingSave, videoId])
 
+  // Reuse the outbox and its serialized writer before leaving a playlist video.
+  const saveAndWait = useCallback(async (state: CreatorVideoState) => {
+    if (!navigator.onLine || !saveState(state)) return false
+    schedulePendingSave(0)
+    const deadline = Date.now() + 15000
+    while (loadPendingCreatorVideoState(videoId)) {
+      if (Date.now() >= deadline) return false
+      await new Promise(resolve => window.setTimeout(resolve, 100))
+    }
+    return true
+  }, [saveState, schedulePendingSave, videoId])
+
   return {
+    saveAndWait,
     saveState,
     schedulePendingSave,
   }

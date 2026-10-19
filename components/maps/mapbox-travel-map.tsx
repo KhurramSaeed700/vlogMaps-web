@@ -711,15 +711,15 @@ function normalizeRoutedLegsForManualKeyframes(legs: RoutedLeg[], keyframes: Key
       return {
         ...leg,
         isFallback: true,
-        routeKind: "road" as const,
+        routeKind: "offroad" as const,
         coordinates: [startCoordinate, endCoordinate],
       }
     }
 
     return {
       ...leg,
-      isFallback: false,
-      routeKind: "road" as const,
+      isFallback: leg.isFallback,
+      routeKind: leg.routeKind,
       coordinates: leg.coordinates,
     }
   })
@@ -791,7 +791,7 @@ function buildPendingRoutedLegs(keyframes: Keyframe[]) {
       toTime: nextKeyframe.time,
       isFallback: true,
       isStationary: keyframe.pointType === "stop",
-      routeKind: isFlight ? "flight" as const : "road" as const,
+      routeKind: isFlight ? "flight" as const : "offroad" as const,
       coordinates: isFlight ? createGreatCircleFlightCoordinates([keyframe.lng, keyframe.lat], [nextKeyframe.lng, nextKeyframe.lat]) : [
         [keyframe.lng, keyframe.lat],
         [nextKeyframe.lng, nextKeyframe.lat],
@@ -3831,12 +3831,24 @@ export function MapboxTravelMap({
       map.setPaintProperty("route-non-road", "line-dasharray", [1, 0])
     }
 
+    if (!map.getLayer("route-offroad")) {
+      map.addLayer({
+        id: "route-offroad",
+        type: "line",
+        source: "route",
+        filter: ["==", ["get", "routeKind"], "offroad"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": "#f97316", "line-width": 1.8, "line-dasharray": [0.2, 2.5], "line-opacity": 0.95 },
+      })
+    }
+
     try {
       ;[
         "route-outline",
         "route",
         "route-non-road-outline",
         "route-non-road",
+        "route-offroad",
       ].forEach((layerId) => {
         map.moveLayer(layerId)
       })

@@ -2,7 +2,7 @@ import { reportHandledError } from "@/lib/monitoring/diagnostics"
 
 export type RouteCoordinate = [number, number]
 export type RoutePreference = "fastest" | "shortest"
-export type RoutedLegKind = "road" | "flight"
+export type RoutedLegKind = "road" | "flight" | "offroad"
 
 export interface RoutedLeg {
   fromTime: number
@@ -411,13 +411,24 @@ function createRoadLeg(
   nextKeyframe: RoutableKeyframe,
   resolution: DirectionsResolution,
 ) {
+  const start: RouteCoordinate = [keyframe.lng, keyframe.lat]
+  const end: RouteCoordinate = [nextKeyframe.lng, nextKeyframe.lat]
+  const coordinates = resolution.status === "routed" ? resolution.geometry.coordinates : []
+  // Directions may return a nearby road even for a point in water or on a trail.
+  // Reject remote snaps once per resolved leg, never during animation.
+  const maxRoadSnapDistanceKm = 0.075
+  const distanceFromPoint = (point: RoutableKeyframe, coordinate: RouteCoordinate) =>
+    getCoordinateDistanceKm(point, { time: point.time, lng: coordinate[0], lat: coordinate[1] })
+  const followsRoad = coordinates.length >= 2 &&
+    distanceFromPoint(keyframe, coordinates[0]) <= maxRoadSnapDistanceKm &&
+    distanceFromPoint(nextKeyframe, coordinates[coordinates.length - 1]) <= maxRoadSnapDistanceKm
   return {
     fromTime: keyframe.time,
     toTime: nextKeyframe.time,
-    isFallback: resolution.status !== "routed",
+    isFallback: !followsRoad,
     isStationary: keyframe.pointType === "stop",
-    routeKind: "road" as const,
-    coordinates: resolution.status === "routed" ? resolution.geometry.coordinates : [],
+    routeKind: followsRoad ? "road" : "offroad",
+    coordinates: followsRoad ? coordinates : [start, ...(keyframe.via ?? []), end],
   } satisfies RoutedLeg
 }
 

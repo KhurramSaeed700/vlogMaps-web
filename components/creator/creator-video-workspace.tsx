@@ -15,6 +15,8 @@ import {
 } from "@/lib/creator-videos"
 import { migrateLegacyCreatorStorageToDatabase } from "@/lib/legacy-creator-storage-migration"
 import { formatDuration, type TravelVideo } from "@/lib/demo-data"
+import { PlaylistImporter } from "@/components/creator/playlist-importer"
+import { extractYouTubePlaylistId } from "@/lib/youtube-playlist"
 import { resolveYouTubeDuration } from "@/lib/youtube-duration-client"
 
 export function CreatorVideoWorkspace() {
@@ -25,6 +27,7 @@ export function CreatorVideoWorkspace() {
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [message, setMessage] = useState("")
   const [isCreating, setIsCreating] = useState(false)
+  const [playlistUrl, setPlaylistUrl] = useState("")
 
   useEffect(() => {
     isMountedRef.current = true
@@ -108,6 +111,10 @@ export function CreatorVideoWorkspace() {
       return
     }
 
+    if (extractYouTubePlaylistId(youtubeUrl)) {
+      setMessage(""); setPlaylistUrl(youtubeUrl.trim()); return
+    }
+    setPlaylistUrl("")
     try {
       setIsCreating(true)
       setMessage("Opening and syncing video...")
@@ -157,15 +164,19 @@ export function CreatorVideoWorkspace() {
                 handleCreateVideo()
               }
             }}
-            placeholder="Paste YouTube URL"
+            placeholder="Paste a YouTube video or playlist URL"
+            aria-label="YouTube video or playlist URL"
+            disabled={isCreating}
           />
           <Button className="h-11 px-5" onClick={handleCreateVideo} disabled={isCreating}>
             <PlayCircle className="mr-2 h-4 w-4" />
-            {isCreating ? "Opening..." : "Search"}
+            {isCreating ? "Working..." : extractYouTubePlaylistId(youtubeUrl) ? "Preview playlist" : "Search"}
           </Button>
         </div>
         {message && <p className="text-sm text-slate-500">{message}</p>}
       </section>
+
+      {playlistUrl && <PlaylistImporter url={playlistUrl} onImported={setVideos} onBusyChange={setIsCreating} />}
 
       {orderedVideos.length === 0 ? (
         <div className="border-t border-slate-200 py-10">

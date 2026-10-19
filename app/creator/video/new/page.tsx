@@ -6,7 +6,7 @@ export default function NewCreatorVideoPage() {
   return (
     <ContentPageShell
       title="Creator Video Workspace"
-      description="Paste a YouTube URL or pick an existing creator video, then jump straight into timestamp and map capture."
+      description="Paste a YouTube video or playlist URL, or pick an existing creator video, then jump straight into timestamp and map capture."
       backHref="/creator/dashboard"
       backLabel="Back to Dashboard"
       pageClassName="min-h-screen bg-background"

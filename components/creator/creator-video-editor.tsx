@@ -17,6 +17,7 @@ import { SplitViewResizer } from "@/components/ui/split-view-resizer"
 import { MapboxLocationPicker } from "@/components/maps/mapbox-location-picker"
 import { YouTubePlayer } from "@/components/media/youtube-player"
 import { AutoplayCountdown, autoplayCountdownSeconds } from "@/components/media/autoplay-countdown"
+import { PlaylistMappingControls } from "@/components/creator/playlist-mapping-controls"
 import { EditorGuidedTour } from "@/components/creator/editor-guided-tour"
 import { editorTourStartEvent } from "@/lib/editor-tour"
 import { PlaybackSettingsSection } from "@/components/settings/playback-settings-section"
@@ -59,6 +60,7 @@ import { usePlaybackPreferences } from "@/lib/use-playback-preferences"
 
 interface CreatorVideoEditorProps {
   video: TravelVideo
+  playlistId?: string
   headerLeadingActionsTargetId?: string
   headerActionsTargetId?: string
 }
@@ -546,6 +548,7 @@ function shouldIgnorePlaybackShortcut(target: EventTarget | null) {
 
 export function CreatorVideoEditor({
   video,
+  playlistId,
   headerLeadingActionsTargetId,
   headerActionsTargetId,
 }: CreatorVideoEditorProps) {
@@ -628,6 +631,7 @@ export function CreatorVideoEditor({
   const [isTimestampNameEditing, setIsTimestampNameEditing] = useState(false)
   const [saveMessage, setSaveMessage] = useState("")
   const [isUploadingVideo, setIsUploadingVideo] = useState(false)
+  const [playlistCompletionRequest, setPlaylistCompletionRequest] = useState(0)
   const [uploadMessage, setUploadMessage] = useState("")
   const [isSavedPlacesOpen, setIsSavedPlacesOpen] = useState(false)
   const [newSavedPlaceName, setNewSavedPlaceName] = useState("")
@@ -657,7 +661,7 @@ export function CreatorVideoEditor({
 
     setSaveMessage(typeof navigator !== "undefined" && !navigator.onLine ? "Saved in this browser. Waiting for connection." : "")
   }, [])
-  const { saveState: saveAutosavedState, schedulePendingSave } = useCreatorVideoStateAutosave({
+  const { saveState: saveAutosavedState, schedulePendingSave, saveAndWait } = useCreatorVideoStateAutosave({
     videoId: video.id,
     onStatusChange: handleAutosaveStatus,
   })
@@ -2510,6 +2514,11 @@ export function CreatorVideoEditor({
   )
   const isCapturingFlight = Boolean(flightAirportPrompt || pendingFlightTakeoff)
   const isPlacingFlightOnMap = flightAirportPrompt?.mode === "map"
+  const savePlaylistVideoBeforeNext = useCallback(async () => {
+    if (isLoadingSavedState || draftPoint || pendingFlightTakeoff || flightAirportPrompt || isRecordingStop || isUploadingVideo) return false
+    setIsPlaying(false)
+    return saveAndWait({ points: sortedPoints, tripRoute, routeShapes, savedPlaces })
+  }, [isLoadingSavedState, draftPoint, pendingFlightTakeoff, flightAirportPrompt, isRecordingStop, isUploadingVideo, saveAndWait, sortedPoints, tripRoute, routeShapes, savedPlaces])
   const canUploadVideo = video.status !== "published"
   const formatTripLocation = (location: CreatorTripLocation | null) => {
     if (!location) {
@@ -2549,6 +2558,7 @@ export function CreatorVideoEditor({
       }
 
       setUploadMessage(response.saved ? "Uploaded to cloud." : "Upload failed. Please try again.")
+      if (response.saved && playlistId) setPlaylistCompletionRequest(value => value + 1)
     } finally {
       setIsUploadingVideo(false)
     }
@@ -3018,6 +3028,7 @@ export function CreatorVideoEditor({
         {headerActionsElement
           ? createPortal(
               <>
+                {playlistId && <PlaylistMappingControls playlistId={playlistId} youtubeId={video.youtubeId} completionRequest={playlistCompletionRequest} saveBeforeNext={savePlaylistVideoBeforeNext} />}
                 {canUploadVideo && (
                   <Button
                     type="button"

@@ -30,6 +30,7 @@ interface WatchExperienceProps {
   editHref?: string | null
 }
 
+const defaultVideoPanelPercent = 63
 const watchTimeRenderStepSeconds = 0.25
 const emptyRecommendedVideos: TravelVideo[] = []
 
@@ -670,7 +671,7 @@ export function WatchExperience({
         ref={splitViewRef}
         className="relative flex w-full flex-none flex-col lg:min-h-0 lg:flex-1 lg:grid"
         style={{
-          "--split-view-left": "50%",
+          "--split-view-left": `${defaultVideoPanelPercent}%`,
           gridTemplateColumns: "minmax(0, var(--split-view-left)) minmax(0, 1fr)",
         } as CSSProperties}
       >
@@ -722,7 +723,7 @@ export function WatchExperience({
 
         <SplitViewResizer
           containerRef={splitViewRef}
-          defaultValue={50}
+          defaultValue={defaultVideoPanelPercent}
           min={35}
           max={65}
           label="Resize video and map panels"

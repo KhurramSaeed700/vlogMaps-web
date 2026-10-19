@@ -47,7 +47,7 @@ const mapStyleOptions = [
   { id: "streets", label: "Streets", style: "mapbox://styles/mapbox/streets-v12" },
   { id: "terrain", label: "Terrain", style: "mapbox://styles/mapbox/outdoors-v12" },
 ] as const
-const editorRouteLayerIds = ["editor-route-hit", "editor-route-flight", "editor-route"] as const
+const editorRouteLayerIds = ["editor-route-hit", "editor-route-offroad", "editor-route-flight", "editor-route"] as const
 const editorTripRouteLayerIds = ["editor-trip-route-hit", "editor-trip-route", "editor-trip-route-casing"] as const
 const editorTimestampPointSourceId = "editor-timestamp-points"
 const editorTimestampPointLayerIds = [
@@ -252,7 +252,7 @@ interface TimestampRouteSegment {
   totalDistance: number
   isStationary?: boolean
   isFallback?: boolean
-  routeKind?: "road" | "flight"
+  routeKind?: "road" | "flight" | "offroad"
 }
 
 interface TimestampRouteSegmentInput {
@@ -264,7 +264,7 @@ interface TimestampRouteSegmentInput {
   endCoordinate: RouteCoordinate
   isStationary?: boolean
   isFallback?: boolean
-  routeKind?: "road" | "flight"
+  routeKind?: "road" | "flight" | "offroad"
 }
 
 type RouteShapeTarget =
@@ -442,6 +442,8 @@ function orderEditorRouteLayers(map: mapboxgl.Map) {
   if (hasTimestampRoute) {
     map.moveLayer("editor-route")
   }
+
+  if (map.getLayer("editor-route-offroad")) map.moveLayer("editor-route-offroad")
 
   if (hasTimestampFlightRoute) {
     map.moveLayer("editor-route-flight")
@@ -838,7 +840,8 @@ function buildTimestampRouteSegments(legs: TimestampRouteSegmentInput[]) {
         legKey: leg.legKey,
         fromTime: leg.fromTime,
         toTime: leg.toTime,
-        routeKind: "road",
+        routeKind: leg.routeKind ?? "road",
+        isFallback: leg.isFallback,
         isStationary: leg.isStationary,
         coordinates: leg.coordinates,
       }),
@@ -2964,6 +2967,18 @@ export function MapboxLocationPicker({
       map.setFilter("editor-route-flight", ["==", ["get", "routeKind"], "flight"])
       map.setPaintProperty("editor-route-flight", "line-width", flightPathLineWidth)
       map.setPaintProperty("editor-route-flight", "line-dasharray", [1, 0])
+    }
+
+    if (!map.getLayer("editor-route-offroad")) {
+      shouldOrderLayers = true
+      map.addLayer({
+        id: "editor-route-offroad",
+        type: "line",
+        source: "editor-route",
+        filter: ["==", ["get", "routeKind"], "offroad"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": "#f97316", "line-width": 1.8, "line-dasharray": [0.2, 2.5], "line-opacity": 0.95 },
+      })
     }
 
     if (!map.getLayer("editor-route-hit")) {

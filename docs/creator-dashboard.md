@@ -11,3 +11,15 @@ The dashboard takes inspiration from YouTube Studio's channel content layout whi
 - Desktop has a workspace sidebar; smaller viewports use compact section buttons and an independently scrolling table.
 
 Verification: `node scripts/test-creator-dashboard.cjs`, `node scripts/test-video-visibility.cjs`, `node scripts/test-access-control.cjs`, `pnpm exec tsc --noEmit` and `git diff --check`. Check content/overview navigation, keyboard menus, empty filters and a narrow viewport in the browser. Do not change real video visibility or delete user videos merely to test the design.
+
+## Playlist imports
+
+Open the Creator Video Workspace, paste a YouTube playlist URL (including watch URLs with a `list` parameter), and choose **Preview playlist**. Select new videos and import them as private drafts. Each saved video has a **Map video** link to its existing editor. Imports preserve playlist order in the preview and skip videos already in the owner's library. Unavailable entries are skipped; previews load up to 500 playlist entries.
+
+The importer shows progress and supports stopping after the current save. Failed or stopped items remain selected for retry; each retry refreshes the owner's library before saving. Loading a playlist alone never creates videos. The server uses `YOUTUBE_DATA_API_KEY` (or `YOUTUBE_API_KEY`) and approved creator access. Private YouTube playlists require a separate OAuth integration and cannot be imported with the API key.
+
+Checks: `node scripts/test-playlist-import.cjs` and `node scripts/test-playlist-import-ui.cjs`.
+
+### Map a playlist in sequence
+
+Choose **Start mapping playlist** in the import preview, or **Map video** on any imported entry. The editor's **Finish video** button saves through the normal autosave outbox, then asks **Map the next video?**. Successful uploads open the same prompt automatically. Confirming opens the next imported video in YouTube playlist order; **Stay here** leaves the current editor open. Failed or offline saves prevent advancing. Unimported entries are skipped, and the final imported video shows a completion message. Playlist context stays in editor URLs and new imported videos retain their source playlist tag for reopening from Studio.
