@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import { UserButton, useUser } from "@clerk/nextjs"
-import Image from "next/image"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Check, ChevronRight, Loader2, Moon, Play, Search, Settings, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { TravelMapLogo } from "@/components/app-shell/travelmap-logo"
@@ -13,83 +13,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { preferenceOptions, type PreferenceId } from "@/components/home/home-preferences"
 import { PlaybackSettingsSection } from "@/components/settings/playback-settings-section"
-import { formatCompactNumber, formatDuration } from "@/lib/demo-data"
 import { useCreatorAccess } from "@/lib/use-creator-access"
 import { usePlaybackPreferences } from "@/lib/use-playback-preferences"
 import { homeTourStartEvent } from "@/lib/home-tour"
-import {
-  extractYouTubeId,
-  getYouTubeThumbnailUrl,
-  type ResolvedYouTubeMetadata,
-} from "@/lib/youtube"
-
-interface YouTubePreviewState {
-  videoId: string
-  metadata: ResolvedYouTubeMetadata | null
-  isLoading: boolean
-}
-
-function YouTubeLinkPreview({
-  videoId,
-  preview,
-}: {
-  videoId: string
-  preview: YouTubePreviewState | null
-}) {
-  return (
-    <div className="pointer-events-none absolute left-0 right-14 top-full z-50 pt-2">
-      <div
-        aria-label="YouTube video preview"
-        className="pointer-events-auto flex w-full overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl"
-      >
-        <div className="relative aspect-video w-28 shrink-0 overflow-hidden bg-muted sm:w-36">
-          <Image
-            src={preview?.metadata?.thumbnail || getYouTubeThumbnailUrl(videoId)}
-            alt={preview?.metadata?.title ? `${preview.metadata.title} thumbnail` : "YouTube video thumbnail"}
-            fill
-            sizes="144px"
-            className="object-cover"
-          />
-          <span className="absolute inset-0 flex items-center justify-center bg-black/15" aria-hidden="true">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black/75 text-white shadow-lg">
-              <Play className="ml-0.5 h-4 w-4 fill-current" />
-            </span>
-          </span>
-          {preview?.metadata?.durationSeconds ? (
-            <span className="absolute bottom-1.5 right-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-              {formatDuration(preview.metadata.durationSeconds)}
-            </span>
-          ) : null}
-        </div>
-
-        <div className="min-w-0 flex-1 px-3 py-2.5 sm:px-4 sm:py-3">
-          {preview?.isLoading || !preview ? (
-            <div className="flex h-full items-center gap-2 text-sm text-muted-foreground" role="status">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              Loading video preview...
-            </div>
-          ) : (
-            <div className="flex h-full min-w-0 flex-col justify-center">
-              <p className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">
-                {preview.metadata?.title || "YouTube video"}
-              </p>
-              {preview.metadata?.creator ? (
-                <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                  {preview.metadata.creator}
-                </p>
-              ) : null}
-              {preview.metadata?.views !== null && preview.metadata?.views !== undefined ? (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {formatCompactNumber(preview.metadata.views)} views
-                </p>
-              ) : null}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
+import { extractYouTubeId } from "@/lib/youtube"
+import { extractYouTubePlaylistId } from "@/lib/youtube-playlist"
+import { YouTubeLinkPreview } from "@/components/home/youtube-link-preview"
 
 interface HomeHeaderProps {
   onReadyChange?: (ready: boolean) => void
@@ -138,7 +67,7 @@ export function HomeHeader({
 }: HomeHeaderProps) {
   const [isThemeMounted, setIsThemeMounted] = useState(false)
   const [isCreatorNavigationPending, setIsCreatorNavigationPending] = useState(false)
-  const [youtubePreview, setYoutubePreview] = useState<YouTubePreviewState | null>(null)
+  const router = useRouter()
   const avatarContainerRef = useRef<HTMLDivElement>(null)
   const [readyAvatarUserId, setReadyAvatarUserId] = useState<string | null>(null)
   const { resolvedTheme, setTheme } = useTheme()
@@ -160,7 +89,7 @@ export function HomeHeader({
   const selectedPreferenceLabel =
     preferenceOptions.find((option) => option.id === selectedPreference)?.label ?? "All"
   const previewVideoId = useMemo(() => extractYouTubeId(youtubeUrl), [youtubeUrl])
-  const visiblePreview = youtubePreview?.videoId === previewVideoId ? youtubePreview : null
+  const previewPlaylistId = useMemo(() => extractYouTubePlaylistId(youtubeUrl), [youtubeUrl])
   const isNavbarReady = Boolean(isThemeMounted && isLoaded && !isCheckingCreatorAccess &&
     (!isSignedIn || (user?.id && readyAvatarUserId === user.id)))
 
@@ -205,38 +134,6 @@ export function HomeHeader({
     setIsThemeMounted(true)
   }, [])
 
-  useEffect(() => {
-    if (!previewVideoId) {
-      return
-    }
-
-    const controller = new AbortController()
-    const timer = window.setTimeout(() => {
-      setYoutubePreview({ videoId: previewVideoId, metadata: null, isLoading: true })
-
-      fetch(`/api/youtube/video/${encodeURIComponent(previewVideoId)}`, {
-        cache: "no-store",
-        signal: controller.signal,
-      })
-        .then((response) => (response.ok ? response.json() as Promise<ResolvedYouTubeMetadata> : null))
-        .then((metadata) => {
-          if (!controller.signal.aborted) {
-            setYoutubePreview({ videoId: previewVideoId, metadata, isLoading: false })
-          }
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) {
-            setYoutubePreview({ videoId: previewVideoId, metadata: null, isLoading: false })
-          }
-        })
-    }, 250)
-
-    return () => {
-      window.clearTimeout(timer)
-      controller.abort()
-    }
-  }, [previewVideoId])
-
   const handleCreatorNavigation = (event: MouseEvent<HTMLAnchorElement>) => {
     if (isCreatorNavigationPending) {
       event.preventDefault()
@@ -258,7 +155,12 @@ export function HomeHeader({
 
         <div className="relative order-3 w-full sm:order-none sm:mx-auto sm:max-w-2xl">
           <form
-            onSubmit={onSubmit}
+            onSubmit={(event) => {
+              if (previewPlaylistId && isApprovedCreator) {
+                event.preventDefault()
+                router.push(`/creator/video/new?${new URLSearchParams({ url: youtubeUrl.trim() })}`)
+              } else onSubmit(event)
+            }}
             className="flex h-11 w-full items-center gap-2 rounded-xl border border-input bg-muted/30 px-3 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
           >
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -266,7 +168,7 @@ export function HomeHeader({
               value={youtubeUrl}
               onChange={(event) => onYoutubeUrlChange(event.target.value)}
               placeholder="search"
-              aria-label="Search with a YouTube video link"
+              aria-label="Search with a YouTube video or playlist link"
               className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
             />
             <Button
@@ -274,7 +176,7 @@ export function HomeHeader({
               variant="ghost"
               size="icon"
               disabled={isPending}
-              aria-label="Launch YouTube video"
+              aria-label={previewPlaylistId && isApprovedCreator ? "Open playlist in Creator Studio" : "Launch YouTube video"}
               className="h-8 w-8 shrink-0 rounded-lg text-muted-foreground hover:bg-accent hover:text-accent-foreground"
             >
               {isPending ? (
@@ -285,8 +187,8 @@ export function HomeHeader({
             </Button>
           </form>
 
-          {previewVideoId && (
-            <YouTubeLinkPreview videoId={previewVideoId} preview={visiblePreview} />
+          {(previewPlaylistId || previewVideoId) && (
+            <YouTubeLinkPreview url={youtubeUrl} userId={user?.id} isCreator={isApprovedCreator} />
           )}
         </div>
 

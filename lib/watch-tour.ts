@@ -62,7 +62,7 @@ export const watchTourSteps = [
     description: "Share this journey or copy its link.",
   },
   {
-    selectors: ['button[aria-label="Back to home"]'],
+    selectors: ['[aria-label="Back to home"]'],
     preview: "journey",
     title: "Find your next journey",
     description: "Go home to browse more journeys.",
@@ -70,7 +70,7 @@ export const watchTourSteps = [
 ] as const
 
 export const watchEditTourStep = {
-  selectors: ['button[aria-label="Edit this video"]'],
+  selectors: ['[aria-label="Edit this video"]'],
   preview: "edit",
   title: "Update your mapped journey",
   description: "Open the editor to add locations, adjust timestamps, and refine the route.",

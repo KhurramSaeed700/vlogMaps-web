@@ -9,7 +9,7 @@ import { getPlaylistMappingStep, playlistEditorHref } from "@/lib/playlist-mappi
 import type { YouTubePlaylistPreview } from "@/lib/youtube-playlist"
 
 type MappingStep = NonNullable<ReturnType<typeof getPlaylistMappingStep>>
-export const PlaylistMappingControls = memo(function PlaylistMappingControls({ playlistId, youtubeId, completionRequest = 0, saveBeforeNext }: { playlistId: string; youtubeId: string; completionRequest?: number; saveBeforeNext: () => Promise<boolean> }) {
+export const PlaylistMappingControls = memo(function PlaylistMappingControls({ playlistId, youtubeId, videoId, completionRequest = 0, saveBeforeNext }: { playlistId: string; youtubeId: string; videoId: string; completionRequest?: number; saveBeforeNext: () => Promise<boolean> }) {
   const router = useRouter()
   const [step, setStep] = useState<MappingStep | null>(null)
   const [open, setOpen] = useState(false)
@@ -67,8 +67,8 @@ export const PlaylistMappingControls = memo(function PlaylistMappingControls({ p
             <Dialog.Title className="text-lg font-semibold">{saving ? "Saving your map…" : saved ? step?.next ? "Map the next video?" : "Playlist finished" : "Keep editing"}</Dialog.Title>
             <Dialog.Description className="text-sm text-muted-foreground">{saving ? "Wait while your changes are saved." : saved ? step?.next ? `Your map is saved. Up next: ${step.next.title}` : "Your map is saved. You’ve reached the last imported video in this playlist." : message || loadError}</Dialog.Description>
             {!saving && <div className="flex flex-wrap justify-end gap-2">
-              <Dialog.Close asChild><Button variant="outline">Stay here</Button></Dialog.Close>
-              {loadError ? <Button onClick={() => { setOpen(false); setRetry(value => value + 1) }}>Retry playlist</Button> : saved && step?.next ? <Button onClick={() => { setOpen(false); router.push(playlistEditorHref(step.next!.id, playlistId)) }}>Yes, map next video</Button> : !saved ? <Button onClick={finish}>Try saving again</Button> : <Button onClick={() => router.push("/creator/dashboard")}>Back to Studio</Button>}
+              {saved ? <Button variant="outline" onClick={() => { setOpen(false); router.push("/creator/dashboard") }}>Creator dashboard</Button> : <Dialog.Close asChild><Button variant="outline">Keep editing</Button></Dialog.Close>}
+              {loadError ? <Button onClick={() => { setOpen(false); setRetry(value => value + 1) }}>Retry playlist</Button> : saved && step?.next ? <Button onClick={() => { setOpen(false); router.push(playlistEditorHref(step.next!.id, playlistId, videoId)) }}>Yes, map next video</Button> : !saved ? <Button onClick={finish}>Try saving again</Button> : <Button onClick={() => router.push(`/creator/playlists/${encodeURIComponent(playlistId)}`)}>Back to playlist</Button>}
             </div>}
           </Dialog.Content>
         </Dialog.Portal>

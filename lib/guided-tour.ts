@@ -35,10 +35,19 @@ export function getGuidedTourPlacement(
     side = "above"
     maxHeight = Math.min(height, spaceAbove)
     top = target.top - gap - maxHeight
+  } else if (Math.max(spaceBelow, spaceAbove) >= Math.min(height, 180)) {
+    // Small screens still have room for a scrollable card outside the target.
+    const below = spaceBelow >= spaceAbove
+    side = below ? "below" : "above"
+    maxHeight = Math.min(height, below ? spaceBelow : spaceAbove)
+    top = below ? target.bottom + gap : target.top - gap - maxHeight
   } else {
+    // A full-screen map cannot fit a card beside it. Use a compact bottom sheet
+    // instead of covering the entire highlighted area with the full tutorial.
     side = "floating"
+    maxHeight = Math.min(height, Math.max(180, viewport.height * 0.45))
     left = clampLeft((viewport.width - width) / 2)
-    top = clampTop(target.top)
+    top = clampTop(viewport.height - maxHeight - margin, maxHeight)
   }
   return { width, left, top, below: side === "below", maxHeight, side }
 }

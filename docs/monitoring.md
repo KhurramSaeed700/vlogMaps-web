@@ -8,6 +8,8 @@ The bug icon in home/watch navigation, the editor settings menu, Contact, and th
 
 ## Configuration
 
+Sentry is disabled during development by default, including SDK initialization, feedback UI, replay, and build instrumentation. Production monitoring stays enabled when a DSN is configured. `NEXT_PUBLIC_SENTRY_ENABLED=false` pauses it in any environment; `true` explicitly enables local verification. The local ignored environment file currently sets it to `false`. Restart the dev server after changing this setting; production changes need a rebuild.
+
 - `NEXT_PUBLIC_SENTRY_DSN`: use the project's public DSN from Sentry Settings → Projects → vlogmaps-web → Client Keys. Safe for the browser; not an authentication token.
 - `SENTRY_ORG=snb-pd` and `SENTRY_PROJECT=vlogmaps-web`: source map upload destination.
 - `SENTRY_AUTH_TOKEN`: optional private build token with the source-map upload permissions prescribed by Sentry. Keep in ignored local environment files or the deployment platform's encrypted build variables. Never prefix it `NEXT_PUBLIC_` or commit it.
@@ -22,7 +24,7 @@ Routine session replay is off. Performance tracing samples 5% of transactions. A
 ## Verification
 
 1. Run `node scripts/test-monitoring.cjs` and the existing player/map regression scripts. Run `tsc --noEmit` and `git diff --check`.
-2. Start development and open `/monitoring-test`. Click **Send test error** and **Send server test error**. The server test deliberately returns 503 with a request reference. The page is unavailable in production.
+2. For deliberate verification only, set `NEXT_PUBLIC_SENTRY_ENABLED=true` in `.env.local`, restart development, and open `/monitoring-test`. Click **Send test error** and **Send server test error**. The server test deliberately returns 503 with a request reference. The page is unavailable in production.
 3. Find **VlogMaps monitoring verification** in Sentry Issues; confirm its event reference, `operation` tag, and deliberate breadcrumb. Check that sensitive payloads are absent.
 4. Open **Report a problem**, verify keyboard interaction and submit a clearly labeled test description if testing delivery.
 5. Test watch/edit map tracking, fullscreen exit, and countdown playback with the browser console open.

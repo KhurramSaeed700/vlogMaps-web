@@ -1,14 +1,18 @@
 "use client"
 
+import { buildStopRegionCameraPlan, getStopRegionCameraAtTime, type StopRegionCameraWindow } from "@/lib/stop-region-camera"
 import { getTripPreviewTiming } from "@/lib/trip-preview"
+import { useStopRegions, getStopRegionKeyAtPoint } from "@/components/maps/use-stop-regions"
+import { stopRegionBounds, type StopRegionPoint } from "@/lib/stop-regions"
 
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import { readMapPreloadPolicy } from "@/lib/map-preload-policy"
 import { attachMapLoading, canPreloadMap, createWorldFallbackStyle, getMapLoadingObservation, isMapStyleReady, setDetailedMapStyle } from "@/lib/map-loading"
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
-import { Crosshair, ExternalLink, Loader2, Play, Redo2, Search, Undo2, X } from "lucide-react"
+import { ArrowRight, Crosshair, ExternalLink, Loader2, Play, Redo2, Search, Undo2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { MapStylePicker } from "@/components/maps/map-style-picker"
 import { Input } from "@/components/ui/input"
 import { hasMapboxAccessToken, mapboxAccessToken } from "@/lib/mapbox"
 import { buildCameraZoomPlan, getCameraPlanTarget, type CameraZoomWindow } from "@/lib/map-camera-plan"
@@ -17,7 +21,7 @@ import { getFlightRouteKeyframes } from "@/lib/flight-path"
 import type { CreatorTripEndpoint, CreatorTripRoute } from "@/lib/creator-trip-route"
 import { getTimestampLegKey, type CreatorRouteShapePoint, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
 import { getCoordinateSearchResult } from "@/lib/location-search/query-utils"
-import { createGreatCircleFlightCoordinates, createInitialRoutedLegs, fetchRoutedLegsForKeyframes, isFlightRouteLeg, type RouteCoordinate, type RoutedLeg } from "@/lib/mapbox-directions"
+import { createGreatCircleFlightCoordinates, createInitialRoutedLegs, fetchRoutedLegsForKeyframes, splitRoutedLegSections, isFlightRouteLeg, type RouteCoordinate, type RoutedLeg } from "@/lib/mapbox-directions"
 import {
   createFlightAirplaneMarkerElement,
   flightPathLineWidth,
@@ -190,6 +194,9 @@ function canRearmTimestampHighlight(currentTime: number, timestamp: number) {
 }
 
 interface MapboxLocationPickerProps {
+  regionPoints?: readonly StopRegionPoint[]
+  onStopRegionClick?: (point: StopRegionPoint) => void
+  activeRegionRadiusKm?: number
   landmarkSearchResult?: { name: string; lat: number; lng: number; requestId: number } | null
   value: { lat: number; lng: number } | null
   points: CreatorMapPoint[]
@@ -201,6 +208,7 @@ interface MapboxLocationPickerProps {
   routeShapes?: CreatorRouteShapes
   routeProgressTime?: number | null
   liveRouteProgressTimeRef?: { readonly current: number | null }
+  trackingRequestId?: number
   isPlaying?: boolean
   isPlacementEnabled?: boolean
   placementSessionKey?: string | number | null
@@ -265,6 +273,7 @@ interface TimestampRouteSegmentInput {
   isStationary?: boolean
   isFallback?: boolean
   routeKind?: "road" | "flight" | "offroad"
+  sections?: RoutedLeg["sections"]
 }
 
 type RouteShapeTarget =
@@ -835,17 +844,9 @@ function buildTimestampRouteSegments(legs: TimestampRouteSegmentInput[]) {
       return [] satisfies TimestampRouteSegment[]
     }
 
-    return [
-      createTimestampRouteSegment({
-        legKey: leg.legKey,
-        fromTime: leg.fromTime,
-        toTime: leg.toTime,
-        routeKind: leg.routeKind ?? "road",
-        isFallback: leg.isFallback,
-        isStationary: leg.isStationary,
-        coordinates: leg.coordinates,
-      }),
-    ]
+    return splitRoutedLegSections({ ...leg, routeKind: leg.routeKind ?? "road" }).map(section =>
+      createTimestampRouteSegment({ ...section, legKey: leg.legKey }),
+    )
   }).flat()
 }
 
@@ -909,6 +910,9 @@ function createTimestampMarkerElement(label: string, pointType?: CreatorMapPoint
 }
 
 export function MapboxLocationPicker({
+  regionPoints,
+  onStopRegionClick,
+  activeRegionRadiusKm,
   landmarkSearchResult,
   value,
   points,
@@ -920,6 +924,7 @@ export function MapboxLocationPicker({
   routeShapes,
   routeProgressTime = null,
   liveRouteProgressTimeRef,
+  trackingRequestId = 0,
   isPlaying = false,
   isPlacementEnabled = false,
   placementSessionKey = null,
@@ -974,6 +979,7 @@ export function MapboxLocationPicker({
   const routeShapeClickSuppressedUntilRef = useRef(0)
   const routeShapeDragCleanupRef = useRef<(() => void) | null>(null)
   const isTrackingTravelerRef = useRef(false)
+  const handledTrackingRequestRef = useRef(0)
   const trackingAutoStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const trackingAutoStartDeadlineRef = useRef<number | null>(null)
   const trackingAutoStartCancelledRef = useRef(false)
@@ -981,6 +987,7 @@ export function MapboxLocationPicker({
   const trackingCameraCenterRef = useRef<RouteCoordinate | null>(null)
   const trackingCameraZoomRef = useRef<number | null>(null)
   const cameraZoomPlanRef = useRef<CameraZoomWindow[]>([])
+  const stopRegionCameraPlanRef = useRef<StopRegionCameraWindow[]>([])
   const trackingFrameTimeRef = useRef<number | null>(null)
   const trackingTargetCenterRef = useRef<RouteCoordinate | null>(null)
   const trackingTargetZoomRef = useRef<number | null>(null)
@@ -1028,6 +1035,9 @@ export function MapboxLocationPicker({
   const pendingTripRouteKeyRef = useRef<string | null>(null)
   const [isLoaded, setIsLoaded] = useState(false)
   const [mapStyle, setMapStyle] = useState<MapStyleOptionId>(persistedMapStyleRef.current)
+  const onStopRegionClickRef = useRef(onStopRegionClick)
+  useEffect(() => { onStopRegionClickRef.current = onStopRegionClick }, [onStopRegionClick])
+  useStopRegions(mapInstanceRef, isLoaded, mapStyle, regionPoints ?? points, onStopRegionClick)
   const [searchQuery, setSearchQuery] = useState("")
   const [hasSearchMarker, setHasSearchMarker] = useState(false)
   const [searchResults, setSearchResults] = useState<GeocodingFeature[]>([])
@@ -1767,6 +1777,9 @@ export function MapboxLocationPicker({
 
   const rebuildCameraZoomPlan = (map: mapboxgl.Map) => {
     const container = map.getContainer()
+    stopRegionCameraPlanRef.current = buildStopRegionCameraPlan(routePointsRef.current, {
+      width: container.clientWidth, height: container.clientHeight,
+    })
     cameraZoomPlanRef.current = buildCameraZoomPlan(timestampRouteSegmentsRef.current, {
       width: container.clientWidth, height: container.clientHeight,
       minZoom: map.getMinZoom(), maxZoom: map.getMaxZoom(),
@@ -1881,8 +1894,10 @@ export function MapboxLocationPicker({
           trackingTargetModeRef.current = "flight-overview"
         }
 
-        const targetCenter = trackingTargetCenterRef.current ?? targetCoordinate
-        const targetZoom = trackingTargetZoomRef.current ?? currentZoom
+        const regionCamera = getStopRegionCameraAtTime(stopRegionCameraPlanRef.current, progressTime)
+        const targetCenter = regionCamera?.center ?? trackingTargetCenterRef.current ?? targetCoordinate
+        const regionMaxZoom = regionCamera ? Math.max(activeMap.getMinZoom(), regionCamera.maxZoom) : Infinity
+        const targetZoom = Math.min(trackingTargetZoomRef.current ?? currentZoom, regionMaxZoom)
         const isFlightOverview = trackingTargetModeRef.current === "flight-overview"
         const isRapidLandOverview = trackingTargetModeRef.current === "rapid-land-overview"
         const activeTrackingSegment = getRouteSegmentAtTime(
@@ -1921,7 +1936,7 @@ export function MapboxLocationPicker({
           0.001,
           0.5,
         )
-        const nextCenter = followsVideoTime
+        const nextCenter = followsVideoTime || regionCamera !== null
           ? targetCenter
           : interpolateRouteCoordinate(currentCenter, targetCenter, centerSmoothing)
 
@@ -1932,6 +1947,7 @@ export function MapboxLocationPicker({
           activeMap.jumpTo({
             center: targetCenter,
             zoom: targetZoom,
+            ...(regionCamera ? { pitch: 0 } : {}),
           })
           finishTrackingLoading()
           trackingAnimationFrameRef.current = window.requestAnimationFrame(animate)
@@ -1954,10 +1970,10 @@ export function MapboxLocationPicker({
           0.001,
           0.28,
         )
-        const nextZoom =
+        const nextZoom = Math.min(regionMaxZoom,
           followsVideoTime && plannedTarget !== null
             ? targetZoom
-            : currentZoom + (targetZoom - currentZoom) * zoomSmoothing
+            : currentZoom + (targetZoom - currentZoom) * zoomSmoothing)
 
         const cameraChanged =
           haversineDistance(currentCenter, nextCenter) >= 0.0001 ||
@@ -1969,6 +1985,7 @@ export function MapboxLocationPicker({
           activeMap.jumpTo({
             center: nextCenter,
             zoom: nextZoom,
+            ...(regionCamera ? { pitch: 0 } : {}),
           })
         }
       } else if (trackingLoadingStartedAtRef.current !== null) {
@@ -2174,13 +2191,19 @@ export function MapboxLocationPicker({
     trackingStopZoomRef.current = null
     trackingSpeedKmhRef.current = getPlannedTrackingSpeedKmh(timestampRouteSegmentsRef.current, nextTime)
     const plannedTarget = getCameraPlanTarget(cameraZoomPlanRef.current, nextTime)
-    const zoom = plannedTarget?.zoom ?? clampNumber(getTravelerTrackingZoom(map, nextTime),
-      Math.max(map.getMinZoom(), editorTravelerTrackingMinZoom),
-      Math.min(map.getMaxZoom(), editorTravelerTrackingCloseMaxZoom))
-    const center = plannedTarget?.center ?? nextCoordinate
+    const regionCamera = getStopRegionCameraAtTime(stopRegionCameraPlanRef.current, nextTime)
+    const zoom = Math.min(
+      regionCamera ? Math.max(map.getMinZoom(), regionCamera.maxZoom) : Infinity,
+      plannedTarget?.zoom ?? clampNumber(
+        getTravelerTrackingZoom(map, nextTime),
+        Math.max(map.getMinZoom(), editorTravelerTrackingMinZoom),
+        Math.min(map.getMaxZoom(), editorTravelerTrackingCloseMaxZoom),
+      ),
+    )
+    const center = regionCamera?.center ?? plannedTarget?.center ?? nextCoordinate
     map.stop()
     setRouteProgressMarker(map, nextCoordinate, nextTime)
-    map.jumpTo({ center, zoom })
+    map.jumpTo({ center, zoom, ...(regionCamera ? { pitch: 0 } : {}) })
     trackingCameraCenterRef.current = center
     trackingCameraZoomRef.current = zoom
     trackingTargetCenterRef.current = center
@@ -2341,7 +2364,7 @@ export function MapboxLocationPicker({
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.code === "Delete" && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.repeat && !event.isComposing && !shouldIgnoreMapKeyboardShortcut(event.target)) {
+      if ((event.code === "Delete" || event.code === "KeyD" || event.key === "Delete" || event.key?.toLowerCase() === "d") && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.repeat && !event.isComposing && !shouldIgnoreMapKeyboardShortcut(event.target)) {
         event.preventDefault()
         clearSearchMarker()
         return
@@ -3136,6 +3159,10 @@ export function MapboxLocationPicker({
     const currentPoints = pointsRef.current
     updateTimestampPointLayer(map, currentPoints)
     const currentRoutePoints = routePointsRef.current
+    const container = map.getContainer()
+    stopRegionCameraPlanRef.current = buildStopRegionCameraPlan(currentRoutePoints, {
+      width: container.clientWidth, height: container.clientHeight,
+    })
 
     const routeRequestId = routeRequestIdRef.current + 1
     routeRequestIdRef.current = routeRequestId
@@ -3149,6 +3176,7 @@ export function MapboxLocationPicker({
         lng: point.lng,
         pointType: point.pointType,
         flightPhase: point.flightPhase,
+        regionCircle: point.regionCircle,
         via: legKey ? routeShapesRef.current?.timestampLegs[legKey]?.map(toRouteCoordinate) : undefined,
       }
     })
@@ -3190,10 +3218,13 @@ export function MapboxLocationPicker({
         }
 
         const movementStartTime = stopEndTime ?? leg.fromTime
-        if (movementStartTime < nextPoint.time) {
+        // Preserve the connection even when adjacent stops leave no travel gap.
+        // It is revealed at the next timestamp without changing saved times.
+        if (movementStartTime <= nextPoint.time) {
           segments.push(
             ...buildTimestampRouteSegments([
               {
+                ...leg,
                 legKey,
                 fromTime: movementStartTime,
                 toTime: nextPoint.time,
@@ -3605,6 +3636,8 @@ export function MapboxLocationPicker({
       }
     })
     map.on("click", (event) => {
+      // Let the shared region handler open radius editing without changing a route.
+      if (onStopRegionClickRef.current && getStopRegionKeyAtPoint(map, event.point)) return
       // A pending timestamp placement takes priority over selecting the route.
       if (isPlacementEnabledRef.current && !activeTripEndpointRef.current) {
         event.preventDefault()
@@ -3738,6 +3771,15 @@ export function MapboxLocationPicker({
   }, [isLoaded, points, routeShapes])
 
   useEffect(() => {
+    if (!isLoaded || !mapInstanceRef.current || trackingRequestId <= handledTrackingRequestRef.current) return
+    handledTrackingRequestRef.current = trackingRequestId
+    // Completing a flight explicitly requests follow after airport/map selection
+    // suspended it. Consume once so later manual exploration remains possible.
+    cancelTrackingAutoStart()
+    enableTravelerTracking()
+  }, [isLoaded, trackingRequestId])
+
+  useEffect(() => {
     const map = mapInstanceRef.current
     if (!map || !isLoaded) {
       return
@@ -3810,12 +3852,17 @@ export function MapboxLocationPicker({
       return
     }
 
+    const regionBounds = activeRegionRadiusKm ? stopRegionBounds(value, activeRegionRadiusKm) : null
+    if (regionBounds) {
+      map.fitBounds([[regionBounds[0], regionBounds[1]], [regionBounds[2], regionBounds[3]]], { padding: 80, maxZoom: 16, duration: 500 })
+      return
+    }
     map.easeTo({
       center: [value.lng, value.lat],
       duration: 500,
       zoom: Math.max(map.getZoom(), 6),
     })
-  }, [activePointNumber, isLoaded, value])
+  }, [activePointNumber, activeRegionRadiusKm, isLoaded, value])
 
   useEffect(() => {
     const styleUrl = mapStyleOptions.find((option) => option.id === mapStyle)?.style
@@ -4096,7 +4143,7 @@ export function MapboxLocationPicker({
   const googleMapsQuery = searchQuery.trim()
 
   return (
-    <div className={`relative overflow-hidden ${className}`}>
+    <div className={`@container/map-toolbar relative overflow-hidden ${className}`}>
       <div ref={mapRef} className="h-full w-full" />
       {!hasMapboxAccessToken && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-100 p-4 text-center text-slate-700">
@@ -4124,12 +4171,38 @@ export function MapboxLocationPicker({
         </div>
       )}
 
+      {hasMapboxAccessToken &&
+        isLoaded &&
+        hasTrackableTraveler &&
+        !isTrackingTraveler &&
+        !isTrackingAutoStartCancelled && (
+        <div className="pointer-events-none absolute bottom-3 left-3 right-16 z-40 flex justify-end sm:bottom-4 sm:left-auto sm:right-16">
+          <Button
+            type="button"
+            onClick={toggleTravelerTracking}
+            aria-label={`Start tracking now; tracking starts automatically after ${editorTrackingAutoStartDurationMs / 1000} seconds`}
+            className="pointer-events-auto relative h-11 w-44 max-w-full overflow-hidden rounded-lg border border-white/25 bg-slate-950/75 px-4 text-white shadow-lg hover:bg-slate-950/75"
+          >
+            <span
+              aria-hidden="true"
+              className="route-intro-countdown-fill absolute inset-0 origin-left bg-orange-600"
+              style={{ animationDuration: `${editorTrackingAutoStartDurationMs}ms` }}
+            />
+            <span className="relative z-10 flex items-center justify-center">
+              <Play className="mr-2 h-4 w-4" />
+              Start Tracking
+            </span>
+          </Button>
+        </div>
+      )}
+
+      <div aria-label="Map toolbar" className="pointer-events-none absolute inset-x-3 top-3 z-40 flex items-start justify-between gap-2 sm:inset-x-4 sm:top-4">
       <form
         onSubmit={searchLocations}
-        className="absolute left-3 right-3 top-3 z-20 sm:left-4 sm:right-auto sm:w-[22rem]"
+        className="pointer-events-auto min-w-0 flex-1 max-w-[22rem]"
       >
-        <div className="flex items-center gap-2 rounded-xl bg-white/95 p-1 shadow-lg backdrop-blur-sm">
-          <Search className="ml-2 h-4 w-4 shrink-0 text-slate-500" />
+        <div className="flex h-11 items-center gap-2 rounded-2xl border border-white/15 bg-slate-950/85 p-1.5 pl-3 text-white shadow-[0_4px_20px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-shadow focus-within:border-emerald-300/50 focus-within:ring-2 focus-within:ring-emerald-400/20">
+          <Search className="h-4 w-4 shrink-0 text-white/50" />
           <Input
             ref={searchInputRef}
             aria-keyshortcuts="/"
@@ -4155,15 +4228,15 @@ export function MapboxLocationPicker({
             aria-expanded={searchResults.length > 0 || Boolean(searchError) || isSearching || Boolean(googleMapsQuery)}
             aria-controls="map-search-suggestions"
             aria-activedescendant={activeSearchIndex >= 0 ? `map-search-suggestion-${activeSearchIndex}` : undefined}
-            className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="h-8 min-w-0 border-0 bg-transparent px-0 text-sm text-white shadow-none placeholder:text-white/50 focus-visible:ring-0 focus-visible:ring-offset-0"
           />
           {searchQuery && (
-            <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={clearSearch}>
+            <Button type="button" variant="ghost" size="icon" aria-label="Clear search" className="h-7 w-7 shrink-0 rounded-lg text-white/50 hover:bg-white/10 hover:text-white" onClick={clearSearch}>
               <X className="h-4 w-4" />
             </Button>
           )}
-          <Button type="submit" size="sm" disabled={isSearching}>
-            {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : "Go"}
+          <Button type="submit" size="icon" aria-label="Search map" title="Search map" className="h-8 w-8 shrink-0 rounded-xl bg-white/10 p-0 text-white shadow-none transition-colors hover:bg-white/20 disabled:bg-white/5 disabled:text-white/40" disabled={isSearching}>
+            {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" aria-hidden="true" />}
           </Button>
         </div>
 
@@ -4173,13 +4246,13 @@ export function MapboxLocationPicker({
             variant="outline"
             size="sm"
             onClick={clearSearchMarker}
-            aria-keyshortcuts="Shift+Delete"
-            title="Clear search marker (Shift+Delete)"
+            aria-keyshortcuts="Shift+Delete Shift+D"
+            title="Clear search marker (Shift+D or Shift+Delete)"
             className="mt-2 bg-background shadow-sm"
           >
             <X className="h-4 w-4" />
             Clear marker
-            <span className="text-xs text-muted-foreground">Shift+Del</span>
+            <span className="text-xs text-muted-foreground">Shift + D / Shift + Del</span>
           </Button>
         )}
 
@@ -4224,32 +4297,7 @@ export function MapboxLocationPicker({
         )}
       </form>
 
-      {hasMapboxAccessToken &&
-        isLoaded &&
-        hasTrackableTraveler &&
-        !isTrackingTraveler &&
-        !isTrackingAutoStartCancelled && (
-        <div className="pointer-events-none absolute bottom-3 left-3 right-16 z-40 flex justify-end sm:bottom-4 sm:left-auto sm:right-16">
-          <Button
-            type="button"
-            onClick={toggleTravelerTracking}
-            aria-label={`Start tracking now; tracking starts automatically after ${editorTrackingAutoStartDurationMs / 1000} seconds`}
-            className="pointer-events-auto relative h-11 w-44 max-w-full overflow-hidden rounded-lg border border-white/25 bg-slate-950/75 px-4 text-white shadow-lg hover:bg-slate-950/75"
-          >
-            <span
-              aria-hidden="true"
-              className="route-intro-countdown-fill absolute inset-0 origin-left bg-orange-600"
-              style={{ animationDuration: `${editorTrackingAutoStartDurationMs}ms` }}
-            />
-            <span className="relative z-10 flex items-center justify-center">
-              <Play className="mr-2 h-4 w-4" />
-              Start Tracking
-            </span>
-          </Button>
-        </div>
-      )}
-
-      <div className="absolute right-3 top-16 z-40 flex max-w-[calc(100%-1.5rem)] flex-wrap justify-end gap-1 sm:right-4 sm:top-4 sm:gap-2">
+      <div className="pointer-events-auto flex shrink-0 items-start justify-end gap-1 sm:gap-2">
         <div className="flex shrink-0 items-center gap-1 rounded-xl border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md">
           <Button
             type="button"
@@ -4257,7 +4305,8 @@ export function MapboxLocationPicker({
             variant="ghost"
             className="h-8 w-8 rounded-lg text-white hover:bg-white/15 hover:text-white disabled:text-white/35"
             aria-label="Undo map click"
-            title="Undo"
+            title="Undo (Ctrl+Z)"
+            aria-keyshortcuts="Control+Z Meta+Z"
             disabled={!canUndo}
             onClick={onUndo}
           >
@@ -4269,7 +4318,8 @@ export function MapboxLocationPicker({
             variant="ghost"
             className="h-8 w-8 rounded-lg text-white hover:bg-white/15 hover:text-white disabled:text-white/35"
             aria-label="Redo map click"
-            title="Redo"
+            title="Redo (Ctrl+Shift+Z)"
+            aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z"
             disabled={!canRedo}
             onClick={onRedo}
           >
@@ -4295,24 +4345,8 @@ export function MapboxLocationPicker({
             <Crosshair className={`h-4 w-4 ${isTrackingTraveler ? "stroke-[2.5]" : ""}`} />
           </Button>
         </div>
-        <div className="flex min-w-0 items-center gap-1 rounded-xl border border-white/15 bg-slate-950/85 p-1 shadow-lg backdrop-blur-md">
-          {mapStyleOptions.map((option) => (
-            <Button
-              key={option.id}
-              type="button"
-              size="sm"
-              variant={mapStyle === option.id ? "default" : "ghost"}
-              className={`rounded-lg ${
-                mapStyle === option.id
-                  ? "bg-white text-slate-950 hover:bg-white/90"
-                  : "text-white/85 hover:bg-white/15 hover:text-white"
-              }`}
-              onClick={() => changeMapStyle(option.id)}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
+          <MapStylePicker value={mapStyle} onChange={changeMapStyle} />
+      </div>
       </div>
     </div>
   )

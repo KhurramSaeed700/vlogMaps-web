@@ -218,3 +218,15 @@
   .tour-demo-traveler-static { display: inline; }
   .tour-demo-progress, .tour-demo-volume { width: 60%; }
 }
+
+/* Keep shortcut labels centered independently of surrounding text baselines. */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  vertical-align: middle;
+  text-align: center;
+  white-space: nowrap;
+}

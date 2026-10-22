@@ -24,11 +24,12 @@ async function main(){
  process.env.YOUTUBE_DATA_API_KEY='test-only'
  global.fetch=async url=>{
   assert.equal(url.hostname,'www.googleapis.com');calls.push(url)
-  return {ok:true,json:async()=>url.pathname.endsWith('/playlists')?{items:[{snippet:{title:'Trip series'}}]}:url.searchParams.has('pageToken')?{items:[item('bbbbbbbbbbb',1),item('aaaaaaaaaaa',2),item('ccccccccccc',3,{status:{privacyStatus:'private'}})]}:{nextPageToken:'page-two',items:[item('aaaaaaaaaaa',0)]}}
+  return {ok:true,json:async()=>url.pathname.endsWith('/videos')?{items:[{id:'aaaaaaaaaaa',contentDetails:{duration:'PT18M41S'}},{id:'bbbbbbbbbbb',contentDetails:{duration:'PT1H2M3S'}}]}:url.pathname.endsWith('/playlists')?{items:[{snippet:{title:'Trip series'}}]}:url.searchParams.has('pageToken')?{items:[item('bbbbbbbbbbb',1),item('aaaaaaaaaaa',2),item('ccccccccccc',3,{status:{privacyStatus:'private'}})]}:{nextPageToken:'page-two',items:[item('aaaaaaaaaaa',0)]}}
  }
  const preview=await server.loadYouTubePlaylist('PL1234567890')
- assert.equal(calls.length,3)
+ assert.equal(calls.length,4)
  assert.deepEqual(preview.items.map(v=>v.youtubeId),['aaaaaaaaaaa','bbbbbbbbbbb'])
+ assert.equal(preview.items[0].durationSeconds,1121);assert.equal(preview.items[1].durationSeconds,3723);
  assert.equal(preview.unavailableCount,1);assert.equal(preview.truncated,false)
  assert.equal(calls[2].searchParams.get('pageToken'),'page-two')
  delete process.env.YOUTUBE_DATA_API_KEY;delete process.env.YOUTUBE_API_KEY

@@ -1,8 +1,12 @@
+import { extractYouTubePlaylistId } from "@/lib/youtube-playlist"
+import { extractYouTubeId } from "@/lib/youtube"
 import { ContentPageShell } from "@/components/app-shell/content-page-shell"
 import { CreatorAccessGuard } from "@/components/creator/creator-access-guard"
 import { CreatorVideoWorkspace } from "@/components/creator/creator-video-workspace"
 
-export default function NewCreatorVideoPage() {
+export default async function NewCreatorVideoPage({ searchParams }: { searchParams: Promise<{ url?: string }> }) {
+  const query = await searchParams
+  const initialUrl = typeof query.url === "string" && (extractYouTubePlaylistId(query.url) || extractYouTubeId(query.url)) ? query.url : ""
   return (
     <ContentPageShell
       title="Creator Video Workspace"
@@ -15,7 +19,7 @@ export default function NewCreatorVideoPage() {
       framedContent={false}
     >
       <CreatorAccessGuard>
-        <CreatorVideoWorkspace />
+        <CreatorVideoWorkspace key={initialUrl} initialUrl={initialUrl} />
       </CreatorAccessGuard>
     </ContentPageShell>
   )

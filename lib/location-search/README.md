@@ -21,3 +21,6 @@ Tests: `node scripts/test-location-search.cjs` and `node scripts/test-location-s
 This is not a universal geocoder: transliterations/translated names and places absent from provider indexes cannot always be resolved. Preserve the Google Maps search link as a manual fallback. No ranking algorithm can guarantee Google Maps' coverage.
 
 If we migrate to Google later, add `providers/google.ts`, normalize its response into `LocationSearchResult`, and update `search.ts` to include or replace providers.
+
+Airport-intent queries prioritize matching airports/aerodromes over airport-adjacent businesses and roads. Mapbox POI categories and OpenStreetMap facility types are preserved for ranking, with a name-based fallback. Queries explicitly naming hotels, parking, rentals or roads keep their original intent.
+Named airport queries also search the bundled airport catalog on the server so an airport can be returned even when upstream autocomplete only supplies nearby businesses. Country-specific catalog indexes are cached; explicit hotel/parking/road queries bypass this supplement.

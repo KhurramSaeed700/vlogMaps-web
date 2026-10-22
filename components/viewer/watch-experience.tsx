@@ -1,5 +1,7 @@
 "use client"
 
+import { anonymousRegionName, anonymousRegionMessage } from "@/lib/stop-regions"
+
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import * as Dialog from "@radix-ui/react-dialog"
@@ -66,6 +68,7 @@ function getActiveTimestampIndex(points: CreatorMapPoint[], currentTime: number)
 }
 
 function getWatchTimestampLabel(point: CreatorMapPoint) {
+  if (point.regionCircle?.anonymous) return anonymousRegionName
   const location = point.location.trim()
   const description = point.description.trim()
   return location || description || `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`
@@ -437,6 +440,9 @@ export function WatchExperience({
   const currentLocation = useMemo(() => {
     return getInterpolatedPointAtTime(mapRoutePoints, currentTime)
   }, [currentTime, mapRoutePoints])
+  const activeAnonymousRegion = routePoints[activeTimestampIndex]
+  const showAnonymousRegion = Boolean(activeAnonymousRegion?.regionCircle?.anonymous &&
+    currentTime >= activeAnonymousRegion.time && currentTime < (activeAnonymousRegion.stopEndTime ?? routePoints[activeTimestampIndex + 1]?.time ?? Infinity))
   const showFeedback = (message: string) => {
     if (feedbackTimeoutRef.current !== null) {
       window.clearTimeout(feedbackTimeoutRef.current)
@@ -707,6 +713,10 @@ export function WatchExperience({
         </div>
 
         <div data-watch-tour="map" className="relative z-0 order-2 h-[calc(100dvh-6.5rem-56.25vw)] min-h-[20rem] shrink-0 overflow-hidden sm:h-[calc(100dvh-3.5rem-56.25vw)] lg:order-none lg:h-full lg:min-h-0 lg:flex-1">
+          {showAnonymousRegion && <div role="status" className="pointer-events-none absolute bottom-5 left-16 right-4 z-20 w-fit max-w-[calc(100%-5rem)] rounded-lg border border-orange-300/40 bg-background/95 px-3 py-2 text-foreground shadow-lg">
+            <p className="text-sm font-semibold">{anonymousRegionName}</p>
+            <p className="text-xs text-muted-foreground">{anonymousRegionMessage}</p>
+          </div>}
           <MapboxTravelMap
             keyframes={mapRoutePoints}
             markerKeyframes={routePoints}

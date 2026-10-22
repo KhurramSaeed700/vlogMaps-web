@@ -65,9 +65,9 @@ export function PlaylistImporter({ url, onImported, onBusyChange }: { url: strin
           const video: TravelVideo = {
             id: crypto.randomUUID(), youtubeId: item.youtubeId, title: item.title, creator: item.creator,
             creatorChannelUrl: item.channelId ? `https://www.youtube.com/channel/${item.channelId}` : `https://www.youtube.com/watch?v=${item.youtubeId}`,
-            thumbnail: getYouTubeThumbnailUrl(item.youtubeId), durationSeconds: 0,
+            thumbnail: getYouTubeThumbnailUrl(item.youtubeId), durationSeconds: item.durationSeconds || 0,
             views: 0, mapViews: 0, likes: 0, status: "draft", visibility: "private",
-            createdAt: new Date().toISOString(), description: `Imported from ${playlist.title}.`, locations: [], keyframes: [], tags: ["creator", `playlist:${playlist.id}`],
+            createdAt: new Date().toISOString(), description: `Imported from ${playlist.title}.`, locations: [], keyframes: [], tags: ["creator", `playlist:${playlist.id}`, `playlist-position:${item.position}`, `playlist-title:${playlist.title.slice(0, 65)}`],
           }
           try {
             const result = await uploadCreatorVideoToCloud(video, buildCreatorVideoStateSnapshot(video))
@@ -107,6 +107,7 @@ export function PlaylistImporter({ url, onImported, onBusyChange }: { url: strin
           </li>)}
         </ol>
         {busy && <div role="status" className="space-y-1 text-sm"><p>Importing {progress.done} of {progress.total}… Keep this page open.</p><progress className="w-full" value={progress.done} max={progress.total} /></div>}
+        {playlist.items.some(item => existing.has(item.youtubeId)) && <Button asChild variant="outline"><Link href={`/creator/playlists/${encodeURIComponent(playlist.id)}`}>Open playlist workspace</Link></Button>}
         {playlist.items.some(item => existing.has(item.youtubeId)) && <Button asChild variant="outline"><Link href={playlistEditorHref(existing.get(playlist.items.find(item => existing.has(item.youtubeId))!.youtubeId)!, playlist.id)}>Start mapping playlist</Link></Button>}
         <div className="flex flex-wrap gap-2"><Button onClick={importVideos} disabled={busy || !selected.size}>{busy ? "Importing…" : `Import ${selected.size} videos`}</Button>{busy && <Button variant="outline" onClick={() => { stopRef.current = true }}>Stop after current video</Button>}</div>
       </>}

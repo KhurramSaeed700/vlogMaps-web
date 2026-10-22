@@ -5,6 +5,7 @@ export type VideoKeyframePointType = "point" | "stop" | "flight"
 export type VideoKeyframeFlightPhase = "takeoff" | "landing"
 
 export interface VideoKeyframe {
+  regionCircle?: { radiusKm: number; anonymous?: boolean }
   time: number
   stopEndTime?: number
   flightId?: string

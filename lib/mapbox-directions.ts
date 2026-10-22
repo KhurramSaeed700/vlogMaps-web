@@ -11,6 +11,7 @@ export interface RoutedLeg {
   isStationary?: boolean
   isFallback?: boolean
   routeKind: RoutedLegKind
+  sections?: Array<{ routeKind: RoutedLegKind; coordinates: RouteCoordinate[] }>
 }
 
 interface RoutableKeyframe {
@@ -19,6 +20,7 @@ interface RoutableKeyframe {
   lng: number
   pointType?: "point" | "stop" | "flight"
   flightPhase?: "takeoff" | "landing"
+  regionCircle?: { radiusKm: number; anonymous?: boolean }
   via?: RouteCoordinate[]
 }
 
@@ -29,7 +31,6 @@ export function isFlightRouteLeg(
   return startPointType === "flight" && endPointType === "flight"
 }
 
-const airportGroundTransferMaxDistanceKm = 8
 const earthRadiusKm = 6371
 const flightPathTargetSegmentKm = 160
 const flightPathMinSegments = 16
@@ -122,18 +123,6 @@ function getCoordinateDistanceKm(start: RoutableKeyframe, end: RoutableKeyframe)
   return earthRadiusKm * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
 }
 
-export function isDirectPostFlightTransfer(start: RoutableKeyframe, end: RoutableKeyframe) {
-  // A nearby point immediately after landing is usually the terminal, gate, or airport lobby.
-  // Keep explicit creator-drawn shapes authoritative and leave longer onward trips road-routed.
-  return (
-    start.pointType === "flight" &&
-    start.flightPhase === "landing" &&
-    end.pointType !== "flight" &&
-    !start.via?.length &&
-    getCoordinateDistanceKm(start, end) <= airportGroundTransferMaxDistanceKm
-  )
-}
-
 interface DirectionsRoute {
   geometry?: {
     coordinates?: RouteCoordinate[]
@@ -161,7 +150,7 @@ type DirectionsResolution =
   | { status: "no-route" }
 
 const routedLegCache = new Map<string, Promise<DirectionsResolution>>()
-const routeAlgorithmVersion = "road-v4-shortest-per-leg"
+const routeAlgorithmVersion = "road-v5-region-centers"
 const defaultRoutePreference: RoutePreference = "shortest"
 const maxConcurrentDirectionsRequests = 4
 const maxDirectionsWaypoints = 23
@@ -406,30 +395,98 @@ async function fetchDirectionsGeometry(
   return resolution
 }
 
+function coordinateDistanceKm(start: RouteCoordinate, end: RouteCoordinate) {
+  return getCoordinateDistanceKm(
+    { time: 0, lng: start[0], lat: start[1] },
+    { time: 0, lng: end[0], lat: end[1] },
+  )
+}
+
+function routeDistanceKm(coordinates: RouteCoordinate[]) {
+  let distance = 0
+  for (let index = 1; index < coordinates.length; index += 1) {
+    distance += coordinateDistanceKm(coordinates[index - 1], coordinates[index])
+  }
+  return distance
+}
+
+// Split only when route data changes. Animation continues using the existing
+// indexed timeline and precomputed distances, including the off-road connectors.
+export function splitRoutedLegSections(leg: RoutedLeg): RoutedLeg[] {
+  if (!leg.sections?.length || leg.isStationary) return [leg]
+  const distances = leg.sections.map(section => routeDistanceKm(section.coordinates))
+  const totalDistance = distances.reduce((sum, distance) => sum + distance, 0)
+  if (totalDistance <= 0) return [leg]
+  let fromTime = leg.fromTime
+  return leg.sections.map((section, index) => {
+    const toTime = index === leg.sections!.length - 1
+      ? leg.toTime
+      : fromTime + (leg.toTime - leg.fromTime) * distances[index] / totalDistance
+    const result: RoutedLeg = {
+      fromTime,
+      toTime,
+      coordinates: section.coordinates,
+      routeKind: section.routeKind,
+      isStationary: false,
+      isFallback: section.routeKind === "offroad",
+    }
+    fromTime = toTime
+    return result
+  })
+}
+
 function createRoadLeg(
   keyframe: RoutableKeyframe,
   nextKeyframe: RoutableKeyframe,
   resolution: DirectionsResolution,
-) {
+): RoutedLeg {
   const start: RouteCoordinate = [keyframe.lng, keyframe.lat]
   const end: RouteCoordinate = [nextKeyframe.lng, nextKeyframe.lat]
   const coordinates = resolution.status === "routed" ? resolution.geometry.coordinates : []
-  // Directions may return a nearby road even for a point in water or on a trail.
-  // Reject remote snaps once per resolved leg, never during animation.
-  const maxRoadSnapDistanceKm = 0.075
-  const distanceFromPoint = (point: RoutableKeyframe, coordinate: RouteCoordinate) =>
-    getCoordinateDistanceKm(point, { time: point.time, lng: coordinate[0], lat: coordinate[1] })
-  const followsRoad = coordinates.length >= 2 &&
-    distanceFromPoint(keyframe, coordinates[0]) <= maxRoadSnapDistanceKm &&
-    distanceFromPoint(nextKeyframe, coordinates[coordinates.length - 1]) <= maxRoadSnapDistanceKm
-  return {
+  const fallback: RoutedLeg = {
     fromTime: keyframe.time,
     toTime: nextKeyframe.time,
-    isFallback: !followsRoad,
+    isFallback: true,
     isStationary: keyframe.pointType === "stop",
-    routeKind: followsRoad ? "road" : "offroad",
-    coordinates: followsRoad ? coordinates : [start, ...(keyframe.via ?? []), end],
-  } satisfies RoutedLeg
+    routeKind: "offroad",
+    coordinates: [start, ...(keyframe.via ?? []), end],
+  }
+  if (coordinates.length < 2) return fallback
+
+  const maxRoadSnapDistanceKm = 0.075
+  const startGap = coordinateDistanceKm(start, coordinates[0])
+  const endGap = coordinateDistanceKm(coordinates[coordinates.length - 1], end)
+  const followsRoad = startGap <= maxRoadSnapDistanceKm && endGap <= maxRoadSnapDistanceKm
+  if (!followsRoad) {
+    // A region center is an approximate ground location, not evidence of a
+    // boat/trail journey. Preserve the available road between the exact pins.
+    const hasRegionEndpoint = [keyframe, nextKeyframe].some(point =>
+      point.pointType === "stop" && typeof point.regionCircle?.radiusKm === "number" &&
+      Number.isFinite(point.regionCircle.radiusKm) && point.regionCircle.radiusKm >= 0.05 && point.regionCircle.radiusKm <= 500,
+    )
+    const directDistance = coordinateDistanceKm(start, end)
+    const roadDistance = routeDistanceKm(coordinates)
+    const connectedAtOneEnd = Math.min(startGap, endGap) <= maxRoadSnapDistanceKm
+    const hasAirportEndpoint = keyframe.pointType === "flight" || nextKeyframe.pointType === "flight"
+    const mostlyConnected = (connectedAtOneEnd || hasAirportEndpoint || hasRegionEndpoint) &&
+      Math.max(startGap, endGap) <= 3 &&
+      startGap + endGap <= directDistance * 0.2 &&
+      roadDistance <= directDistance * 3
+    if (!mostlyConnected) return fallback
+  }
+
+  const sections: NonNullable<RoutedLeg["sections"]> = []
+  // Include even small connectors so the traveler never jumps from the pin.
+  if (startGap > 0.000001) sections.push({ routeKind: "offroad", coordinates: [start, coordinates[0]] })
+  sections.push({ routeKind: "road", coordinates })
+  if (endGap > 0.000001) sections.push({ routeKind: "offroad", coordinates: [coordinates[coordinates.length - 1], end] })
+  return {
+    ...fallback,
+    isFallback: false,
+    routeKind: "road",
+    coordinates: sections.flatMap((section, index) => index === 0 ? section.coordinates : section.coordinates.slice(1)),
+    sections,
+  }
 }
 
 function createFlightLeg(keyframe: RoutableKeyframe, nextKeyframe: RoutableKeyframe) {
@@ -446,20 +503,6 @@ function createFlightLeg(keyframe: RoutableKeyframe, nextKeyframe: RoutableKeyfr
   } satisfies RoutedLeg
 }
 
-function createDirectPostFlightTransferLeg(keyframe: RoutableKeyframe, nextKeyframe: RoutableKeyframe) {
-  return {
-    fromTime: keyframe.time,
-    toTime: nextKeyframe.time,
-    isFallback: true,
-    isStationary: false,
-    routeKind: "road" as const,
-    coordinates: [
-      [keyframe.lng, keyframe.lat],
-      [nextKeyframe.lng, nextKeyframe.lat],
-    ] as RouteCoordinate[],
-  } satisfies RoutedLeg
-}
-
 export function createInitialRoutedLegs(keyframes: RoutableKeyframe[]): RoutedLeg[] {
   return keyframes.slice(0, -1).map((keyframe, index) => {
     const nextKeyframe = keyframes[index + 1]
@@ -467,9 +510,7 @@ export function createInitialRoutedLegs(keyframes: RoutableKeyframe[]): RoutedLe
       return createFlightLeg(keyframe, nextKeyframe)
     }
 
-    return isDirectPostFlightTransfer(keyframe, nextKeyframe)
-      ? createDirectPostFlightTransferLeg(keyframe, nextKeyframe)
-      : createRoadLeg(keyframe, nextKeyframe, { status: "no-route" })
+    return createRoadLeg(keyframe, nextKeyframe, { status: "no-route" })
   })
 }
 
@@ -481,8 +522,7 @@ export async function fetchRoutedLegsForKeyframes(
   const requests = keyframes.slice(0, -1).map(async (keyframe, index) => {
     const nextKeyframe = keyframes[index + 1]
     if (
-      isFlightRouteLeg(keyframe.pointType, nextKeyframe.pointType) ||
-      isDirectPostFlightTransfer(keyframe, nextKeyframe)
+      isFlightRouteLeg(keyframe.pointType, nextKeyframe.pointType)
     ) {
       options.onLegResolved?.(index, legs[index])
       return

@@ -28,14 +28,14 @@ const {getGuidedTourPlacement} = load('lib/guided-tour.ts', {'@/lib/home-tour':h
 for (const [viewport,target,side] of [
   [{width:1920,height:1080},{top:56,bottom:1080,left:960,width:960},'left'],
   [{width:1920,height:1080},{top:56,bottom:1080,left:0,width:960},'right'],
-  [{width:390,height:844},{top:275,bottom:844,left:0,width:390},'floating'],
-  [{width:320,height:568},{top:230,bottom:568,left:0,width:320},'floating'],
+  [{width:390,height:844},{top:275,bottom:844,left:0,width:390},'above'],
+  [{width:320,height:568},{top:230,bottom:568,left:0,width:320},'above'],
 ]) {
   const p = getGuidedTourPlacement(target,viewport,340)
   assert.equal(p.side,side)
   assert.ok(p.left >= 16 && p.left+p.width <= viewport.width-16)
   assert.ok(p.top >=16 && p.top+p.maxHeight <= viewport.height-16)
-  assert.ok(p.maxHeight >= Math.min(340, viewport.height-32), 'Large targets must not collapse the callout')
+  assert.ok(p.maxHeight >= Math.min(180, viewport.height-32), 'Scrollable callouts retain enough room for navigation')
 }
 console.log('Watch tour passed: independent persistent dismissal, blocked storage, and readable desktop/mobile map callouts.')
 const experience = fs.readFileSync(path.join(__dirname, '../components/viewer/watch-experience.tsx'), 'utf8')

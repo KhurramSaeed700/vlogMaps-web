@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { anonymousRegionName, anonymousRegionMessage } from "@/lib/stop-regions"
 import type { CreatorVideoState } from "@/lib/creator-video-state"
 import type { TravelVideo } from "@/lib/demo-data"
 import { maxVideoLocationSummaries, summarizeVideoLocations } from "@/lib/video-locations"
@@ -24,6 +25,7 @@ const videoKeyframeSchema = z
   .object({
     time: nonNegativeFiniteNumber,
     stopEndTime: nonNegativeFiniteNumber.optional(),
+    regionCircle: z.object({ radiusKm: z.number().finite().min(0.05).max(500), anonymous: z.boolean().optional() }).optional(),
     lat: latitude,
     lng: longitude,
     location: safeText(255).default("Saved location"),
@@ -34,6 +36,8 @@ const videoKeyframeSchema = z
   })
   .transform((point) => ({
     ...point,
+    regionCircle: point.pointType === "stop" ? point.regionCircle : undefined,
+    ...(point.pointType === "stop" && point.regionCircle?.anonymous ? { location: anonymousRegionName, description: anonymousRegionMessage } : {}),
     stopEndTime: point.pointType === "stop" && point.stopEndTime && point.stopEndTime > point.time ? point.stopEndTime : undefined,
     flightId: point.pointType === "flight" ? point.flightId : undefined,
     flightPhase: point.pointType === "flight" ? point.flightPhase : undefined,

@@ -49,11 +49,33 @@ export function getTextMatchScore(query: string, result: LocationSearchResult) {
 
 const geographicTypes = new Set(["country", "region", "state", "province", "place", "city", "town", "municipality", "village", "county", "district", "locality", "borough", "suburb", "neighborhood", "quarter"])
 
+const airportWords = /\b(?:airports?|airfield|aerodrome)\b/
+const airportServices = /\b(?:hotels?|inn|suites?|parking|rentals?|maintenance|road|drive|street|shops?|store|gifts?|kiosk|motel|restaurant|lounge|cafe|taxi|shuttle|fuel)\b/
+
+export function getAirportSearchQuery(query: string) {
+  const normalizedQuery = normalizeSearchText(query)
+  if (!airportWords.test(normalizedQuery) || airportServices.test(normalizedQuery)) return null
+  const primary = normalizeSearchText(parseCopiedAddress(query).primary || query)
+  return primary.split(" ").filter(word => word && !/^(?:airports?|airfield|aerodrome|international|regional|municipal|the)$/.test(word)).join(" ")
+}
+
+function getAirportIntentScore(query: string, result: LocationSearchResult) {
+  const locationWords = getAirportSearchQuery(query)
+  if (locationWords === null) return 0
+  const name = normalizeSearchText(result.text)
+  if (locationWords && coverage(locationWords, result.text + " " + result.place_name) < 0.5) return 0
+  if (airportServices.test(name) || (result.categories ?? []).some(value => airportServices.test(normalizeSearchText(value)))) return -220
+  const airportCategory = [result.feature_type, ...(result.categories ?? [])].some(value => /^(?:airport|airports|aerodrome|airfield)$/.test(normalizeSearchText(value ?? "")))
+  const airportName = /\b(?:airport|airfield|aerodrome)(?: [a-z]{3})?$/.test(name)
+  if (!airportCategory && !airportName) return 0
+  return /\bterminal\b/.test(name) ? 300 : 600
+}
+
 export function getResultScore(result: LocationSearchResult, query: string | string[], proximity: Coordinate | null, bbox: BoundingBox | null, countryCode: CountryCode | null) {
   const original = Array.isArray(query) ? query[0] ?? "" : query
   const parsed = parseCopiedAddress(original)
   const textScore = getTextMatchScore(original, result)
-  let score = textScore * 10
+  let score = textScore * 10 + getAirportIntentScore(original, result)
   const address = result.address
   const label = result.text + " " + result.place_name
   if (parsed.street) {
@@ -95,12 +117,20 @@ export function sortResults(results: LocationSearchResult[], query: string | str
     .sort((a, b) => b.score - a.score || a.index - b.index).map(({ result }) => result)
 }
 
+function airportFacilityName(result: LocationSearchResult) {
+  const types = [result.feature_type, ...(result.categories ?? [])].map(value => normalizeSearchText(value ?? ""))
+  if (!types.some(value => /^(?:airport|airports|aerodrome|airfield)$/.test(value))) return null
+  return normalizeSearchText(result.text.replace(/\s*\([A-Z0-9]{3,4}\)\s*$/i, ""))
+}
+
 export function dedupeResults(results: LocationSearchResult[]) {
   const seenIds = new Set<string>()
   const accepted: LocationSearchResult[] = []
   for (const result of results) {
     const osmId = /^(?:photon|nominatim):(.+)$/.exec(result.id)?.[1]
     if (osmId && seenIds.has(osmId)) continue
+    const airportName = airportFacilityName(result)
+    if (airportName && accepted.some(other => airportFacilityName(other) === airportName && distanceKm(other.center, result.center) < 5)) continue
     if (accepted.some((other) => normalizeSearchText(other.text) === normalizeSearchText(result.text) && distanceKm(other.center, result.center) < 0.15)) continue
     if (osmId) seenIds.add(osmId)
     accepted.push(result)

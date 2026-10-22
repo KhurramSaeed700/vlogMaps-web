@@ -1,5 +1,6 @@
 import type { BoundingBox, Coordinate, LocationSearchResult } from "@/lib/location-search/types"
 import { createSearchContext } from "@/lib/location-search/query-utils"
+import { searchAirportCatalog } from "@/lib/location-search/providers/airport-catalog"
 import { dedupeResults, hasStrongLocalMatch, hasStrongTextMatch, sortResults } from "@/lib/location-search/ranking"
 import { fetchFallbackMapboxResults, fetchPrimaryMapboxResults } from "@/lib/location-search/providers/mapbox"
 import { fetchFallbackOpenStreetMapResults, fetchPrimaryOpenStreetMapResults } from "@/lib/location-search/providers/openstreetmap"
@@ -13,7 +14,7 @@ export async function searchLocations(query: string, proximity: Coordinate | nul
     fetchPrimaryOpenStreetMapResults(context),
   ])
 
-  const primaryResults = [...mapboxResults, ...openStreetMapResults]
+  const primaryResults = [...searchAirportCatalog(context), ...mapboxResults, ...openStreetMapResults]
   const needsFallback =
     !hasStrongLocalMatch(query, primaryResults, proximity, bbox, context.countryCode) && !hasStrongTextMatch(query, primaryResults)
   const fallbackResults = needsFallback

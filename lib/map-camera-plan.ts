@@ -1,4 +1,4 @@
-import { isRealtimeNavigationSegment } from "./map-navigation-motion"
+import { getFlightLandingApproachStartTime, isRealtimeNavigationSegment, sharedFlightCameraMotion } from "./map-navigation-motion"
 
 interface CameraSegment {
   fromTime: number
@@ -15,6 +15,8 @@ export interface CameraZoomWindow {
   arrival: number
   end: number
   zoom: number
+  approachStart: number
+  landingZoom: number
   fromZoom: number
   toZoom: number
   flightContexts: readonly FlightCameraContext[]
@@ -108,7 +110,12 @@ export function buildCameraZoomPlan(
       departure: segment.fromTime,
       arrival: segment.toTime,
       end: segment.toTime + 1.5,
-      zoom, fromZoom: zoom, toZoom: zoom,
+      zoom,
+      approachStart: isFlight ? getFlightLandingApproachStartTime(segment) : segment.toTime,
+      landingZoom: isFlight
+        ? Math.max(zoom, Math.min(viewport.maxZoom, sharedFlightCameraMotion.landingApproachZoom))
+        : zoom,
+      fromZoom: zoom, toZoom: zoom,
       flightContexts: isFlight
         ? [{
             departure: segment.fromTime,
@@ -133,8 +140,10 @@ export function buildCameraZoomPlan(
     window.toZoom = Math.max(window.zoom, Math.min(viewport.maxZoom, getFollowZoom(window.end)))
     const previous = windows[index - 1]
     if (previous && previous.end === window.start) {
-      previous.toZoom = previous.zoom
-      window.fromZoom = previous.zoom
+      // Start the next departure transition from the actual landing scale,
+      // so consecutive flights cannot jump back to the old overview zoom.
+      previous.toZoom = previous.landingZoom
+      window.fromZoom = previous.landingZoom
     }
   }
   return windows
@@ -170,10 +179,13 @@ function getWindowZoom(window: CameraZoomWindow, time: number) {
   if (time < window.departure) {
     zoom = window.fromZoom + (window.zoom - window.fromZoom) *
       ease((time - window.start) / (window.departure - window.start))
-  } else if (time <= window.arrival) {
+  } else if (time <= window.approachStart) {
     zoom = window.zoom
+  } else if (time <= window.arrival) {
+    zoom = window.zoom + (window.landingZoom - window.zoom) *
+      ease((time - window.approachStart) / (window.arrival - window.approachStart))
   } else {
-    zoom = window.zoom + (window.toZoom - window.zoom) *
+    zoom = window.landingZoom + (window.toZoom - window.landingZoom) *
       ease((time - window.arrival) / (window.end - window.arrival))
   }
 

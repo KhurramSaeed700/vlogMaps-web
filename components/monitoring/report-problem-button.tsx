@@ -4,6 +4,7 @@ import { getFeedback } from "@sentry/nextjs"
 import { Bug, Loader2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { diagnosticEvent, reportHandledError } from "@/lib/monitoring/diagnostics"
+import { monitoringEnabled } from "@/lib/monitoring/options"
 
 type FeedbackForm = { appendToDom(): void; open(): void; removeFromDom(): void }
 
@@ -31,6 +32,8 @@ export function ReportProblemButton({ compact = false }: { compact?: boolean }) 
       reportHandledError(error, "feedback.open")
     } finally { setLoading(false) }
   }
+
+  if (!monitoringEnabled) return null
 
   return (
     <span className="relative inline-flex">

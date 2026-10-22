@@ -82,4 +82,31 @@ check('Street abbreviations and the screenshot typo rank the market first', () =
   const market = result('Markthalle Neun', '42-43 Eisenbahnstraße, Berlin, 10997, Deutschland', { address: { street: 'Eisenbahnstraße', postcode: '10997', place: 'Berlin', houseNumber: '42-43', countryCode: 'DE' } })
   assert.equal(first('EisenbahnstraRe 42/43, 10997 Berlin, Germany.', [result('10997', '10997, Berlin, Germany'), market]).text, 'Markthalle Neun')
 })
+check('Airport queries put the airport ahead of nearby businesses and roads', () => {
+  const airport = result('Ted Stevens Anchorage International Airport (ANC)', 'Ted Stevens Anchorage International Airport, Anchorage, Alaska, United States', { categories: ['airport'], source: 'mapbox-searchbox' })
+  const businesses = ['Alex Hotel and Suites Anchorage Airport', 'Anchorage Quick Airport Parking', 'Airport Maintenance Road', 'Hertz Car Rental - Anchorage International Airport', 'Hudson News and Gifts'].map(name => result(name, name + ', Anchorage Airport, Alaska', { relevance: 1 }))
+  assert.equal(first('Anchorage Airport, Alaska', [...businesses, airport]).text, airport.text)
+  assert.equal(first('Anchorage Airport', [...businesses, airport]).text, airport.text)
+  const noCategory = { ...airport, categories: undefined }
+  assert.equal(first('Anchorage Airport', [...businesses, noCategory]).text, airport.text)
+  const wrongAirport = result('Seattle International Airport', 'Seattle, Washington', { categories: ['airport'] })
+  assert.equal(first('Anchorage Airport, Alaska', [wrongAirport, ...businesses, airport]).text, airport.text)
+})
+check('Explicit airport hotels and parking still rank the requested business first', () => {
+  const airport = result('Ted Stevens Anchorage International Airport', 'Anchorage, Alaska', { categories: ['airport'] })
+  for (const name of ['Anchorage Airport Hotel', 'Anchorage Airport Parking', 'Airport Maintenance Road']) {
+    assert.equal(first(name, [airport, result(name, name + ', Anchorage, Alaska')]).text, name)
+  }
+})
+check('A hotel whose name ends in Airport is never treated as the airport itself', () => {
+  const hotel = result('Courtyard Anchorage Airport', 'Anchorage Airport, Alaska', { categories: ['hotel'] })
+  const airport = result('Ted Stevens Anchorage International Airport (ANC)', 'Ted Stevens Anchorage International Airport, Anchorage, United States', { source: 'airport-catalog', categories: ['airport'] })
+  assert.equal(first('Anchorage Airport, Alaska', [hotel, airport]).text, airport.text)
+})
+check('Airport catalog and provider entries for the same facility are deduplicated', () => {
+  const airport = result('Ted Stevens Anchorage International Airport (ANC)', undefined, { source: 'airport-catalog', categories: ['airport'], center: [-149.996, 61.174] })
+  const duplicate = result('Ted Stevens Anchorage International Airport', undefined, { categories: ['aerodrome'], center: [-149.99, 61.178] })
+  const separate = result('Merrill Field Airport', undefined, { categories: ['airport'], center: [-149.84, 61.21] })
+  assert.equal(r.dedupeResults([airport, duplicate, separate]).length, 2)
+})
 console.log(checks + ' location-search regression groups passed.')

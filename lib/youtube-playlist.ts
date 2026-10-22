@@ -3,6 +3,7 @@ export interface YouTubePlaylistItem {
   title: string
   creator: string
   channelId: string
+  durationSeconds?: number
   position: number
 }
 export interface YouTubePlaylistPreview {

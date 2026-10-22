@@ -210,7 +210,7 @@ export async function saveCreatorVideoToDb({
             title: video.title,
             youtubeId: video.youtubeId,
             thumbnailUrl: video.thumbnail,
-            duration: Math.max(0, Math.round(video.durationSeconds)),
+            duration: video.durationSeconds > 0 ? Math.round(video.durationSeconds) : existingVideo.duration,
             viewCount: Math.max(0, Math.round(video.views)),
             mapViewCount: Math.max(0, Math.round(video.mapViews)),
             likeCount: Math.max(0, Math.round(video.likes)),

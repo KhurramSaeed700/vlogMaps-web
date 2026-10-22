@@ -2,7 +2,7 @@ export type Coordinate = [number, number]
 export type BoundingBox = [number, number, number, number]
 export type CountryCode = string
 
-export type LocationSearchSource = "coordinates" | "plus-code" | "mapbox" | "mapbox-structured" | "mapbox-searchbox" | "photon" | "nominatim"
+export type LocationSearchSource = "airport-catalog" | "coordinates" | "plus-code" | "mapbox" | "mapbox-structured" | "mapbox-searchbox" | "photon" | "nominatim"
 
 export interface ParsedAddress {
   raw: string
@@ -31,6 +31,7 @@ export interface LocationSearchResult {
   bbox?: BoundingBox
   source: LocationSearchSource
   feature_type?: string
+  categories?: string[]
   relevance?: number
   address?: {
     street?: string

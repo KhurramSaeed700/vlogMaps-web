@@ -14,6 +14,8 @@ interface MapboxFeature {
     mapbox_id?: string
     name?: string
     feature_type?: string
+    poi_category?: string[]
+    poi_category_ids?: string[]
     full_address?: string
     place_formatted?: string
     address?: string
@@ -48,6 +50,7 @@ function mapMapboxFeature(feature: MapboxFeature, source: LocationSearchSource):
       center: center as Coordinate,
       source,
       feature_type: props.feature_type,
+      categories: [...(props.poi_category_ids ?? []), ...(props.poi_category ?? [])],
       relevance: props.relevance,
       address: {
         street: props.context?.street?.name || props.context?.address?.street_name,

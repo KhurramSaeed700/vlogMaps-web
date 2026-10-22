@@ -31,7 +31,7 @@ test('one-second Atlantic flight is wide BEFORE moving and arrives on video time
   assert.ok(w.start < 9)
   assert.equal(getCameraPlanZoom(plan, w.start), 12)
   assert.equal(getCameraPlanZoom(plan, 10), w.zoom)
-  assert.equal(getCameraPlanZoom(plan, 11), w.zoom)
+  assert.equal(getCameraPlanZoom(plan, 11), w.landingZoom)
   assert.equal(getCameraPlanZoom(plan, w.end), 12)
   assert.equal(getCameraPlanZoom(plan, w.end + 0.01), null)
   assert.ok(w.zoom >= 3)
@@ -51,7 +51,7 @@ test('Pacific flight context uses the short path across the antimeridian', () =>
   assert.equal(target.center, null)
   assert.ok(target.zoom >= 3)
 })
-test('short flights recover regional detail after long flights without airport zoom pulses', () => {
+test('consecutive flights keep their own regional scale and continuous landing transitions', () => {
   const secondFlight = {
     ...flight(12, 13, 800),
     coordinates: [[2.35, 48.86], [31.24, 30.04]],
@@ -59,8 +59,9 @@ test('short flights recover regional detail after long flights without airport z
   const plan = build([flight(10, 11), secondFlight, flight(14, 15, 11000)])
   assert.equal(plan.length, 3)
   assert.ok(getCameraPlanZoom(plan, 12.5) > getCameraPlanZoom(plan, 10.5))
-  for (let time = 11; time < 12; time += 1 / 60) {
-    assert.ok(getCameraPlanZoom(plan, time) <= plan[1].zoom)
+  for (let index = 1; index < plan.length; index++) {
+    const boundary = plan[index].start
+    assert.ok(Math.abs(getCameraPlanZoom(plan,boundary-1e-6)-getCameraPlanZoom(plan,boundary+1e-6)) < 1e-4)
   }
   assert.equal(getCameraPlanTarget(plan, 12.5).center, null)
 })
@@ -69,7 +70,7 @@ test('seeking, pausing and dropped frames cannot accumulate animation delay', ()
   const before = getCameraPlanZoom(plan, 10.7)
   for (const time of [30.8, 4, 10.7, 10.7, 10.7]) getCameraPlanZoom(plan, time)
   assert.equal(getCameraPlanZoom(plan, 10.7), before)
-  assert.equal(getCameraPlanZoom(plan, 31), plan[1].zoom)
+  assert.equal(getCameraPlanZoom(plan, 31), plan[1].landingZoom)
 })
 test('slow roads and stationary segments keep normal navigation', () => {
   assert.equal(build([{ ...flight(0, 120, 2), routeKind: 'road' }]).length, 0)
@@ -133,4 +134,37 @@ test('large routes retain disjoint windows and logarithmic lookup', () => {
   for (let i = 0; i < plan.length; i += 137) {
     assert.equal(getCameraPlanZoom(plan, i * 20 + 10.5), plan[i].zoom)
   }
+})
+
+test('flights zoom in progressively before landing on desktop and mobile', () => {
+  for (const viewport of [desktop,{...desktop,width:360,height:500}]) {
+    for (const duration of [1,6,30,120]) {
+      const plan = build([flight(10,10+duration)],viewport)
+      const w = plan[0]
+      assert.ok(w.approachStart >= w.departure)
+      assert.ok(w.approachStart < w.arrival)
+      assert.equal(getCameraPlanZoom(plan,w.approachStart),w.zoom)
+      assert.ok(w.landingZoom > w.zoom)
+      let previous = w.zoom
+      for (let i=0;i<=120;i++) {
+        const time = w.approachStart+(w.arrival-w.approachStart)*i/120
+        const target = getCameraPlanTarget(plan,time)
+        assert.ok(target.zoom >= previous-1e-9)
+        assert.equal(target.center,null,'Plane stays centered during approach')
+        previous = target.zoom
+      }
+      assert.equal(getCameraPlanZoom(plan,w.arrival),w.landingZoom)
+      assert.ok(Math.abs(getCameraPlanZoom(plan,w.arrival-1e-6)-getCameraPlanZoom(plan,w.arrival+1e-6))<1e-4)
+      const time = (w.approachStart+w.arrival)/2
+      const expected = getCameraPlanZoom(plan,time)
+      for (const seek of [w.end,w.departure,time,time]) getCameraPlanZoom(plan,seek)
+      assert.equal(getCameraPlanZoom(plan,time),expected,'Seek/pause uses the same approach trajectory')
+    }
+  }
+})
+test('rapid land movement retains its existing zoom and flight zoom respects map limits', () => {
+  const road = build([{...flight(10,20,400),routeKind:'road'}])[0]
+  assert.equal(road.landingZoom,road.zoom)
+  const limited = build([flight(10,20)],{...desktop,maxZoom:8})
+  assert.equal(getCameraPlanZoom(limited,20),8)
 })

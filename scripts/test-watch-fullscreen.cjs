@@ -41,6 +41,35 @@ for (const target of [new Element('INPUT'), new Element('TEXTAREA'), new Element
 for (const flag of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing', 'defaultPrevented']) press({ [flag]: true })
 press({ repeat: true })
 assert.equal(fullscreenToggles, 3, 'Modifiers, composition, consumed events and key repeats must not toggle')
+for (const editor of [false, true]) {
+  const seeks = []
+  const deps = { ...dependencies, allowKeyboard: editor, allowWatchKeyboardControls: !editor, seekToDurationPercentage: value => seeks.push(value) }
+  const handler = new Function(...Object.keys(deps), transpile(handlerSource) + ';return handleKeyDown')(...Object.values(deps))
+  const key = (code, overrides = {}) => {
+    let prevented = false
+    handler({ code, key: code, target: new Element('BUTTON'), preventDefault() { prevented = true }, ...overrides })
+    return prevented
+  }
+  assert.equal(key('Home'), true)
+  assert.equal(key('End'), true)
+  assert.deepEqual(seeks, [0, 1], 'Watch and editor must jump to the video boundaries')
+  for (const target of [new Element('INPUT'), new Element('TEXTAREA'), new Element('DIV', true), new Element('DIV', false, true)]) {
+    assert.equal(key('Home', { target }), false, 'Text navigation and dialogs retain Home/End')
+    assert.equal(key('End', { target }), false)
+  }
+  for (const flag of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing', 'defaultPrevented', 'repeat']) key('End', { [flag]: true })
+  assert.deepEqual(seeks, [0, 1])
+}
+const boundarySeekSource = source.slice(source.indexOf('const seekToDurationPercentage ='), source.indexOf('  useEffect(() => {', source.indexOf('const seekToDurationPercentage =')))
+let duration = 1121
+const destinations = []
+const boundarySeek = new Function('playerRef', 'beginPendingSeek', 'clampVideoTime', transpile(boundarySeekSource) + ';return seekToDurationPercentage')(
+  { current: { getDuration: () => duration } }, (_, time) => destinations.push(time), (time, total) => Math.min(Math.max(time, 0), total),
+)
+boundarySeek(0); boundarySeek(1)
+assert.deepEqual(destinations, [0, 1121], 'Seek to the actual beginning and full duration')
+duration = 0; boundarySeek(1)
+assert.deepEqual(destinations, [0, 1121], 'Ignore unavailable duration')
 const toggleSource = source.slice(source.indexOf('const toggleFullscreenFromKeyboard ='), source.indexOf('const seekToDurationPercentage ='))
 async function checkFullscreenRequests() {
   let requested = 0, exited = 0

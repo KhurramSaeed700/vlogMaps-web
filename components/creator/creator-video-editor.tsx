@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { createPortal } from "react-dom"
 import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
 import Link from "next/link"
@@ -23,6 +23,7 @@ import { editorTourStartEvent } from "@/lib/editor-tour"
 import { PlaybackSettingsSection } from "@/components/settings/playback-settings-section"
 import { getAirportCodeLocation, registerAirportCodeLocation } from "@/lib/airport-codes"
 import { AirportSearchInput } from "@/components/creator/airport-search-input"
+import { anonymousRegionName, anonymousRegionMessage, type StopRegionCircle, type StopRegionPoint } from "@/lib/stop-regions"
 import { LandmarkSearchButton } from "@/components/creator/landmark-search-button"
 import type { LandmarkResult } from "@/lib/landmark-search"
 import { useCreatorEditorDocument } from "@/lib/use-creator-editor-document"
@@ -41,6 +42,8 @@ import {
 import {
   type CreatorSavedPlace,
 } from "@/lib/creator-saved-places"
+import { timestampLocationLabel, timestampPlaceName, suggestedPlaceKind, savedPlaceAtLocation, reusedTimestampLocation } from "@/lib/timestamp-locations"
+import type { PlaylistStartStop } from "@/lib/playlist-continuity"
 import type { TravelVideo } from "@/lib/demo-data"
 import { formatDuration } from "@/lib/demo-data"
 import {
@@ -49,6 +52,7 @@ import {
   type CreatorMapPointType,
   upsertCreatorPoint,
 } from "@/lib/creator-points"
+import { rememberPlayerDuration } from "@/lib/creator-video-details-client"
 import { syncVideoRouteMetadata, updateLocalCreatorVideo, withSyncedVideoState } from "@/lib/creator-videos"
 import { uploadCreatorVideoToCloud } from "@/lib/creator-videos-cloud-client"
 import { loadCreatorVideoState } from "@/lib/creator-video-state-client"
@@ -61,6 +65,7 @@ import { usePlaybackPreferences } from "@/lib/use-playback-preferences"
 interface CreatorVideoEditorProps {
   video: TravelVideo
   playlistId?: string
+  playlistStartStop?: PlaylistStartStop | null
   headerLeadingActionsTargetId?: string
   headerActionsTargetId?: string
 }
@@ -76,6 +81,7 @@ interface DraftPoint {
   location: string
   description: string
   airportCity?: string
+  regionCircle?: StopRegionCircle
   pointType: CreatorMapPointType
 }
 
@@ -100,9 +106,13 @@ interface MapEditSnapshot {
   activeFlightEditEndpoint: FlightEditEndpoint
   flightEditLocationModes: Record<FlightEditEndpoint, FlightEditLocationMode>
   isAwaitingMapPlacement: boolean
+  isRecordingStop: boolean
+  isPlaying: boolean
 }
 
 interface EditorShortcutState {
+  undoMapEdit: () => void
+  redoMapEdit: () => void
   draftPoint: DraftPoint | null
   isAwaitingMapPlacement: boolean
   isPlacingSavedPlace: boolean
@@ -112,7 +122,7 @@ interface EditorShortcutState {
   cancelPointEdit: () => void
   setStopEndTime: () => void
   startFlightPoint: () => void
-  startStopRecording: () => void
+  startStopRecording: (anonymous?: boolean) => void
   savePointFromMap: (location: { lat: number; lng: number }) => Promise<void>
 }
 
@@ -152,14 +162,19 @@ function loadRestorableCreatorVideoState(video: Pick<TravelVideo, "id" | "keyfra
 }
 
 const editorShortcutGroups = [
+  { keys: "Ctrl + Z", action: "Undo map edit" },
+  { keys: "Ctrl + Shift + Z", action: "Redo map edit" },
   { keys: "Q", action: "Add point" },
   { keys: "W", action: "Add stop or finish stop" },
   { keys: "E", action: "Record flight takeoff or landing" },
   { keys: "C", action: "Turn subtitles on or off" },
   { keys: "F", action: "Enter or exit video fullscreen" },
   { keys: "M", action: "Mute or unmute video" },
-  { keys: "Esc", action: "Cancel pending point or stop" },
+  { keys: "Esc", action: "Return to editor shortcuts, or cancel pending placement" },
   { keys: "Space / K", action: "Play or pause video" },
+  { keys: "Hold Space", action: "Temporarily play at 2× speed" },
+  { keys: "Shift + W", action: "Start or finish a 5 km Anonymous Region" },
+  { keys: "Home / End", action: "Jump to the start or end of the video" },
   { keys: "J", action: "Seek back 10 seconds" },
   { keys: "L", action: "Seek forward 10 seconds" },
   { keys: "Hold J / L", action: "Repeat seek after 0.5s" },
@@ -191,6 +206,7 @@ function createDraftPoint(point?: CreatorMapPoint): DraftPoint {
     id: point.id,
     time: point.time,
     stopEndTime: point.stopEndTime,
+    regionCircle: point.regionCircle,
     flightId: point.flightId,
     flightPhase: point.flightPhase,
     lat: point.lat,
@@ -312,81 +328,6 @@ function getDraftDescription(pointType: CreatorMapPointType) {
   return pointType === "stop"
     ? "Stop captured from the creator editor."
     : "Route point captured from the creator editor."
-}
-
-function getDisplayTimestampName(point: CreatorMapPoint) {
-  const name = point.location.trim()
-  const pointType = point.pointType === "stop" || point.pointType === "flight" ? point.pointType : "point"
-  return name && name !== getDraftLocation(pointType, point.time) ? name : ""
-}
-
-function formatTravelDestinationName(value: string) {
-  let destination = value.trim()
-  if (destination === destination.toLowerCase()) {
-    destination = destination.replace(/(^|[\s-])([a-z])/g, (_, prefix: string, letter: string) => {
-      return `${prefix}${letter.toUpperCase()}`
-    })
-  }
-
-  return destination
-}
-
-function getTravelDestinationName(point: CreatorMapPoint) {
-  const rawName = getDisplayTimestampName(point)
-  if (!rawName || isGeneratedStopName(rawName)) {
-    return null
-  }
-
-  let destination = rawName.replace(/^stay\s+at\s+/i, "").trim()
-  const trailingPlace = destination.match(/\bin\s+([^,]+)$/i)?.[1]?.trim()
-  if (trailingPlace) {
-    destination = trailingPlace
-  } else {
-    destination = destination.split(",")[0]?.trim() ?? ""
-  }
-
-  if (!destination) {
-    return null
-  }
-
-  return formatTravelDestinationName(destination)
-}
-
-function getTravelSummary(
-  fromPoint: CreatorMapPoint,
-  toPoint: CreatorMapPoint,
-  departureTime: number,
-  arrivalTime: number,
-) {
-  if (fromPoint.pointType === "flight" || toPoint.pointType === "flight") {
-    return null
-  }
-
-  const travelDurationSeconds = arrivalTime - departureTime
-  if (travelDurationSeconds < 8) {
-    return null
-  }
-
-  const toRadians = (degrees: number) => (degrees * Math.PI) / 180
-  const latitudeDelta = toRadians(toPoint.lat - fromPoint.lat)
-  const longitudeDelta = toRadians(toPoint.lng - fromPoint.lng)
-  const fromLatitude = toRadians(fromPoint.lat)
-  const toLatitude = toRadians(toPoint.lat)
-  const haversine =
-    Math.sin(latitudeDelta / 2) ** 2 +
-    Math.cos(fromLatitude) * Math.cos(toLatitude) * Math.sin(longitudeDelta / 2) ** 2
-  const distanceKm = 6371 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
-  if (distanceKm < 0.1 || distanceKm > 2500) {
-    return null
-  }
-
-  const fromName = getTravelDestinationName(fromPoint)
-  const toName = getTravelDestinationName(toPoint)
-  if (!fromName || !toName || fromName.toLocaleLowerCase() === toName.toLocaleLowerCase()) {
-    return null
-  }
-
-  return `traveled from ${fromName} to ${toName}`
 }
 
 function normalizeAirportCode(value: string) {
@@ -540,15 +481,15 @@ function shouldIgnorePlaybackShortcut(target: EventTarget | null) {
     tagName === "input" ||
     tagName === "textarea" ||
     tagName === "select" ||
-    tagName === "button" ||
     target.isContentEditable ||
-    Boolean(target.closest('[role="combobox"]'))
+    Boolean(target.closest('[role="combobox"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'))
   )
 }
 
 export function CreatorVideoEditor({
   video,
   playlistId,
+  playlistStartStop,
   headerLeadingActionsTargetId,
   headerActionsTargetId,
 }: CreatorVideoEditorProps) {
@@ -559,6 +500,7 @@ export function CreatorVideoEditor({
   const editorScrollRef = useRef<HTMLElement | null>(null)
   const splitViewRef = useRef<HTMLDivElement>(null)
   const currentTimeRef = useRef(0)
+  const videoDurationRef = useRef(video.durationSeconds)
   const renderedCurrentTimeRef = useRef(0)
   const editorShortcutStateRef = useRef<EditorShortcutState | null>(null)
   const searchedLocationRef = useRef<{ lat: number; lng: number } | null>(null)
@@ -567,6 +509,7 @@ export function CreatorVideoEditor({
   const nearbyPlaceLookupControllerRef = useRef<AbortController | null>(null)
   const pendingNearbyPlaceLookupRef = useRef<PendingNearbyPlaceLookup | null>(null)
   const draftPointRef = useRef<DraftPoint | null>(null)
+  const initializedPlaylistStopRef = useRef(false)
   const isCompletingStopRef = useRef(false)
   const timestampNameInputRef = useRef<HTMLInputElement | null>(null)
   const savedPlacePlacementResumePlaybackRef = useRef(false)
@@ -584,6 +527,7 @@ export function CreatorVideoEditor({
   const [currentTime, setCurrentTime] = useState(0)
   const [seekRequest, setSeekRequest] = useState<{ id: number; time: number } | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [flightTrackingRequestId, setFlightTrackingRequestId] = useState(0)
   const [isEditorTourOpen, setIsEditorTourOpen] = useState(false)
   const editorTourOpenRef = useRef(false)
   const playbackIntentRef = useRef(false)
@@ -622,6 +566,8 @@ export function CreatorVideoEditor({
   const [showScrollTop, setShowScrollTop] = useState(false)
   const [isLoadingSavedState, setIsLoadingSavedState] = useState(true)
   const [isRecordingStop, setIsRecordingStop] = useState(false)
+  const [stopRadiusError, setStopRadiusError] = useState("")
+  const stopRadiusInputRef = useRef<HTMLInputElement>(null)
   const [flightAirportPrompt, setFlightAirportPrompt] = useState<FlightAirportPrompt | null>(null)
   const [flightAirportCode, setFlightAirportCode] = useState("")
   const [flightAirportPreview, setFlightAirportPreview] = useState<ResolvedAirportPreview | null>(null)
@@ -852,7 +798,7 @@ export function CreatorVideoEditor({
   }, [replaceDocument, saveAutosavedState, schedulePendingSave, video.id, video.keyframes])
 
   useEffect(() => {
-    if (resumeCountdown === null || isEditorTourOpen) {
+    if (resumeCountdown === null || isEditorTourOpen || (playlistStartStop && isLoadingSavedState)) {
       return
     }
 
@@ -875,7 +821,7 @@ export function CreatorVideoEditor({
     }, 1000)
 
     return () => window.clearTimeout(timer)
-  }, [resumeCountdown, isEditorTourOpen])
+  }, [resumeCountdown, isEditorTourOpen, playlistStartStop, isLoadingSavedState])
 
   useEffect(() => {
     const scrollContainer = editorScrollRef.current
@@ -894,6 +840,13 @@ export function CreatorVideoEditor({
   }, [])
 
   const sortedPoints = useMemo(() => sortCreatorPoints(points), [points])
+  const stopRegionPoints = useMemo<StopRegionPoint[]>(() => {
+    const regions: StopRegionPoint[] = sortedPoints.filter(point => point.id !== draftPoint?.id)
+    if (draftPoint?.regionCircle && draftPoint.lat !== null && draftPoint.lng !== null) {
+      regions.push({ id: draftPoint.id, time: draftPoint.time, lat: draftPoint.lat, lng: draftPoint.lng, pointType: "stop", regionCircle: draftPoint.regionCircle })
+    }
+    return regions
+  }, [sortedPoints, draftPoint])
   const pendingFlightTakeoff = useMemo(() => getPendingFlightTakeoff(sortedPoints), [sortedPoints])
   const timestampRows = useMemo(() => buildTimestampDisplayRows(sortedPoints), [sortedPoints])
   const pointNumberById = useMemo(
@@ -910,26 +863,6 @@ export function CreatorVideoEditor({
   const displayedRows = useMemo(() => {
     return isTimestampSortAscending ? timestampRows : [...timestampRows].reverse()
   }, [isTimestampSortAscending, timestampRows])
-  const travelSummaryAfterRowKey = useMemo(() => {
-    const summaries = new Map<string, string>()
-
-    for (let index = 0; index < displayedRows.length - 1; index += 1) {
-      const currentRow = displayedRows[index]
-      const nextRow = displayedRows[index + 1]
-      const fromRow = isTimestampSortAscending ? currentRow : nextRow
-      const toRow = isTimestampSortAscending ? nextRow : currentRow
-      const departureTime =
-        fromRow.point.pointType === "stop" && typeof fromRow.point.stopEndTime === "number"
-          ? fromRow.point.stopEndTime
-          : fromRow.point.time
-      const summary = getTravelSummary(fromRow.point, toRow.point, departureTime, toRow.point.time)
-      if (summary) {
-        summaries.set(currentRow.key, summary)
-      }
-    }
-
-    return summaries
-  }, [displayedRows, isTimestampSortAscending])
   const getDraftPointNumber = (point: Pick<DraftPoint, "id">) =>
     point.id ? pointNumberById.get(point.id) ?? null : displayedRows.length + 1
   const getDraftLocationFallback = (point: DraftPoint) =>
@@ -984,6 +917,8 @@ export function CreatorVideoEditor({
     activeFlightEditEndpoint,
     flightEditLocationModes: { ...flightEditLocationModes },
     isAwaitingMapPlacement,
+    isRecordingStop,
+    isPlaying,
   })
 
   const persistTripRoute = (nextRoute: CreatorTripRoute) => {
@@ -1114,6 +1049,11 @@ export function CreatorVideoEditor({
   }
 
   const chooseSavedPlace = (place: CreatorSavedPlace) => {
+    if (canReuseTimestampLocation) {
+      void reuseTimestampLocation({ ...place, location: place.name, pointType: "point" })
+      setIsSavedPlacesOpen(false)
+      return
+    }
     if (draftPoint || isRecordingStop || pendingFlightTakeoff || flightAirportPrompt) {
       setSavedPlaceMessage("Finish the current timestamp first.")
       return
@@ -1147,7 +1087,7 @@ export function CreatorVideoEditor({
     setResumeCountdown(null)
 
     if (pointType === "stop") {
-      setDraftPoint({
+      const nextDraft: DraftPoint = {
         id: undefined,
         time: timestamp,
         stopEndTime: undefined,
@@ -1156,7 +1096,9 @@ export function CreatorVideoEditor({
         location: `Stay at ${place.name}`,
         description: `Saved place: ${place.name}`,
         pointType: "stop",
-      })
+      }
+      draftPointRef.current = nextDraft
+      setDraftPoint(nextDraft)
       setIsAwaitingMapPlacement(false)
       setIsRecordingStop(true)
       scheduleAutoplay()
@@ -1183,7 +1125,11 @@ export function CreatorVideoEditor({
   }
 
   const applyMapEditSnapshot = (snapshot: MapEditSnapshot) => {
+    cancelNearbyPlaceLookup()
     setResumeCountdown(null)
+    draftPointRef.current = snapshot.draftPoint
+    setIsRecordingStop(snapshot.isRecordingStop)
+    setIsPlaying(snapshot.isPlaying)
     restoreMapDocument({ points: snapshot.points, tripRoute: snapshot.tripRoute, routeShapes: snapshot.routeShapes })
     persistEditorState({
       points: snapshot.points,
@@ -1530,6 +1476,7 @@ export function CreatorVideoEditor({
       })
 
       persistPoints(nextPoints)
+      if (takeoffPoint) setFlightTrackingRequestId(request => request + 1)
       setFlightAirportPrompt(null)
       setFlightAirportCode("")
       setFlightAirportPreview(null)
@@ -1593,6 +1540,7 @@ export function CreatorVideoEditor({
     }
 
     setFlightAirportPrompt(null)
+    setFlightTrackingRequestId(request => request + 1)
     if (!isPlaying) {
       scheduleAutoplay()
     }
@@ -1704,6 +1652,8 @@ export function CreatorVideoEditor({
     placementDraft = draftPoint,
     wasAwaitingMapPlacement = isAwaitingMapPlacement,
     recordingStop = isRecordingStop,
+    skipNearbyLookup = false,
+    recordPlacementHistory = true,
   ) => {
     const draftPoint = placementDraft
     if (!draftPoint) {
@@ -1720,7 +1670,7 @@ export function CreatorVideoEditor({
       location: draftPoint.location.trim() || getDraftLocation(draftPoint.pointType, savedTime),
       description: draftPoint.description.trim() || getDraftDescription(draftPoint.pointType),
     }
-    const pendingLookup = draftPoint.pointType === "flight" ? null : beginNearbyPlaceLookup(value)
+    const pendingLookup = skipNearbyLookup || draftPoint.pointType === "flight" || draftPoint.regionCircle ? null : beginNearbyPlaceLookup(value)
 
     if (sourceDraft.id) {
       draftPointRef.current = placedDraft
@@ -1755,7 +1705,7 @@ export function CreatorVideoEditor({
     }
 
     if (recordingStop && !draftPoint.id && draftPoint.pointType === "stop") {
-      recordMapEditSnapshot()
+      if (recordPlacementHistory) recordMapEditSnapshot()
       draftPointRef.current = placedDraft
       setDraftPoint(placedDraft)
       setIsAwaitingMapPlacement(false)
@@ -1824,7 +1774,32 @@ export function CreatorVideoEditor({
     setResumeCountdown(nextDraft.pointType === "flight" ? null : resumeAutoplayDelaySeconds)
   }
 
+  const canReuseTimestampLocation = Boolean(draftPoint && draftPoint.pointType !== "flight" && !flightAirportPrompt && !pendingFlightTakeoff && !isPlacingSavedPlace)
+  const timestampPlaceSuggestions = useMemo(() => new Map(sortedPoints.map(point => [point.id, {
+    kind: suggestedPlaceKind(point), saved: savedPlaceAtLocation(savedPlaces, point),
+  }])), [sortedPoints, savedPlaces])
+
+  const reuseTimestampLocation = async (point: Pick<CreatorMapPoint, "lat" | "lng" | "location"> & Partial<CreatorMapPoint>) => {
+    const current = draftPointRef.current ?? draftPoint
+    if (!canReuseTimestampLocation || !current || current.pointType === "flight") return
+    const location = reusedTimestampLocation(point, current.pointType, current.regionCircle)
+    if (!location) return
+    cancelNearbyPlaceLookup()
+    setStopRadiusError("")
+    searchedLocationRef.current = { lat: location.lat, lng: location.lng }
+    await savePointFromMap(location, { ...current, ...location }, !current.id, isRecordingStop, true)
+  }
+
+  const saveTimestampPlace = (point: CreatorMapPoint) => {
+    if (point.regionCircle?.anonymous || savedPlaceAtLocation(savedPlaces, point)) return
+    const name = timestampPlaceName(point).slice(0, 120)
+    recordMapEditSnapshot()
+    persistSavedPlaces([...savedPlaces, { id: createSavedPlaceId(), name, lat: point.lat, lng: point.lng }])
+    setSavedPlaceMessage(`${name} saved.`)
+  }
+
   const beginEditPoint = (point: CreatorMapPoint, landingPoint?: CreatorMapPoint) => {
+    setStopRadiusError("")
     setResumeCountdown(null)
     setIsPlaying(false)
     setIsTimestampNameEditing(false)
@@ -2170,6 +2145,7 @@ export function CreatorVideoEditor({
   }
 
   const updateDraftPointType = (pointType: CreatorMapPointType) => {
+    setStopRadiusError("")
     if (!draftPoint) {
       return
     }
@@ -2267,6 +2243,7 @@ export function CreatorVideoEditor({
   }
 
   const cancelPointEdit = () => {
+    setStopRadiusError("")
     cancelNearbyPlaceLookup()
     isCompletingStopRef.current = false
     setIsTimestampNameEditing(false)
@@ -2314,36 +2291,28 @@ export function CreatorVideoEditor({
     }
   }
 
-  const startStopRecording = () => {
-    if (pendingFlightTakeoff || isPlacingSavedPlace) {
-      return
-    }
-
+  const startStopRecording = (anonymous = false) => {
+    if (pendingFlightTakeoff || flightAirportPrompt || isPlacingSavedPlace) return
+    recordMapEditSnapshot()
+    cancelNearbyPlaceLookup()
     const timestamp = currentTimeRef.current
     setResumeCountdown(null)
     setIsPlaying(false)
     const nextDraft: DraftPoint = {
-      id: undefined,
-      time: timestamp,
-      stopEndTime: undefined,
-      lat: null,
-      lng: null,
-      location: getDraftLocation("stop", timestamp, displayedRows.length + 1),
-      description: getDraftDescription("stop"),
-      pointType: "stop",
+      time: timestamp, lat: null, lng: null, pointType: "stop",
+      location: anonymous ? anonymousRegionName : getDraftLocation("stop", timestamp, displayedRows.length + 1),
+      description: anonymous ? anonymousRegionMessage : getDraftDescription("stop"),
+      regionCircle: anonymous ? { radiusKm: 5, anonymous: true } : undefined,
     }
     draftPointRef.current = nextDraft
     setDraftPoint(nextDraft)
     setIsAwaitingMapPlacement(!searchedLocationRef.current)
     setIsRecordingStop(true)
     setIsTimestampNameEditing(false)
-    if (searchedLocationRef.current) {
-      void savePointFromMap(searchedLocationRef.current, nextDraft, true, true)
-    }
+    if (searchedLocationRef.current) void savePointFromMap(searchedLocationRef.current, nextDraft, true, true, false, false)
   }
 
-  const setStopEndTime = async () => {
-    const timestamp = currentTimeRef.current
+  const setStopEndTime = async (timestamp = currentTimeRef.current, resumePlayback = true) => {
     const initialDraft = draftPointRef.current ?? draftPoint
     if (
       isCompletingStopRef.current ||
@@ -2374,7 +2343,7 @@ export function CreatorVideoEditor({
       }
 
       recordMapEditSnapshot()
-      const stopEndTime = Math.max(timestamp, currentDraft.time + 0.5)
+      const stopEndTime = resumePlayback ? Math.max(timestamp, currentDraft.time + 0.5) : timestamp
       const nextDraft: DraftPoint = {
         ...currentDraft,
         stopEndTime,
@@ -2399,7 +2368,7 @@ export function CreatorVideoEditor({
       setIsAwaitingMapPlacement(false)
       setIsRecordingStop(false)
       setIsTimestampNameEditing(false)
-      if (!isPlaying) {
+      if (resumePlayback && !isPlaying) {
         scheduleAutoplay()
       }
     } finally {
@@ -2407,8 +2376,20 @@ export function CreatorVideoEditor({
     }
   }
 
+  const handleEditorVideoEnded = () => {
+    setResumeCountdown(null)
+    setIsPlaying(false)
+    const endTime = videoDurationRef.current > 0 ? videoDurationRef.current : currentTimeRef.current
+    commitCurrentTime(endTime, true)
+    if (isRecordingStop && draftPointRef.current?.pointType === "stop") {
+      void setStopEndTime(endTime, false)
+    }
+  }
+
   useEffect(() => {
     editorShortcutStateRef.current = {
+      undoMapEdit,
+      redoMapEdit,
       draftPoint,
       isAwaitingMapPlacement,
       isPlacingSavedPlace,
@@ -2425,40 +2406,53 @@ export function CreatorVideoEditor({
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      const isEscape = event.code === "Escape" || event.key === "Escape"
       if (editorTourOpenRef.current) return
       const shortcutState = editorShortcutStateRef.current
       if (!shortcutState) {
         return
       }
+      if (event.defaultPrevented || event.isComposing) return
+      // Escape from the video belongs to its focus handback, not draft cancellation.
+      if (isEscape && event.target instanceof Node && videoPreviewRef.current?.contains(event.target)) return
 
-      if (event.code === "Escape" && !event.repeat && shortcutState.isPlacingSavedPlace) {
+      if (isEscape && !event.repeat && shortcutState.isPlacingSavedPlace) {
         event.preventDefault()
         shortcutState.cancelSavedPlacePlacement()
         return
       }
 
       if (
-        event.code === "Escape" &&
+        isEscape &&
         !event.repeat &&
         shortcutState.draftPoint &&
         !shortcutState.draftPoint.id &&
-        shortcutState.isAwaitingMapPlacement &&
-        shortcutState.draftPoint.lat === null &&
-        shortcutState.draftPoint.lng === null
+        (shortcutState.isRecordingStop || (shortcutState.isAwaitingMapPlacement &&
+          shortcutState.draftPoint.lat === null && shortcutState.draftPoint.lng === null))
       ) {
         event.preventDefault()
         shortcutState.cancelPointEdit()
         return
       }
 
-      if (event.repeat || shouldIgnorePlaybackShortcut(event.target)) {
+      if (event.defaultPrevented || event.isComposing || event.repeat || shouldIgnorePlaybackShortcut(event.target)) {
         return
       }
 
-      if (event.code === "Space" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey &&
+        (event.code === "KeyZ" || event.key?.toLowerCase() === "z")) {
         event.preventDefault()
-        setResumeCountdown(null)
-        setIsPlaying((prev) => !prev)
+        if (event.shiftKey) shortcutState.redoMapEdit()
+        else shortcutState.undoMapEdit()
+        return
+      }
+
+      if ((event.code === "KeyW" || event.key?.toLowerCase() === "w") && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault()
+        if (shortcutState.isRecordingStop) {
+          if (shortcutState.isAwaitingMapPlacement && searchedLocationRef.current) void shortcutState.savePointFromMap(searchedLocationRef.current)
+          else void shortcutState.setStopEndTime()
+        } else shortcutState.startStopRecording(true)
         return
       }
 
@@ -2501,11 +2495,34 @@ export function CreatorVideoEditor({
     return () => document.removeEventListener("keydown", handleKeyDown)
   }, [])
 
+  useEffect(() => {
+    if (isLoadingSavedState || !playlistStartStop || initializedPlaylistStopRef.current) return
+    initializedPlaylistStopRef.current = true
+    // Wait for cloud/local restoration; never replace existing work or a draft.
+    if (points.length > 0 || draftPointRef.current || flightAirportPrompt || isPlacingSavedPlace) return
+    const nextDraft: DraftPoint = { ...playlistStartStop }
+    draftPointRef.current = nextDraft
+    searchedLocationRef.current = { lat: nextDraft.lat!, lng: nextDraft.lng! }
+    setDraftPoint(nextDraft)
+    setIsAwaitingMapPlacement(false)
+    setIsRecordingStop(true)
+    setIsTimestampNameEditing(false)
+    commitCurrentTime(0, true)
+    setSeekRequest({ id: Date.now(), time: 0 })
+    setIsPlaying(false)
+    setResumeCountdown(resumeAutoplayDelaySeconds)
+  }, [isLoadingSavedState, playlistStartStop, points.length, flightAirportPrompt, isPlacingSavedPlace, commitCurrentTime])
+
   const activePointNumber = draftPoint ? getDraftPointNumber(draftPoint) : null
   const activeDraftMapPoint =
     draftPoint?.pointType === "flight" && draftFlightLandingPoint && activeFlightEditEndpoint === "landing"
       ? draftFlightLandingPoint
       : draftPoint
+  // Keep the selection stable while video time updates, so user zoom/pan is not reset.
+  const activeDraftMapValue = useMemo(() =>
+    !activeDraftMapPoint || activeDraftMapPoint.lat === null || activeDraftMapPoint.lng === null
+      ? null : { lat: activeDraftMapPoint.lat, lng: activeDraftMapPoint.lng },
+  [activeDraftMapPoint?.lat, activeDraftMapPoint?.lng])
   const isPlacingPoint = Boolean(
     draftPoint &&
       !draftPoint.id &&
@@ -2595,17 +2612,52 @@ export function CreatorVideoEditor({
               : "border-orange-200 bg-orange-50 text-orange-950 dark:border-orange-400/30 dark:bg-orange-500/10 dark:text-orange-100"
         }`}
       >
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-medium">Editing timestamp {activePointNumber ? `#${activePointNumber}` : ""}</span>
-          <span>
-            {draftPoint.pointType === "flight" && draftFlightLandingPoint
+        <div className="flex flex-wrap items-center gap-2" title={draftPoint.pointType !== "flight" ? "Drag the numbered map pin to move this timestamp." : undefined}>
+          <span className="mr-auto text-xs font-semibold">Edit {activePointNumber ? `#${activePointNumber}` : "timestamp"}</span>
+          {draftPoint.pointType !== "flight" && (
+          <div className="shrink-0">
+
+            <button
+              type="button"
+              role="switch"
+              aria-checked={draftPoint.pointType === "stop"}
+              aria-label={`Timestamp type: ${draftPoint.pointType}. Switch to ${draftPoint.pointType === "stop" ? "point" : "stop"}`}
+              onClick={() => updateDraftPointType(draftPoint.pointType === "stop" ? "point" : "stop")}
+              className="relative grid h-7 w-32 grid-cols-2 items-center overflow-hidden rounded-md border border-slate-300 bg-white p-1 text-xs font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 dark:border-white/20 dark:bg-zinc-950/70 dark:focus-visible:ring-white"
+            >
+              <span
+                aria-hidden="true"
+                className={`absolute inset-y-1 left-1 w-[calc(50%-0.375rem)] rounded transition-transform duration-200 ease-out ${
+                  draftPoint.pointType === "stop" ? "translate-x-[calc(100%+0.25rem)] bg-teal-700" : "translate-x-0 bg-orange-600"
+                }`}
+              />
+              <span
+                className={`relative z-10 transition-colors ${
+                  draftPoint.pointType === "point" ? "text-white" : "text-slate-600 dark:text-slate-300"
+                }`}
+              >
+                Point
+              </span>
+              <span
+                className={`relative z-10 transition-colors ${
+                draftPoint.pointType === "stop"
+                    ? "text-white"
+                    : "text-slate-600 dark:text-slate-300"
+                }`}
+              >
+                Stop
+              </span>
+            </button>
+
+          </div>
+        )}
+          <span className="text-[11px] tabular-nums opacity-75">
+            {draftPoint.pointType === "stop" ? `Video ${formatDuration(currentTime)}` : draftPoint.pointType === "flight" && draftFlightLandingPoint
               ? `${formatDuration(draftPoint.time)}–${formatDuration(draftFlightLandingPoint.time)}`
-              : draftPoint.pointType === "stop" && typeof draftPoint.stopEndTime === "number"
-              ? `${formatDuration(draftPoint.time)}–${formatDuration(draftPoint.stopEndTime)}`
               : formatDuration(draftPoint.time)}
           </span>
         </div>
-        <p className="text-xs opacity-80">
+        {(draftPoint.pointType === "flight" || isAwaitingMapPlacement) && <p className="text-xs opacity-80">
           {draftPoint.pointType === "flight" && draftFlightLandingPoint
             ? isAwaitingMapPlacement
               ? `Click the map to set the ${activeFlightEditEndpoint} location.`
@@ -2613,7 +2665,7 @@ export function CreatorVideoEditor({
             : isAwaitingMapPlacement
               ? "Click the map to set the new location."
               : "Drag the numbered map marker to update this timestamp location."} Current video time: {formatDuration(currentTime)}.
-        </p>
+        </p>}
         {flightEditEndpoints.length > 0 ? (
           <fieldset className="space-y-2">
             <legend className="text-xs font-semibold opacity-80">Flight endpoints</legend>
@@ -2730,9 +2782,10 @@ export function CreatorVideoEditor({
             <p className="text-[11px] opacity-65">Enter seconds, m:ss, or h:mm:ss.</p>
           </fieldset>
         ) : null}
-        {flightEditEndpoints.length === 0 ? <div className="block space-y-1">
+        <div className={draftPoint.pointType === "stop" && draftPoint.regionCircle?.anonymous ? "grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem]" : "space-y-2"}>
+        {flightEditEndpoints.length === 0 ? <div className="min-w-0 space-y-1">
           <span className="text-xs font-semibold opacity-80">
-            {draftPoint.pointType === "flight" ? "Airport code" : "Timestamp name"}
+            {draftPoint.pointType === "flight" ? "Airport code" : "Name"}
           </span>
           <div className="relative">
             <Input
@@ -2774,17 +2827,46 @@ export function CreatorVideoEditor({
             ) : null}
           </div>
         </div> : null}
+        {draftPoint.pointType === "stop" && draftPoint.regionCircle?.anonymous ? <label className="block space-y-1">
+          <span className="text-xs font-semibold">Radius (km)</span>
+          <Input ref={stopRadiusInputRef} key={`radius-${draftPoint.id}`} type="number" step="any"
+            min={0.05} max={500}
+            defaultValue={draftPoint.regionCircle.radiusKm}
+            aria-label="Stop radius in kilometers" aria-invalid={Boolean(stopRadiusError)}
+            className="h-8 bg-background text-foreground"
+            onChange={event => {
+              if (!draftPoint.regionCircle?.anonymous) return
+              const value = event.target.value.trim()
+              const radiusKm = Number(value)
+              if (!value || !Number.isFinite(radiusKm) || radiusKm > 500 || radiusKm < 0.05) {
+                setStopRadiusError("Enter a radius from 0.05 to 500 km.")
+                return
+              }
+              setStopRadiusError("")
+              setDraftPoint(current => {
+                if (!current || current.pointType !== "stop" || !current.regionCircle?.anonymous) return current
+                const next = { ...current, regionCircle: { radiusKm, anonymous: true } }
+                draftPointRef.current = next
+                return next
+              })
+            }} />
+          {stopRadiusError ? <span role="alert" className="text-xs text-red-600 dark:text-red-300">{stopRadiusError}</span>
+            : <span className="sr-only">{anonymousRegionMessage}</span>}
+        </label> : null}
+        </div>
         {draftPoint.pointType === "stop" && typeof draftPoint.stopEndTime === "number" ? (
-          <fieldset className="space-y-1.5">
-            <legend className="text-xs font-semibold opacity-80">Stop time range</legend>
+          <fieldset>
+            <legend className="sr-only">Stop time range</legend>
             <div className="grid grid-cols-2 gap-2">
               <label className="min-w-0 space-y-1">
                 <span className="block text-xs opacity-75">Start</span>
+                <div className="flex min-w-0 gap-1">
                 <Input
                   key={`stop-start-${draftPoint.id}-${draftPoint.time}`}
                   defaultValue={formatDuration(draftPoint.time)}
                   inputMode="decimal"
                   aria-label="Stop start time"
+                  title="Seconds, m:ss, or h:mm:ss"
                   className="h-8 border-white/70 bg-white text-slate-950 shadow-none dark:border-white/15 dark:bg-zinc-950 dark:text-zinc-100"
                   onBlur={(event) => handleDraftStopTimeBlur("start", event.currentTarget)}
                   onKeyDown={(event) => {
@@ -2795,20 +2877,25 @@ export function CreatorVideoEditor({
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-7 w-full bg-white px-2 text-xs dark:bg-zinc-950/70"
+                  className="h-8 shrink-0 bg-white px-2 text-xs dark:bg-zinc-950/70"
+                  aria-label="Use current video time for stop start"
+                  title="Use current video time for stop start"
                   disabled={currentTime >= draftPoint.stopEndTime}
                   onClick={() => useCurrentVideoTimeForStop("start")}
                 >
-                  Use video time
+                  Now
                 </Button>
+                </div>
               </label>
               <label className="min-w-0 space-y-1">
                 <span className="block text-xs opacity-75">End</span>
+                <div className="flex min-w-0 gap-1">
                 <Input
                   key={`stop-end-${draftPoint.id}-${draftPoint.stopEndTime}`}
                   defaultValue={formatDuration(draftPoint.stopEndTime)}
                   inputMode="decimal"
                   aria-label="Stop end time"
+                  title="Seconds, m:ss, or h:mm:ss"
                   className="h-8 border-white/70 bg-white text-slate-950 shadow-none dark:border-white/15 dark:bg-zinc-950 dark:text-zinc-100"
                   onBlur={(event) => handleDraftStopTimeBlur("end", event.currentTarget)}
                   onKeyDown={(event) => {
@@ -2819,61 +2906,28 @@ export function CreatorVideoEditor({
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-7 w-full bg-white px-2 text-xs dark:bg-zinc-950/70"
+                  className="h-8 shrink-0 bg-white px-2 text-xs dark:bg-zinc-950/70"
+                  aria-label="Use current video time for stop end"
+                  title="Use current video time for stop end"
                   disabled={currentTime <= draftPoint.time}
                   onClick={() => useCurrentVideoTimeForStop("end")}
                 >
-                  Use video time
+                  Now
                 </Button>
+                </div>
               </label>
             </div>
-            <p className="text-[11px] opacity-65">Enter seconds, m:ss, or h:mm:ss.</p>
+            <p className="sr-only">Enter seconds, m:ss, or h:mm:ss.</p>
           </fieldset>
         ) : null}
-        {draftPoint.pointType !== "flight" && (
-          <div className="space-y-1">
-            <span className="block text-xs font-semibold opacity-80">Timestamp type</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={draftPoint.pointType === "stop"}
-              aria-label={`Timestamp type: ${draftPoint.pointType}. Switch to ${draftPoint.pointType === "stop" ? "point" : "stop"}`}
-              onClick={() => updateDraftPointType(draftPoint.pointType === "stop" ? "point" : "stop")}
-              className="relative grid h-9 w-full grid-cols-2 items-center overflow-hidden rounded-md border border-slate-300 bg-white p-1 text-sm font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 dark:border-white/20 dark:bg-zinc-950/70 dark:focus-visible:ring-white"
-            >
-              <span
-                aria-hidden="true"
-                className={`absolute inset-y-1 left-1 w-[calc(50%-0.375rem)] rounded transition-transform duration-200 ease-out ${
-                  draftPoint.pointType === "stop" ? "translate-x-[calc(100%+0.25rem)] bg-teal-700" : "translate-x-0 bg-orange-600"
-                }`}
-              />
-              <span
-                className={`relative z-10 transition-colors ${
-                  draftPoint.pointType === "point" ? "text-white" : "text-slate-600 dark:text-slate-300"
-                }`}
-              >
-                Point
-              </span>
-              <span
-                className={`relative z-10 transition-colors ${
-                draftPoint.pointType === "stop"
-                    ? "text-white"
-                    : "text-slate-600 dark:text-slate-300"
-                }`}
-              >
-                Stop
-              </span>
-            </button>
-            <p className="text-xs opacity-70">Switch between a single point and a stop with a duration.</p>
-          </div>
-        )}
         {draftPoint.pointType === "flight" && airportCodeMessage ? (
           <p className="text-xs font-medium text-red-700 dark:text-red-300" role="alert">
             {airportCodeMessage}
           </p>
         ) : null}
+        <div className="flex flex-wrap items-center gap-2">
         {draftPoint.pointType !== "flight" ? (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="mr-auto flex flex-wrap items-center gap-2">
             <Button
               type="button"
               size="sm"
@@ -2881,8 +2935,10 @@ export function CreatorVideoEditor({
               className="h-8 bg-white dark:bg-zinc-950/70"
               disabled={isAwaitingMapPlacement}
               onClick={resetDraftPointLocation}
+              aria-label="Reset coordinates"
+              title="Choose a new location on the map"
             >
-              Reset coordinates
+              Reset pin
             </Button>
             {draftPoint.pointType === "point" ? (
               <Button
@@ -2898,7 +2954,6 @@ export function CreatorVideoEditor({
             ) : null}
           </div>
         ) : null}
-        <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
             size="sm"
@@ -2910,7 +2965,7 @@ export function CreatorVideoEditor({
                   : "bg-orange-600 hover:bg-orange-700"
             }`}
             disabled={
-              isResolvingAirportCode ||
+              Boolean(stopRadiusError) || isResolvingAirportCode ||
               (draftPoint.pointType === "flight" && draftFlightLandingPoint
                 ? (flightEditLocationModes.takeoff === "map" && (draftPoint.lat === null || draftPoint.lng === null)) ||
                   (flightEditLocationModes.landing === "map" &&
@@ -3028,7 +3083,7 @@ export function CreatorVideoEditor({
         {headerActionsElement
           ? createPortal(
               <>
-                {playlistId && <PlaylistMappingControls playlistId={playlistId} youtubeId={video.youtubeId} completionRequest={playlistCompletionRequest} saveBeforeNext={savePlaylistVideoBeforeNext} />}
+                {playlistId && <PlaylistMappingControls playlistId={playlistId} youtubeId={video.youtubeId} videoId={video.id} completionRequest={playlistCompletionRequest} saveBeforeNext={savePlaylistVideoBeforeNext} />}
                 {canUploadVideo && (
                   <Button
                     type="button"
@@ -3293,7 +3348,7 @@ export function CreatorVideoEditor({
             <div className="max-h-[22rem] overflow-y-auto px-1 py-1">
               {editorShortcutGroups.map((shortcut) => (
                 <div key={shortcut.keys} className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5">
-                  <kbd className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-1 text-[11px] font-semibold text-slate-700">
+                  <kbd className="inline-flex items-center justify-center text-center align-middle h-5 min-w-5 shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0 font-mono text-[11px] font-semibold leading-none text-slate-700">
                     {shortcut.keys}
                   </kbd>
                   <span className="text-right text-xs leading-5 text-slate-600">{shortcut.action}</span>
@@ -3450,6 +3505,8 @@ export function CreatorVideoEditor({
       >
       <section
         ref={editorScrollRef}
+        tabIndex={-1}
+        aria-label="Video mapping editor"
         className="relative flex min-h-0 min-w-0 flex-col overflow-y-auto border-b border-slate-200 xl:h-full xl:border-b-0 xl:border-r"
       >
         <div
@@ -3467,12 +3524,16 @@ export function CreatorVideoEditor({
             isMuted={false}
             showControls
             allowKeyboard
+            onKeyboardEscape={() => editorScrollRef.current?.focus({ preventScroll: true })}
             onReady={(nextDuration) => {
               const resolvedDuration = nextDuration || video.durationSeconds
+              videoDurationRef.current = resolvedDuration
+              rememberPlayerDuration(video.youtubeId, resolvedDuration)
               updateLocalCreatorVideo(video.id, { durationSeconds: resolvedDuration })
             }}
             onTimeChange={handleVideoTimeChange}
             onPlayingChange={handleEditorPlayingChange}
+            onEnded={handleEditorVideoEnded}
             onVolumeChange={handleVolumeChange}
           />
           <AutoplayCountdown seconds={isEditorTourOpen ? null : resumeCountdown} />
@@ -3515,57 +3576,35 @@ export function CreatorVideoEditor({
                     <MapPin className="mr-2 h-4 w-4" />
                   )}
                   <span className="truncate">{isPlacingPoint ? "Place Point" : "Point"}</span>
-                  <kbd className="ml-1 shrink-0 text-[10px] font-medium leading-none text-white/55">[Q]</kbd>
+                  <kbd className="inline-flex items-center justify-center text-center align-middle ml-1 h-5 min-w-5 shrink-0 rounded border border-white/30 bg-black/15 px-1.5 py-0 font-mono text-[11px] font-semibold leading-none text-white">Q</kbd>
                 </Button>
-                <Button
-                  size="sm"
-                  className={`h-8 min-w-0 border px-2 font-semibold text-white transition-all duration-200 disabled:opacity-80 ${
-                    isRecordingStop
-                      ? "border-teal-100 bg-teal-500 shadow-[0_0_0_2px_rgba(45,212,191,0.28),0_0_16px_rgba(20,184,166,0.45)] hover:bg-teal-600"
-                      : "border-transparent bg-teal-700 hover:bg-teal-800"
-                  }`}
-                  disabled={
-                    Boolean(pendingFlightTakeoff) ||
-                    Boolean(flightAirportPrompt) ||
-                    isPlacingSavedPlace ||
-                    isRecordingStop &&
-                    (!draftPoint ||
-                      draftPoint.pointType !== "stop" ||
-                      draftPoint.lat === null ||
-                      draftPoint.lng === null ||
-                      currentTime <= draftPoint.time)
-                  }
-                  title={
-                    isRecordingStop && (!draftPoint || draftPoint.lat === null || draftPoint.lng === null)
-                      ? "Click the map to set the stop start"
-                      : isRecordingStop && draftPoint && currentTime <= draftPoint.time
-                        ? "Wait until the video moves past the stop start time"
-                        : isRecordingStop
-                          ? "End the stop at the current video time"
-                          : "Start recording a stop"
-                  }
-                  data-editor-tour="stop"
-                  aria-keyshortcuts="W"
-                  onClick={isRecordingStop ? setStopEndTime : startStopRecording}
-                  aria-pressed={isRecordingStop}
-                  aria-label={
-                    isRecordingStop && (!draftPoint || draftPoint.lat === null || draftPoint.lng === null)
-                      ? "Waiting for stop location"
-                      : isRecordingStop
-                        ? "End stop at current video time"
-                        : "Start recording stop"
-                  }
-                >
-                  {!isRecordingStop ? <Pause className="mr-2 h-4 w-4" /> : null}
-                  <span className="truncate">
-                    {isRecordingStop
-                      ? draftPoint?.lat === null || draftPoint?.lng === null
-                        ? "Place Stop"
-                        : "End Stop"
-                      : "Stop"}
-                  </span>
-                  <kbd className="ml-1 shrink-0 text-[10px] font-medium leading-none text-white/55">[W]</kbd>
-                </Button>
+                <div data-editor-tour="stop" role="status" aria-live="polite"
+                  className={`flex min-h-8 min-w-0 flex-wrap items-center justify-center gap-x-1.5 gap-y-1 rounded-md border px-2 py-1 text-xs font-semibold text-white ${isRecordingStop
+                    ? "border-teal-100 bg-teal-600 shadow-[0_0_0_2px_rgba(45,212,191,0.28)]" : "border-transparent bg-teal-800"}`}
+                  title={isRecordingStop
+                    ? isAwaitingMapPlacement ? "Select the stop location on the map. Esc cancels."
+                      : `Press ${draftPoint?.regionCircle?.anonymous ? "Shift+W" : "W"} again to complete the stop.`
+                    : "W: normal stop. Shift+W: 5 km Anonymous Region."}>
+                  {isRecordingStop && <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-white" aria-hidden="true" />}
+                  {isRecordingStop ? (
+                    <>
+                      <span>{draftPoint?.regionCircle?.anonymous ? "Anon" : "Stop"}: {isAwaitingMapPlacement ? "select location" : "press again"}</span>
+                      {!isAwaitingMapPlacement && (
+                        <kbd className="inline-flex items-center justify-center text-center align-middle h-5 min-w-5 shrink-0 rounded border border-white/30 bg-black/15 px-1.5 py-0 font-mono text-[11px] font-semibold leading-none text-white">
+                          {draftPoint?.regionCircle?.anonymous ? "Shift + W" : "W"}
+                        </kbd>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <span>Stop</span>
+                      <kbd className="inline-flex items-center justify-center text-center align-middle h-5 min-w-5 shrink-0 rounded border border-white/30 bg-black/15 px-1.5 py-0 font-mono text-[11px] font-semibold leading-none text-white">W</kbd>
+                      <span aria-hidden="true">·</span>
+                      <span>Anon</span>
+                      <kbd className="inline-flex items-center justify-center text-center align-middle h-5 min-w-5 shrink-0 rounded border border-white/30 bg-black/15 px-1.5 py-0 font-mono text-[11px] font-semibold leading-none text-white">Shift + W</kbd>
+                    </>
+                  )}
+                </div>
                 <Button
                   type="button"
                   size="sm"
@@ -3596,7 +3635,7 @@ export function CreatorVideoEditor({
                           ? "Set Takeoff"
                           : "Flight"}
                   </span>
-                  <kbd className="ml-1 shrink-0 text-[10px] font-medium leading-none text-white/60">[E]</kbd>
+                  <kbd className="inline-flex items-center justify-center text-center align-middle ml-1 h-5 min-w-5 shrink-0 rounded border border-white/30 bg-black/15 px-1.5 py-0 font-mono text-[11px] font-semibold leading-none text-white">E</kbd>
                 </Button>
                 <span data-editor-tour="landmark" className="inline-flex">
                   <LandmarkSearchButton
@@ -3651,36 +3690,6 @@ export function CreatorVideoEditor({
                   </Button>
                 </div>
               ) : null}
-              {isRecordingStop && draftPoint?.pointType === "stop" ? (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="flex items-center gap-3 rounded-lg border border-teal-300 bg-teal-50 px-3 py-2 text-teal-950 shadow-sm dark:border-teal-400/40 dark:bg-teal-500/15 dark:text-teal-100"
-                >
-                  <span className="h-3 w-3 shrink-0 animate-pulse rounded-full bg-teal-500 shadow-[0_0_0_4px_rgba(20,184,166,0.18)] dark:bg-teal-400" aria-hidden="true" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold uppercase tracking-wide">
-                      {draftPoint.lat === null || draftPoint.lng === null ? "Set stop start" : "Stop in progress"}
-                    </p>
-                    <p className="mt-0.5 text-xs leading-5 opacity-85">
-                      {draftPoint.lat === null || draftPoint.lng === null
-                        ? "Click the map to set the stop start."
-                        : "Press W or click End Stop when it ends."}
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0 border border-teal-300 text-teal-900 hover:bg-teal-100 hover:text-teal-950 dark:border-teal-300/30 dark:text-teal-100 dark:hover:bg-teal-400/20 dark:hover:text-white"
-                    onClick={cancelPointEdit}
-                    aria-label="Cancel stop placement"
-                    title="Cancel stop placement"
-                  >
-                    <X className="h-4 w-4" aria-hidden="true" />
-                  </Button>
-                </div>
-              ) : null}
               {pendingFlightTakeoff && !flightAirportPrompt ? (
                 <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-2 text-cyan-950 shadow-sm dark:border-cyan-400/40 dark:bg-cyan-500/15 dark:text-cyan-100">
                   <span className="h-3 w-3 shrink-0 animate-pulse rounded-full bg-cyan-500 shadow-[0_0_0_4px_rgba(6,182,212,0.18)] dark:bg-cyan-400" aria-hidden="true" />
@@ -3692,7 +3701,7 @@ export function CreatorVideoEditor({
                       Takeoff {formatDuration(pendingFlightTakeoff.time)}. Press E again or click Land when the traveler arrives.
                     </p>
                   </div>
-                  <kbd className="shrink-0 rounded border border-cyan-300 bg-white/80 px-2 py-1 text-[11px] font-bold dark:border-cyan-300/30 dark:bg-cyan-950/30">E</kbd>
+                  <kbd className="inline-flex items-center justify-center text-center align-middle h-5 min-w-5 shrink-0 rounded border border-cyan-300 bg-white/80 px-1.5 py-0 font-mono text-[11px] font-semibold leading-none dark:border-cyan-300/30 dark:bg-cyan-950/30">E</kbd>
                 </div>
               ) : null}
             </section>
@@ -3814,9 +3823,9 @@ export function CreatorVideoEditor({
                 <p className="py-4 text-sm text-slate-500 dark:text-zinc-400">No points yet.</p>
               ) : (
                 <div className="divide-y divide-slate-200 overflow-x-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:divide-white/10 dark:border-white/10 dark:bg-zinc-950/50 dark:shadow-black/20">
+                  {canReuseTimestampLocation ? <p role="status" className="px-3 py-1.5 text-xs text-teal-700 dark:text-teal-300">Choose a past location to reuse it.</p> : null}
                   {displayedRows.map((row, rowIndex) => {
                     const { point, landingPoint } = row
-                    const travelSummary = travelSummaryAfterRowKey.get(row.key)
                     const pointNumber = pointNumberById.get(point.id) ?? rowIndex + 1
                     const isSelected = draftPoint?.id === point.id || draftPoint?.id === landingPoint?.id
                     const isCurrentTimestamp =
@@ -3827,10 +3836,6 @@ export function CreatorVideoEditor({
                           currentTime >= point.time &&
                           currentTime <= landingPoint.time,
                       )
-                    const timestampName =
-                      point.pointType === "stop" && isGeneratedStopName(point.location)
-                        ? getDraftLocation("stop", point.time, pointNumber)
-                        : getDisplayTimestampName(point)
                     const rowClassName = [
                       "min-w-0 border-l-4 transition-colors hover:bg-slate-50 dark:hover:bg-white/[0.035]",
                       isCurrentTimestamp
@@ -3867,12 +3872,11 @@ export function CreatorVideoEditor({
                             }`
                           : `Flight in progress from ${getFlightAirportCode(point)}`
                         : point.pointType === "stop"
-                          ? timestampName || getDraftLocation("stop", point.time, pointNumber)
-                          : `${timestampName ? `${timestampName} - ` : ""}${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`
+                          ? timestampLocationLabel(point)
+                          : timestampLocationLabel(point)
 
                     return (
-                      <Fragment key={row.key}>
-                        <div className={rowClassName}>
+                      <div key={row.key} className={rowClassName}>
                           <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem_2rem] items-center gap-2 px-2 py-2.5">
                           <div className="grid min-w-0 grid-cols-[1.5rem_auto_minmax(0,1fr)] items-center gap-2">
                             <button
@@ -3935,14 +3939,36 @@ export function CreatorVideoEditor({
                               </button>
                             )}
 
-                            <button
-                              type="button"
-                              className="min-w-0 truncate rounded-sm text-left text-xs text-slate-500 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:text-zinc-400 dark:hover:text-zinc-100"
-                              aria-label={`Play timestamp ${pointNumber} from ${formatDuration(point.time)}`}
-                              onClick={() => playFromTimestamp(point.time)}
-                            >
-                              {timestampDescription}
-                            </button>
+                            <div className="flex min-w-0 items-center gap-1">
+                              <button
+                                type="button"
+                                className={`min-w-0 truncate rounded-sm text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 ${canReuseTimestampLocation ? "font-medium text-teal-700 underline decoration-dotted underline-offset-4 hover:text-teal-900 dark:text-teal-300" : "text-slate-500 hover:text-slate-800 dark:text-zinc-400 dark:hover:text-zinc-100"}`}
+                                aria-label={canReuseTimestampLocation ? `Use ${timestampLocationLabel(point)} for current timestamp` : `Play timestamp ${pointNumber} from ${formatDuration(point.time)}`}
+                                disabled={Boolean(canReuseTimestampLocation && draftPoint?.pointType === "point" && point.regionCircle?.anonymous)}
+                                title={canReuseTimestampLocation && draftPoint?.pointType === "point" && point.regionCircle?.anonymous ? "Use a stop to preserve this anonymous region" : canReuseTimestampLocation ? "Use this location for the current timestamp" : timestampDescription}
+                                onClick={() => canReuseTimestampLocation ? void reuseTimestampLocation(point) : playFromTimestamp(point.time)}
+                              >
+                                {canReuseTimestampLocation && landingPoint ? `From: ${timestampLocationLabel(point)}` : timestampDescription}
+                              </button>
+                              {[point, ...(landingPoint ? [landingPoint] : [])].map(candidate => {
+                                const suggestion = timestampPlaceSuggestions.get(candidate.id)
+                                if (!suggestion?.kind) return null
+                                return <button key={candidate.id} type="button"
+                                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm hover:bg-teal-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${suggestion.saved ? "text-teal-700 dark:text-teal-300" : "text-slate-500 hover:text-teal-700 dark:text-zinc-400 dark:hover:text-teal-300"}`}
+                                  disabled={Boolean(suggestion.saved) && !canReuseTimestampLocation}
+                                  aria-label={suggestion.saved && canReuseTimestampLocation ? `Use ${timestampPlaceName(candidate)} for current timestamp` : suggestion.saved ? `${timestampPlaceName(candidate)} saved to Places` : `Save ${suggestion.kind} ${timestampPlaceName(candidate)} to Places`}
+                                  title={suggestion.saved ? `${timestampPlaceName(candidate)} saved to Places` : `Save ${suggestion.kind}: ${timestampPlaceName(candidate)}`}
+                                  onClick={() => suggestion.saved && canReuseTimestampLocation ? void reuseTimestampLocation(candidate) : saveTimestampPlace(candidate)}>
+                                  <Bookmark className={`h-3.5 w-3.5 ${suggestion.saved ? "fill-current" : ""}`} aria-hidden="true" />
+                                </button>
+                              })}
+                            </div>
+                            {canReuseTimestampLocation && landingPoint ? <button type="button"
+                              className="col-start-3 min-w-0 truncate text-left text-xs text-sky-700 hover:underline dark:text-sky-300"
+                              aria-label={`Use ${timestampLocationLabel(landingPoint)} for current timestamp`}
+                              onClick={() => void reuseTimestampLocation(landingPoint)}>
+                              To: {timestampLocationLabel(landingPoint)}
+                            </button> : null}
                           </div>
 
                           <Button
@@ -3966,16 +3992,7 @@ export function CreatorVideoEditor({
                           </Button>
                           </div>
                           {isSelected ? renderTimestampEditPanel() : null}
-                        </div>
-                        {travelSummary ? (
-                          <div
-                            role="note"
-                            className="min-w-0 bg-slate-50/80 px-3 py-1 text-center text-[10px] leading-4 text-slate-500 dark:bg-white/[0.025] dark:text-zinc-500"
-                          >
-                            <span className="block truncate">{travelSummary}</span>
-                          </div>
-                        ) : null}
-                      </Fragment>
+                      </div>
                     )
                   })}
                 </div>
@@ -3999,12 +4016,20 @@ export function CreatorVideoEditor({
 
       <section data-editor-tour="map" ref={landmarkMapOverlayRef} className="relative min-h-[620px] min-w-0 overflow-hidden bg-slate-100 xl:h-full xl:min-h-0">
         <MapboxLocationPicker
+          regionPoints={stopRegionPoints}
+          onStopRegionClick={isRecordingStop || isAwaitingMapPlacement ? undefined : region => {
+            const point = sortedPoints.find(candidate => candidate.id === region.id)
+            if (!point) return
+            beginEditPoint(point)
+            window.requestAnimationFrame(() => {
+              stopRadiusInputRef.current?.scrollIntoView({ block: "nearest" })
+              stopRadiusInputRef.current?.focus({ preventScroll: true })
+              stopRadiusInputRef.current?.select()
+            })
+          }}
           landmarkSearchResult={landmarkSearchResult}
-          value={
-            activeDraftMapPoint?.lat === null || activeDraftMapPoint?.lng === null || !activeDraftMapPoint
-              ? null
-              : { lat: activeDraftMapPoint.lat, lng: activeDraftMapPoint.lng }
-          }
+          value={activeDraftMapValue}
+          activeRegionRadiusKm={activeDraftMapPoint?.regionCircle?.radiusKm}
           points={sortedPoints}
           onSearchLocationChange={(location) => {
             searchedLocationRef.current = location
@@ -4033,6 +4058,7 @@ export function CreatorVideoEditor({
           routeShapes={routeShapes}
           routeProgressTime={currentTime}
           liveRouteProgressTimeRef={currentTimeRef}
+          trackingRequestId={flightTrackingRequestId}
           isPlaying={isPlaying}
           isPlacementEnabled={isAwaitingMapPlacement || isPlacingSavedPlace || isPlacingFlightOnMap}
           placementSessionKey={

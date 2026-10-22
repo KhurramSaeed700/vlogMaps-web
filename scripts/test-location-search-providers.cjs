@@ -6,6 +6,7 @@ const cache = new Map()
 const mocks = { 'server-only': {}, '@/lib/mapbox-server': { getServerMapboxAccessToken: () => 'test-token' } }
 function load(name) {
   if (name in mocks) return mocks[name]
+  if (name.endsWith(".json")) return { default: JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", name.replace("@/", "")), "utf8")) }
   if (cache.has(name)) return cache.get(name)
   const exports = {}
   cache.set(name, exports)
@@ -28,6 +29,13 @@ async function run() {
   const q = load('@/lib/location-search/query-utils')
   const mapbox = load('@/lib/location-search/providers/mapbox')
   const osm = load('@/lib/location-search/providers/openstreetmap')
+  const airportCatalog = load('@/lib/location-search/providers/airport-catalog')
+  const anchorage = airportCatalog.searchAirportCatalog(q.createSearchContext('Anchorage Airport, Alaska', null, null))
+  assert.ok(anchorage.some(result => result.id === 'airport:ANC'), 'The real airport is available even if remote providers only return hotels')
+  const canada = airportCatalog.searchAirportCatalog(q.createSearchContext('London Airport, Canada', null, null))
+  assert.ok(canada.some(result => result.id === 'airport:YXU'))
+  assert.ok(canada.every(result => result.address.countryCode === 'ca'), 'Apply explicit country before the airport search result limit')
+  assert.equal(airportCatalog.searchAirportCatalog(q.createSearchContext('Anchorage Airport Hotel', null, null)).length, 0)
   const context = q.createSearchContext('Eisenbahnstraße 42/43, 10997 Berlin, Germany', [74, 31], null)
   const results = await mapbox.fetchPrimaryMapboxResults(context)
   assert.equal(results.length, 3)

@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { createHoldToSpeed } from "@/lib/hold-to-speed"
+import { returnEditorPlayerFocus } from "@/lib/editor-player-focus"
 import { diagnosticEvent, reportHandledError } from "@/lib/monitoring/diagnostics"
 
 interface YouTubePlayerProps {
@@ -20,12 +22,16 @@ interface YouTubePlayerProps {
   onPlayingChange?: (isPlaying: boolean) => void
   onVolumeChange?: (volume: number) => void
   onEnded?: () => void
+  onKeyboardEscape?: () => void
 }
 
 interface YTPlayerInstance {
   destroy: () => void
   getCurrentTime: () => number
   getDuration: () => number
+  getPlaybackRate?: () => number
+  getAvailablePlaybackRates?: () => number[]
+  setPlaybackRate?: (rate: number) => void
   getOption?: (module: string, option: string) => unknown
   isMuted?: () => boolean
   loadModule?: (module: string) => void
@@ -132,7 +138,7 @@ function shouldIgnorePlayerShortcut(target: EventTarget | null, allowButton = fa
     tagName === "select" ||
     (tagName === "button" && !allowButton) ||
     target.isContentEditable ||
-    Boolean(target.closest('[role="combobox"]'))
+    Boolean(target.closest('[role="combobox"], [role="dialog"], [role="alertdialog"]'))
   )
 }
 
@@ -170,6 +176,7 @@ export function YouTubePlayer({
   onPlayingChange,
   onVolumeChange,
   onEnded,
+  onKeyboardEscape,
 }: YouTubePlayerProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -178,6 +185,7 @@ export function YouTubePlayer({
   const [captionFeedback, setCaptionFeedback] = useState<string | null>(null)
   const [isBrowserFullscreen, setIsFullscreen] = useState(false)
   const [isExpanded, setIsExpanded] = useState(false)
+  const [isSpeedHeld, setIsSpeedHeld] = useState(false)
   const isFullscreen = isBrowserFullscreen || isExpanded
   const [fullscreenError, setFullscreenError] = useState<string | null>(null)
   const [autoplayMuted, setAutoplayMuted] = useState(false)
@@ -198,6 +206,7 @@ export function YouTubePlayer({
   const onPlayingChangeRef = useRef(onPlayingChange)
   const onVolumeChangeRef = useRef(onVolumeChange)
   const onEndedRef = useRef(onEnded)
+  const onKeyboardEscapeRef = useRef(onKeyboardEscape)
   const isPlayingRef = useRef(isPlaying)
   const isMutedRef = useRef(isMuted)
   const volumeRef = useRef(volume)
@@ -242,10 +251,30 @@ export function YouTubePlayer({
     onPlayingChangeRef.current = onPlayingChange
     onVolumeChangeRef.current = onVolumeChange
     onEndedRef.current = onEnded
+    onKeyboardEscapeRef.current = onKeyboardEscape
     isPlayingRef.current = isPlaying
     isMutedRef.current = isMuted
     volumeRef.current = volume
-  }, [isMuted, isPlaying, onEnded, onReady, onPlayingChange, onTimeChange, onVolumeChange, volume])
+  }, [isMuted, isPlaying, onEnded, onKeyboardEscape, onReady, onPlayingChange, onTimeChange, onVolumeChange, volume])
+
+  useEffect(() => {
+    if (!allowKeyboard) return
+    let frame: number | null = null
+    // The parent receives blur when the iframe takes focus. Check once after that
+    // transition, so Escape and our playback shortcuts remain in the page.
+    const handlePlayerFocus = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        frame = null
+        returnEditorPlayerFocus(wrapperRef.current, document)
+      })
+    }
+    window.addEventListener("blur", handlePlayerFocus)
+    return () => {
+      window.removeEventListener("blur", handlePlayerFocus)
+      if (frame !== null) window.cancelAnimationFrame(frame)
+    }
+  }, [allowKeyboard, videoId])
 
   const clearProgressInterval = () => {
     if (progressIntervalRef.current !== null) {
@@ -588,8 +617,41 @@ export function YouTubePlayer({
       return
     }
 
+    const speedHold = createHoldToSpeed({
+      getPlayer: () => playerRef.current,
+      isPlaying: () => isPlayingRef.current,
+      onPlayingChange: playing => { isPlayingRef.current = playing; onPlayingChangeRef.current?.(playing) },
+      onActiveChange: setIsSpeedHeld,
+      onTap: togglePlaybackFromKeyboard,
+      schedule: (callback, delay) => window.setTimeout(callback, delay),
+      clear: timer => window.clearTimeout(timer),
+    })
+    const cancelSpeedHold = () => speedHold.cancel()
+    const handleVisibilityChange = () => { if (document.hidden) speedHold.cancel() }
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.isComposing || event.defaultPrevented) return
+      if ((event.code === "Escape" || event.key === "Escape") && allowKeyboard && !event.repeat &&
+        event.target instanceof Node && wrapperRef.current?.contains(event.target)) {
+        speedHold.cancel()
+        clearSeekHoldTimers()
+        event.preventDefault()
+        onKeyboardEscapeRef.current?.()
+        return
+      }
+      if (
+        (event.code === "Home" || event.code === "End") &&
+        !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey &&
+        !shouldIgnorePlayerShortcut(event.target, true)
+      ) {
+        event.preventDefault()
+        if (!event.repeat) seekToDurationPercentage(event.code === "Home" ? 0 : 1)
+        return
+      }
+      if (event.code === "Space" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !shouldIgnorePlayerShortcut(event.target)) {
+        event.preventDefault()
+        if (!event.repeat) speedHold.press()
+        return
+      }
       const watchShortcutDigit = getWatchShortcutDigit(event)
       if (
         allowWatchKeyboardControls &&
@@ -715,6 +777,7 @@ export function YouTubePlayer({
     }
 
     const handleKeyUp = (event: globalThis.KeyboardEvent) => {
+      if (event.code === "Space") speedHold.release()
       if (event.code === activeSeekHoldKeyRef.current) {
         clearSeekHoldTimers()
       }
@@ -723,13 +786,18 @@ export function YouTubePlayer({
     document.addEventListener("keydown", handleKeyDown)
     document.addEventListener("keyup", handleKeyUp)
     window.addEventListener("blur", clearSeekHoldTimers)
+    window.addEventListener("blur", cancelSpeedHold)
+    document.addEventListener("visibilitychange", handleVisibilityChange)
     return () => {
       document.removeEventListener("keydown", handleKeyDown)
       document.removeEventListener("keyup", handleKeyUp)
       window.removeEventListener("blur", clearSeekHoldTimers)
+      window.removeEventListener("blur", cancelSpeedHold)
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
+      speedHold.cancel()
       clearSeekHoldTimers()
     }
-  }, [allowKeyboard, allowWatchKeyboardControls])
+  }, [allowKeyboard, allowWatchKeyboardControls, videoId])
 
   useEffect(() => {
     let isMounted = true
@@ -928,10 +996,12 @@ export function YouTubePlayer({
     <div
       ref={wrapperRef}
       tabIndex={-1}
+      data-player-fullscreen={isFullscreen}
       className={`${isExpanded ? "fixed inset-0 z-[100] h-[100dvh] w-screen" : "relative h-full w-full"} flex flex-col bg-black [&_iframe]:block [&_iframe]:h-full [&_iframe]:w-full`}
     >
       <div className="relative min-h-0 flex-1">
       <div ref={containerRef} className="h-full w-full" />
+      {isSpeedHeld && <div role="status" className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full bg-black/80 px-3 py-1 text-sm font-semibold text-white">2× speed</div>}
       {(autoplayMuted || autoplayNeedsTap) && (
         <button
           type="button"

@@ -15,19 +15,21 @@ import {
 } from "@/lib/creator-videos"
 import { migrateLegacyCreatorStorageToDatabase } from "@/lib/legacy-creator-storage-migration"
 import { formatDuration, type TravelVideo } from "@/lib/demo-data"
+import { CreatorPlaylistCards } from "@/components/creator/creator-playlists"
+import { groupCreatorPlaylists } from "@/lib/creator-playlists"
 import { PlaylistImporter } from "@/components/creator/playlist-importer"
 import { extractYouTubePlaylistId } from "@/lib/youtube-playlist"
 import { resolveYouTubeDuration } from "@/lib/youtube-duration-client"
 
-export function CreatorVideoWorkspace() {
+export function CreatorVideoWorkspace({ initialUrl = "" }: { initialUrl?: string }) {
   const router = useRouter()
   const isMountedRef = useRef(false)
   const resolvingDurationsRef = useRef(new Set<string>())
   const [videos, setVideos] = useState<TravelVideo[]>([])
-  const [youtubeUrl, setYoutubeUrl] = useState("")
+  const [youtubeUrl, setYoutubeUrl] = useState(initialUrl)
   const [message, setMessage] = useState("")
   const [isCreating, setIsCreating] = useState(false)
-  const [playlistUrl, setPlaylistUrl] = useState("")
+  const [playlistUrl, setPlaylistUrl] = useState(() => extractYouTubePlaylistId(initialUrl) ? initialUrl : "")
 
   useEffect(() => {
     isMountedRef.current = true
@@ -101,9 +103,10 @@ export function CreatorVideoWorkspace() {
     })
   }, [videos])
 
+  const { standalone, playlists } = useMemo(() => groupCreatorPlaylists(videos), [videos])
   const orderedVideos = useMemo(
-    () => [...videos].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
-    [videos],
+    () => [...standalone].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
+    [standalone],
   )
 
   const handleCreateVideo = async () => {
@@ -148,7 +151,7 @@ export function CreatorVideoWorkspace() {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Videos</h1>
-          <p className="mt-1 text-sm text-slate-500">{orderedVideos.length} creator videos</p>
+          <p className="mt-1 text-sm text-slate-500">{orderedVideos.length} standalone videos · {playlists.length} {playlists.length === 1 ? "playlist" : "playlists"}</p>
         </div>
       </header>
 
@@ -178,9 +181,11 @@ export function CreatorVideoWorkspace() {
 
       {playlistUrl && <PlaylistImporter url={playlistUrl} onImported={setVideos} onBusyChange={setIsCreating} />}
 
+      {playlists.length > 0 && <CreatorPlaylistCards playlists={playlists} loading={false} compact />}
+
       {orderedVideos.length === 0 ? (
         <div className="border-t border-slate-200 py-10">
-          <p className="text-sm text-slate-500">No videos yet.</p>
+          <p className="text-sm text-slate-500">{playlists.length ? "Your playlist videos are grouped above." : "No videos yet."}</p>
         </div>
       ) : (
         <div className="divide-y divide-slate-200 border-y border-slate-200">

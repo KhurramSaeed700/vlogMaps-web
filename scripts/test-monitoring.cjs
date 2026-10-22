@@ -2,20 +2,44 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const ts = require('typescript')
-function load(file, mocks = {}) {
+function load(file, mocks = {}, env = process.env) {
   const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../lib/monitoring', file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
   }).outputText
   const result = { exports: {} }
-  new Function('module', 'exports', 'require', code)(result, result.exports, name => {
+  new Function('module', 'exports', 'require', 'process', code)(result, result.exports, name => {
     assert.ok(name in mocks, `Unexpected dependency ${name}`)
     return mocks[name]
-  })
+  }, { env })
   return result.exports
 }
 const privacy = load('privacy.ts')
 assert.equal(privacy.sanitizeDiagnosticText('postgresql://user:private-password@host/db?token=private'), 'postgresql://host/db')
 const options = load('options.ts', { './privacy': privacy }).sharedMonitoringOptions
+for (const [nodeEnv, flag, dsn, expected] of [
+  ['development', undefined, 'https://test@example.com/1', false],
+  ['test', undefined, 'https://test@example.com/1', false],
+  ['production', undefined, 'https://test@example.com/1', true],
+  ['production', 'false', 'https://test@example.com/1', false],
+  ['development', 'false', 'https://test@example.com/1', false],
+  ['development', 'true', 'https://test@example.com/1', true],
+  ['production', 'true', undefined, false],
+]) {
+  const config = load('options.ts', { './privacy': privacy }, {
+    NODE_ENV: nodeEnv, NEXT_PUBLIC_SENTRY_ENABLED: flag, NEXT_PUBLIC_SENTRY_DSN: dsn,
+  })
+  assert.equal(config.monitoringEnabled, expected, `Monitoring policy: ${nodeEnv}/${flag}`)
+  assert.equal(config.sharedMonitoringOptions.enabled, expected)
+}
+for (const file of ['../../instrumentation-client.ts', '../../sentry.server.config.ts', '../../sentry.edge.config.ts']) {
+  const disabled = load(file, {
+    '@sentry/nextjs': { init() { throw new Error('Disabled monitoring must not initialize the SDK') } },
+    './lib/monitoring/options': { sharedMonitoringOptions: { enabled: false } },
+    './lib/monitoring/privacy': privacy,
+  }, { NEXT_PUBLIC_SENTRY_REPLAY_ENABLED: 'true' })
+  disabled.onRouterTransitionStart?.()
+}
+
 const span = options.beforeSendSpan({ span_id: 'span-reference', attributes: { 'url.query': 'token=private', 'db.query.text': 'private SQL', 'http.response.status_code': 503 } })
 assert.equal(span.span_id, 'span-reference')
 assert.equal(span.attributes['http.response.status_code'], 503)
@@ -43,7 +67,7 @@ load('../../instrumentation-client.ts', {
     init() {}, addEventProcessor(processor) { feedbackProcessor = processor },
     captureRouterTransitionStart() {},
   },
-  './lib/monitoring/options': { sharedMonitoringOptions: options },
+  './lib/monitoring/options': { sharedMonitoringOptions: { ...options, enabled: true } },
   './lib/monitoring/privacy': privacy,
 })
 const feedback = feedbackProcessor({ type: 'feedback', user: { id: 'private-user' }, contexts: { feedback: { contact_email: undefined, name: undefined, message: 'Test report', url: 'https://example.com/watch?token=private' } } })

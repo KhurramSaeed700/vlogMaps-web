@@ -1,8 +1,8 @@
 import type { TravelVideo } from "@/lib/demo-data"
 import type { YouTubePlaylistPreview } from "@/lib/youtube-playlist"
 
-export function playlistEditorHref(videoId: string, playlistId: string) {
-  return `/creator/video/${encodeURIComponent(videoId)}/edit?${new URLSearchParams({ playlist: playlistId })}`
+export function playlistEditorHref(videoId: string, playlistId: string, previousVideoId?: string) {
+  return `/creator/video/${encodeURIComponent(videoId)}/edit?${new URLSearchParams({ playlist: playlistId, ...(previousVideoId ? { from: previousVideoId } : {}) })}`
 }
 
 export function getPlaylistMappingStep(playlist: YouTubePlaylistPreview, videos: TravelVideo[], youtubeId: string) {

@@ -118,12 +118,12 @@ export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focu
   return (
     <Dialog.Root open={open} onOpenChange={changeOpen}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[100] bg-slate-950/35" style={{ clipPath: spotlightClip }} />
+        <Dialog.Overlay className="fixed inset-0 z-[100] bg-black/60" style={{ clipPath: spotlightClip }} />
         {highlight && placement && (
           <div aria-hidden="true" className="pointer-events-none">
             <div
               aria-hidden="true"
-              className="pointer-events-none fixed z-[101] box-border rounded-xl border-2 border-white"
+              className="pointer-events-none fixed z-[101] box-border rounded-xl border border-white/90"
               style={{ top: highlight.top, left: highlight.left, width: Math.max(0, highlight.right - highlight.left), height: Math.max(0, highlight.bottom - highlight.top) }}
             />
           </div>
@@ -162,9 +162,10 @@ export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focu
           <Dialog.Title className="pr-5 text-[21px] font-bold leading-7 tracking-[-0.02em] text-popover-foreground">{step.title}</Dialog.Title>
           <Dialog.Description className="mt-1.5 text-sm leading-6 text-muted-foreground">{step.description}</Dialog.Description>
           {stepContent || (step.preview ? <TourStepPreview key={stepIndex} kind={step.preview} /> : null)}
-          <div className="sticky bottom-0 -mx-6 mt-2 flex items-center justify-between gap-2 rounded-b-2xl bg-popover px-6 py-4">
-            <span aria-label={`${label}: step ${stepIndex + 1} of ${steps.length}`} className="text-sm tabular-nums text-muted-foreground">{stepIndex + 1} of {steps.length}</span>
-            <div className="flex items-center gap-1">
+          <div className="sticky bottom-0 -mx-6 mt-2 flex flex-wrap items-center justify-between gap-2 rounded-b-2xl bg-popover px-6 py-4">
+            <span aria-label={`${label}: step ${stepIndex + 1} of ${steps.length}`} className="shrink-0 text-sm tabular-nums text-muted-foreground">{stepIndex + 1} of {steps.length}</span>
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+              <Button variant="ghost" size="sm" className="h-8 px-2 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground" onClick={finish} aria-label="Skip tour">Skip tour</Button>
               {stepIndex > 0 && <Button variant="ghost" size="sm" className="h-8 px-2 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground" onClick={() => setStepIndex((index) => index - 1)} aria-label="Previous tutorial step">Back</Button>}
               <Button variant="ghost" size="sm" className="h-8 px-1 text-sm font-bold text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-400/10 dark:hover:text-indigo-200" onClick={() => lastStep ? finish() : setStepIndex((index) => index + 1)}>
                 {lastStep ? "Got it" : "Next tip"}

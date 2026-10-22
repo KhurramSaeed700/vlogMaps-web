@@ -69,6 +69,8 @@ for(let i=17;i<21;i++){
   next.props.onClick();nodes=render()
 }
 assert.deepEqual(changes,[false],'Last step completes the tutorial')
+nodes.find(node=>node.props?.['aria-label']==='Skip tour').props.onClick()
+assert.equal(changes.at(-1),false,'Visible Skip tour control closes the guide')
 const editorSource=sourceOf('components/creator/creator-video-editor.tsx')
 const ast=ts.createSourceFile('editor.tsx',editorSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX)
 function initializer(name){let found;function visit(n){if(ts.isVariableDeclaration(n)&&n.name.getText(ast)===name)found=n.initializer.getText(ast);ts.forEachChild(n,visit)}visit(ast);assert.ok(found,name);return found}
@@ -83,11 +85,19 @@ for(const playing of [false,true]){
 }
 const keyboard=evaluate(initializer('handleKeyDown'),{editorTourOpenRef:{current:true},editorShortcutStateRef:{get current(){throw Error('Editing shortcut read during tour')}}})
 keyboard({code:'KeyQ'});keyboard({code:'Escape'})
-const effectBody=editorSource.slice(editorSource.indexOf('    if (resumeCountdown === null || isEditorTourOpen)'),editorSource.indexOf('  }, [resumeCountdown, isEditorTourOpen])'))
+let effectBody
+function findCountdown(node){
+  if(ts.isCallExpression(node)&&node.expression.getText(ast)==='useEffect'&&node.arguments[0]&&ts.isArrowFunction(node.arguments[0])){
+    const body=node.arguments[0].body.getText(ast)
+    if(body.includes('if (resumeCountdown === null || isEditorTourOpen'))effectBody=body
+  }
+  ts.forEachChild(node,findCountdown)
+}
+findCountdown(ast)
 assert.ok(effectBody)
 for(const touring of [false,true]){
   const changes=[];let tick
-  const effect=evaluate(`() => {${effectBody}}`,{resumeCountdown:1,isEditorTourOpen:touring,resumeCountdownTickSeconds:1,window:{setTimeout:fn=>{tick=fn;return 1},clearTimeout:noop},setResumeCountdown:v=>changes.push(['countdown',v]),setIsPlaying:v=>changes.push(['playing',v])})
+  const effect=evaluate(`() => ${effectBody}`,{playlistStartStop:null,isLoadingSavedState:false,resumeCountdown:1,isEditorTourOpen:touring,resumeCountdownTickSeconds:1,window:{setTimeout:fn=>{tick=fn;return 1},clearTimeout:noop},setResumeCountdown:v=>changes.push(['countdown',v]),setIsPlaying:v=>changes.push(['playing',v])})
   effect();if(tick)tick()
   assert.deepEqual(changes,touring?[]:[['countdown',null],['playing',true]],'Autoplay must wait until the guide closes')
 }

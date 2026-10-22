@@ -1,15 +1,19 @@
 "use client"
 
+import { buildStopRegionCameraPlan, getStopRegionCameraAtTime, type StopRegionCameraWindow } from "@/lib/stop-region-camera"
 import { getTripPreviewTiming, getTripPreviewDistanceProgress, tripPreviewCameraMs, tripPreviewCompleteHoldMs } from "@/lib/trip-preview"
+import { useStopRegions } from "@/components/maps/use-stop-regions"
 
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
-import { Crosshair, ExternalLink, Loader2, Play, Search, X } from "lucide-react"
+import { ArrowRight, Crosshair, ExternalLink, Loader2, Play, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { MapStylePicker } from "@/components/maps/map-style-picker"
 import { Input } from "@/components/ui/input"
 import {
   fetchRoutedLegsForKeyframes,
+  splitRoutedLegSections,
   createGreatCircleFlightCoordinates,
   isFlightRouteLeg,
   type RouteCoordinate,
@@ -50,6 +54,7 @@ import {
 } from "@/lib/map-navigation-motion"
 
 interface Keyframe {
+  regionCircle?: { radiusKm: number; anonymous?: boolean }
   id?: string
   time: number
   stopEndTime?: number
@@ -258,7 +263,6 @@ const routePreloadSampleCount = 12
 const routePreloadMaxZoom = 13
 const playbackRoutePreloadRefreshMs = 1500
 const playbackRoutePreloadMaxZoom = 15.5
-const mapOverlayWideMinWidth = 760
 const cameraTimelineMaxSamples = 240
 const cameraTimelineTargetSecondsPerSample = 2
 const viewportMarkerRefreshIntervalMs = 80
@@ -761,10 +765,8 @@ function expandLegsForStopDurations(legs: RoutedLeg[], keyframes: Keyframe[]) {
       ],
     }
 
-    if (stopEndTime >= nextKeyframe.time) {
-      return [stationaryLeg]
-    }
-
+    // Keep a zero-duration connection for touching/overlapping stops so the
+    // route remains visible while the recorded stop timing stays authoritative.
     return [
       stationaryLeg,
       {
@@ -2350,6 +2352,7 @@ export function MapboxTravelMap({
   const positionedLegsRef = useRef<PositionedRoutedLeg[]>([])
   const cameraTimelineRef = useRef<CameraTimelineEntry[]>([])
   const cameraZoomPlanRef = useRef<CameraZoomWindow[]>([])
+  const stopRegionCameraPlanRef = useRef<StopRegionCameraWindow[]>([])
   const contextualZoomCacheRef = useRef<ContextualZoomCacheEntry | null>(null)
   const routeLayersReadyRef = useRef(false)
   const routeRevealTimeRef = useRef(0)
@@ -2404,7 +2407,6 @@ export function MapboxTravelMap({
   const [mapError, setMapError] = useState<string | null>(null)
   const [routedLegs, setRoutedLegs] = useState<RoutedLeg[]>([])
   const [isRouteResolving, setIsRouteResolving] = useState(false)
-  const [isMapOverlayWide, setIsMapOverlayWide] = useState(false)
   const [isRouteIntroActive, setIsRouteIntroActive] = useState(hasMapboxAccessToken)
   const [isRouteIntroAutoStartCancelled, setIsRouteIntroAutoStartCancelled] = useState(false)
   const [routeIntroCountdownCycle, setRouteIntroCountdownCycle] = useState(0)
@@ -2526,6 +2528,9 @@ export function MapboxTravelMap({
 
     cameraTimelineRef.current = buildCameraTimeline(map, positionedLegsRef.current)
     const container = map.getContainer()
+    stopRegionCameraPlanRef.current = buildStopRegionCameraPlan(keyframesRef.current, {
+      width: container.clientWidth, height: container.clientHeight,
+    })
     cameraZoomPlanRef.current = buildCameraZoomPlan(positionedLegsRef.current, {
       width: container.clientWidth, height: container.clientHeight,
       minZoom: map.getMinZoom(), maxZoom: map.getMaxZoom(),
@@ -2649,6 +2654,17 @@ export function MapboxTravelMap({
       routeCoordinate,
       fallbackZoom,
     )
+    const regionCamera = getStopRegionCameraAtTime(stopRegionCameraPlanRef.current, routeTime)
+    if (regionCamera) {
+      targetCameraCenterRef.current = regionCamera.center
+      targetCameraZoomRef.current = Math.min(
+        getPreferredFollowZoom(cameraTarget.zoom),
+        Math.max(map.getMinZoom(), regionCamera.maxZoom),
+      )
+      targetCameraSpeedProgressRef.current = 0
+      targetCameraModeRef.current = "follow"
+      return
+    }
     const isOverview =
       cameraTarget.mode === "flight-overview" ||
       cameraTarget.mode === "rapid-land-overview"
@@ -2745,6 +2761,7 @@ export function MapboxTravelMap({
     [keyframes, markerKeyframes],
   )
   const routeShapesSignature = useMemo(() => getRouteShapesSignature(routeShapes), [routeShapes])
+  useStopRegions(mapInstanceRef, isLoaded, mapStyle, safeMarkerKeyframes)
   const routableKeyframes = useMemo(
     () =>
       safeKeyframes.map((keyframe, index) => ({
@@ -2837,7 +2854,7 @@ export function MapboxTravelMap({
     [manualAwareRoutedLegs, safeKeyframes],
   )
   const activeRoutedLegs = useMemo(() => {
-    return stopAwareRoutedLegs
+    return stopAwareRoutedLegs.flatMap(splitRoutedLegSections)
   }, [stopAwareRoutedLegs])
   const positionedLegs = useMemo(
     () => buildPositionedLegs(activeRoutedLegs),
@@ -2906,6 +2923,7 @@ export function MapboxTravelMap({
     lastRouteDataReconcileSignatureRef.current = ""
     cameraTimelineRef.current = []
     cameraZoomPlanRef.current = []
+    stopRegionCameraPlanRef.current = []
     contextualZoomCacheRef.current = null
     routeLayersReadyRef.current = false
     hasFocusedCurrentLocationRef.current = false
@@ -3486,9 +3504,11 @@ export function MapboxTravelMap({
       const isFlightCameraOverview = targetCameraModeRef.current === "flight-overview"
       const isRapidLandCameraOverview = targetCameraModeRef.current === "rapid-land-overview"
       const isCameraOverview = isFlightCameraOverview || isRapidLandCameraOverview
+      const regionCamera = getStopRegionCameraAtTime(stopRegionCameraPlanRef.current, snappedTime)
+      const regionMaxZoom = regionCamera ? Math.max(map.getMinZoom(), regionCamera.maxZoom) : Infinity
       const currentZoom = animatedCameraZoomRef.current
-      const desiredCenter = targetCameraCenterRef.current
-      const targetZoom = targetCameraZoomRef.current
+      const desiredCenter = regionCamera?.center ?? targetCameraCenterRef.current
+      const targetZoom = Math.min(targetCameraZoomRef.current, regionMaxZoom)
       const followsVideoTime = isRealtimeMotion
       effectiveCameraZoomTarget =
         !isCatchUp &&
@@ -3515,6 +3535,9 @@ export function MapboxTravelMap({
         Math.abs(nextZoom - effectiveCameraZoomTarget) < 0.015
           ? effectiveCameraZoomTarget
           : nextZoom
+      // Apply the ceiling after interpolation too, so entering a region or
+      // restoring a close zoom never leaves its boundary cropped.
+      snappedZoom = Math.min(snappedZoom, regionMaxZoom)
       const previousCameraCenter = animatedCameraCenterRef.current
       const previousCameraZoom = animatedCameraZoomRef.current
       animatedCameraZoomRef.current = snappedZoom
@@ -3554,7 +3577,7 @@ export function MapboxTravelMap({
         centerSmoothing,
       )
       const snappedCenter =
-        followsVideoTime ||
+        regionCamera !== null || followsVideoTime ||
         coordinateDistance(nextCenter, effectiveCameraCenterTarget) < cameraCenterSnapThreshold
           ? effectiveCameraCenterTarget
           : nextCenter
@@ -3567,7 +3590,7 @@ export function MapboxTravelMap({
       if (cameraChanged) {
         try {
           runAutomatedCameraUpdate(() => {
-            map.jumpTo({ center: snappedCenter, zoom: snappedZoom })
+            map.jumpTo({ center: snappedCenter, zoom: snappedZoom, ...(regionCamera ? { pitch: 0 } : {}) })
           })
         } catch {
           // Skip this frame and let the next one retry once the map settles.
@@ -4576,7 +4599,7 @@ export function MapboxTravelMap({
     // Waiting for style.load here can strand a new route indefinitely: tile
     // requests make isStyleLoaded false without emitting another style.load.
     if (canUpdateCamera(map)) rebuildCameraTimeline(map)
-  }, [isLoaded, mapStyle, positionedLegs, routeSignature])
+  }, [isLoaded, mapStyle, positionedLegs, routeSignature, safeKeyframes])
 
   useEffect(() => {
     const map = mapInstanceRef.current
@@ -5106,29 +5129,6 @@ export function MapboxTravelMap({
   }, [])
 
   useEffect(() => {
-    const container = mapRef.current
-    if (!container) {
-      return
-    }
-
-    const updateOverlayLayout = () => {
-      const nextIsWide = container.clientWidth >= mapOverlayWideMinWidth
-      setIsMapOverlayWide((currentIsWide) => (currentIsWide === nextIsWide ? currentIsWide : nextIsWide))
-    }
-
-    updateOverlayLayout()
-
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", updateOverlayLayout)
-      return () => window.removeEventListener("resize", updateOverlayLayout)
-    }
-
-    const observer = new ResizeObserver(updateOverlayLayout)
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [])
-
-  useEffect(() => {
     const map = mapInstanceRef.current
     const container = mapRef.current
 
@@ -5439,13 +5439,12 @@ export function MapboxTravelMap({
 
       {hasMapboxAccessToken && !isRouteIntroActive && (
         <div
-          className={`pointer-events-none absolute inset-x-2 top-2 z-30 flex gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2 ${
-            isMapOverlayWide ? "flex-row items-start justify-between" : "flex-col"
-          }`}
+          aria-label="Map toolbar"
+          className="@container/map-toolbar pointer-events-none absolute inset-x-2 top-2 z-30 flex items-start justify-between gap-1.5 sm:inset-x-3 sm:top-3 sm:gap-2"
         >
-        <form onSubmit={searchLocations} className="pointer-events-auto w-full max-w-full sm:w-[18rem] 2xl:w-[21rem]">
-          <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-slate-950/60 p-1 shadow-lg backdrop-blur-md sm:gap-2 sm:rounded-xl">
-            <Search className="ml-2 h-4 w-4 shrink-0 text-white/60" />
+        <form onSubmit={searchLocations} className="pointer-events-auto min-w-0 flex-1 sm:max-w-[21rem]">
+          <div className="flex h-11 items-center gap-2 rounded-2xl border border-white/15 bg-slate-950/85 p-1.5 pl-3 text-white shadow-[0_4px_20px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-shadow focus-within:border-emerald-300/50 focus-within:ring-2 focus-within:ring-emerald-400/20">
+            <Search className="h-4 w-4 shrink-0 text-white/50" />
             <Input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
@@ -5458,20 +5457,22 @@ export function MapboxTravelMap({
               aria-activedescendant={
                 activeSearchIndex >= 0 ? `watch-map-search-suggestion-${activeSearchIndex}` : undefined
               }
-              className="h-8 border-0 bg-transparent px-0 text-sm text-white shadow-none placeholder:text-white/60 focus-visible:ring-0 focus-visible:ring-offset-0 sm:h-9"
+              className="h-8 min-w-0 border-0 bg-transparent px-0 text-sm text-white shadow-none placeholder:text-white/50 focus-visible:ring-0 focus-visible:ring-offset-0"
             />
             {searchQuery && (
-              <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-white/75 hover:bg-white/10 hover:text-white" onClick={clearSearch}>
+              <Button type="button" variant="ghost" size="icon" aria-label="Clear search" className="h-7 w-7 shrink-0 rounded-lg text-white/50 hover:bg-white/10 hover:text-white" onClick={clearSearch}>
                 <X className="h-4 w-4" />
               </Button>
             )}
             <Button
               type="submit"
-              size="sm"
+              size="icon"
+              aria-label="Search map"
+              title="Search map"
               disabled={isSearching}
-              className="h-8 bg-white/20 px-3 text-white hover:bg-white/25 disabled:bg-white/10 disabled:text-white/50 sm:h-9"
+              className="h-8 w-8 shrink-0 rounded-xl bg-white/10 p-0 text-white shadow-none transition-colors hover:bg-white/20 disabled:bg-white/5 disabled:text-white/40"
             >
-              {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : "Go"}
+              {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" aria-hidden="true" />}
             </Button>
           </div>
 
@@ -5521,16 +5522,14 @@ export function MapboxTravelMap({
         </form>
 
         <div
-          className={`pointer-events-auto flex max-w-full flex-wrap justify-end gap-1 sm:gap-2 ${
-            isMapOverlayWide ? "self-start" : "self-end"
-          }`}
+          className="pointer-events-auto flex shrink-0 items-start justify-end gap-1 sm:gap-2"
         >
           <div className="flex shrink-0 items-center rounded-lg border border-white/10 bg-slate-950/60 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
             <Button
               type="button"
               size="icon"
               variant="ghost"
-              className={`relative h-8 w-8 overflow-visible rounded-lg border transition-all duration-200 ${
+              className={`relative h-8 w-8 sm:h-9 sm:w-9 overflow-visible rounded-lg border transition-all duration-200 ${
                 isTrackingEnabled
                   ? "border-emerald-200 bg-emerald-500 text-slate-950 shadow-[0_0_0_2px_rgba(16,185,129,0.28),0_0_18px_rgba(16,185,129,0.8)] hover:bg-emerald-400 hover:text-slate-950"
                   : "border-transparent text-white/75 hover:bg-white/10 hover:text-white"
@@ -5549,24 +5548,7 @@ export function MapboxTravelMap({
               <Crosshair className={`h-4 w-4 ${isTrackingEnabled ? "stroke-[2.5]" : ""}`} />
             </Button>
           </div>
-          <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1 rounded-lg border border-white/10 bg-slate-950/60 p-1 shadow-lg backdrop-blur-md sm:rounded-xl">
-            {mapStyleOptions.map((option) => (
-              <Button
-                key={option.id}
-                type="button"
-                size="sm"
-                variant={mapStyle === option.id ? "default" : "ghost"}
-                className={`h-8 shrink-0 rounded-lg px-2 text-[11px] sm:h-9 sm:px-3 sm:text-xs 2xl:text-sm ${
-                  mapStyle === option.id
-                    ? "bg-white/20 text-white hover:bg-white/25"
-                    : "text-white/70 hover:bg-white/10 hover:text-white"
-                }`}
-                onClick={() => changeMapStyle(option.id)}
-              >
-                {option.label}
-              </Button>
-            ))}
-          </div>
+          <MapStylePicker value={mapStyle} onChange={changeMapStyle} />
         </div>
         </div>
       )}

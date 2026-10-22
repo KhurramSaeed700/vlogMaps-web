@@ -6,16 +6,19 @@ import { useRouter } from "next/navigation"
 import { ContentPageShell } from "@/components/app-shell/content-page-shell"
 import { CreatorAccessGuard } from "@/components/creator/creator-access-guard"
 import { CreatorVideoEditor } from "@/components/creator/creator-video-editor"
-import { fetchCreatorCloudVideoById } from "@/lib/creator-videos-cloud-client"
+import { fetchCreatorCloudVideos, fetchCreatorCloudVideoById } from "@/lib/creator-videos-cloud-client"
 import { getVideoPlaylistId } from "@/lib/playlist-mapping"
+import { loadCreatorVideoState } from "@/lib/creator-video-state-client"
+import { createPlaylistStartStop, getPreviousPlaylistVideo, type PlaylistStartStop } from "@/lib/playlist-continuity"
 import type { TravelVideo } from "@/lib/demo-data"
 
 const creatorEditorHeaderActionsId = "creator-editor-header-actions"
 const creatorEditorHeaderLeadingActionsId = "creator-editor-header-leading-actions"
 
-export function CreatorVideoEditorPage({ id, playlistId }: { id: string; playlistId?: string }) {
+export function CreatorVideoEditorPage({ id, playlistId, previousVideoId }: { id: string; playlistId?: string; previousVideoId?: string }) {
   const router = useRouter()
   const { isLoaded: isUserLoaded, user } = useUser()
+  const [playlistStartStop, setPlaylistStartStop] = useState<PlaylistStartStop | null>(null)
   const [video, setVideo] = useState<TravelVideo | null | undefined>(undefined)
   const isVideoReady = video !== undefined && video !== null
   const shouldUseEditorLayout = isVideoReady && isUserLoaded
@@ -23,14 +26,32 @@ export function CreatorVideoEditorPage({ id, playlistId }: { id: string; playlis
   useEffect(() => {
     let isMounted = true
     setVideo(undefined)
+    setPlaylistStartStop(null)
+    const controller = new AbortController()
 
-    fetchCreatorCloudVideoById(id)
-      .then((response) => {
+    fetchCreatorCloudVideoById(id, controller.signal)
+      .then(async (response) => {
         if (isMounted) {
           if (response.video && response.video.id !== id) {
             router.replace(`/creator/video/${response.video.id}/edit${playlistId ? `?${new URLSearchParams({ playlist: playlistId })}` : ""}`)
           }
-          setVideo(response.video ?? null)
+          const loadedVideo = response.video
+          const sourcePlaylistId = playlistId ?? (loadedVideo ? getVideoPlaylistId(loadedVideo) : undefined)
+          if (loadedVideo && loadedVideo.keyframes.length === 0 && sourcePlaylistId && getVideoPlaylistId(loadedVideo) === sourcePlaylistId) {
+            try {
+              const library = await fetchCreatorCloudVideos(controller.signal)
+              const previous = previousVideoId
+                ? library.videos.find(video => video.id === previousVideoId && video.id !== loadedVideo.id && getVideoPlaylistId(video) === sourcePlaylistId)
+                : getPreviousPlaylistVideo(library.videos, loadedVideo.id, sourcePlaylistId)
+              if (previous) {
+                const saved = await loadCreatorVideoState(previous.id, controller.signal)
+                if (isMounted && saved?.configured) setPlaylistStartStop(createPlaylistStartStop(saved.state?.points ?? previous.keyframes))
+              }
+            } catch {
+              // An unavailable previous episode must not prevent normal editing.
+            }
+          }
+          if (isMounted) setVideo(loadedVideo ?? null)
         }
       })
       .catch(() => {
@@ -41,8 +62,11 @@ export function CreatorVideoEditorPage({ id, playlistId }: { id: string; playlis
 
     return () => {
       isMounted = false
+      controller.abort()
     }
-  }, [id, router, playlistId])
+  }, [id, router, playlistId, previousVideoId])
+
+  const activePlaylistId = playlistId ?? (video ? getVideoPlaylistId(video) : undefined)
 
   return (
     <ContentPageShell
@@ -54,8 +78,8 @@ export function CreatorVideoEditorPage({ id, playlistId }: { id: string; playlis
             ? "This creator video could not be found in your database-backed creator workspace."
             : "Checking access and preparing the video workspace."
       }
-      backHref={video === null ? "/creator/video/new" : "/creator/dashboard"}
-      backLabel={video === null ? "Back to Workspace" : "Back to Dashboard"}
+      backHref={video === null ? "/creator/video/new" : activePlaylistId ? `/creator/playlists/${encodeURIComponent(activePlaylistId)}` : "/creator/dashboard"}
+      backLabel={video === null ? "Back to Workspace" : activePlaylistId ? "Back to playlist" : "Back to Dashboard"}
       mainClassName={shouldUseEditorLayout ? "w-full xl:fixed xl:inset-x-0 xl:bottom-0 xl:top-[73px] xl:overflow-hidden" : "w-full"}
       contentClassName={
         shouldUseEditorLayout
@@ -78,6 +102,7 @@ export function CreatorVideoEditorPage({ id, playlistId }: { id: string; playlis
           <CreatorVideoEditor
             key={video.id}
             video={video}
+            playlistStartStop={playlistStartStop}
             playlistId={playlistId ?? getVideoPlaylistId(video)}
             headerLeadingActionsTargetId={creatorEditorHeaderLeadingActionsId}
             headerActionsTargetId={creatorEditorHeaderActionsId}

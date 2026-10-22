@@ -25,7 +25,7 @@ function render(){
   '@radix-ui/react-dialog':new Proxy({},{get:(_,key)=>`Dialog${key}`}),
   '@/components/ui/button':{Button:'button'},'@/lib/creator-videos-cloud-client':{},'@/lib/playlist-mapping':helpers,
  })
- return PlaylistMappingControls({playlistId:playlist.id,youtubeId:'a',completionRequest,saveBeforeNext:async()=>{saves++;return saveResult}})
+ return PlaylistMappingControls({playlistId:playlist.id,youtubeId:'a',videoId:'db-a',completionRequest,saveBeforeNext:async()=>{saves++;return saveResult}})
 }
 async function main(){
  states=[step,false,false,'',false,'',0];saves=0;navigations=[];saveResult=false
@@ -33,11 +33,13 @@ async function main(){
  assert.equal(saves,1);assert.equal(states[4],false);assert.equal(navigations.length,0,'Failed save never advances')
  saveResult=true;tree=render();await walk(tree).find(n=>n.type==='button'&&String(n.props.children).includes('Finish video')).props.onClick()
  assert.equal(states[4],true);assert.equal(navigations.length,0,'Saving alone must not navigate')
+ tree=render();walk(tree).find(n=>n.type==='button'&&n.props.children==='Creator dashboard').props.onClick();assert.equal(navigations.pop(),'/creator/dashboard','Saved map can return to creator dashboard');assert.ok(!walk(tree).some(n=>n.props?.children==='Stay here'));
  tree=render();const next=walk(tree).find(n=>n.type==='button'&&n.props.children==='Yes, map next video');next.props.onClick()
- assert.deepEqual(navigations,[helpers.playlistEditorHref('db-c',playlist.id)])
+ assert.deepEqual(navigations,[helpers.playlistEditorHref('db-c',playlist.id,'db-a')])
  completionRequest=1;states=[step,false,false,'',false,'',0];render();const before=saves;effects.at(-1)();await Promise.resolve();await Promise.resolve();assert.equal(saves,before+1,'Successful upload completion opens the save-and-confirm flow');assert.equal(states[1],true);assert.equal(navigations.length,1,'Automatic prompt still waits for approval');
  states=[{...step,next:null},true,false,'',true,'',0];tree=render()
  assert.ok(!walk(tree).some(n=>n.props?.children==='Yes, map next video'),'Last video has no next action')
+ walk(tree).find(n=>n.props?.children==='Back to playlist').props.onClick();assert.equal(navigations.at(-1),`/creator/playlists/${playlist.id}`,'Finished series returns to its dedicated playlist workspace')
  console.log('Playlist mapping passed: source tags, ordered owner-only queue, missing entries, last video, failed-save guard, confirmation before navigation, and playlist context retained.')
 }
 main().catch(e=>{console.error(e);process.exitCode=1})

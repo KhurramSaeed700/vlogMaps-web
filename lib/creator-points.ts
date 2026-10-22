@@ -1,4 +1,5 @@
 import type { VideoKeyframe, VideoKeyframePointType } from "@/lib/demo-data"
+import { normalizeStopRegion, anonymousRegionName, anonymousRegionMessage } from "@/lib/stop-regions"
 
 export type CreatorMapPointType = VideoKeyframePointType
 
@@ -64,6 +65,8 @@ function normalizeCreatorPoint(videoId: string, point: CreatorMapPoint) {
 
   return {
     ...point,
+    regionCircle: normalizeStopRegion(point),
+    ...(point.pointType === "stop" && point.regionCircle?.anonymous ? { location: anonymousRegionName, description: anonymousRegionMessage } : {}),
     pointType: getCreatorPointType(point),
     stopEndTime: normalizedStopEndTime,
     flightId: point.pointType === "flight" ? point.flightId : undefined,
@@ -109,6 +112,8 @@ export function upsertCreatorPoint(videoId: string, points: CreatorMapPoint[], p
   const pointType = getCreatorPointType(point)
   const nextPoint: CreatorMapPoint = {
     ...point,
+    regionCircle: normalizeStopRegion(point),
+    ...(point.pointType === "stop" && point.regionCircle?.anonymous ? { location: anonymousRegionName, description: anonymousRegionMessage } : {}),
     pointType,
     stopEndTime:
       pointType === "stop" && typeof point.stopEndTime === "number" && point.stopEndTime > point.time
