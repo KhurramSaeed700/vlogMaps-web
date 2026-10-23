@@ -52,6 +52,20 @@ async function main(){
  evaluate(extract('handleEditorVideoEnded'),endDeps)()
  assert.deepEqual(endArgs,[1838,false]);assert.equal(committed,1838);assert.equal(playing,false)
  endArgs=null;evaluate(extract('handleEditorVideoEnded'),{...endDeps,isRecordingStop:false})();assert.equal(endArgs,null)
+ endArgs=null;evaluate(extract('handleEditorVideoEnded'),endDeps)(1464.5)
+ assert.deepEqual(endArgs,[1464.5,false],'End key uses the live player duration, not stale metadata')
+ const playerSource=ts.createSourceFile('player.tsx',fs.readFileSync('components/media/youtube-player.tsx','utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX)
+ let seekExpression
+ function findSeek(node){if(ts.isVariableDeclaration(node)&&node.name.getText(playerSource)==='seekToDurationPercentage')seekExpression=node.initializer.getText(playerSource);ts.forEachChild(node,findSeek)}
+ findSeek(playerSource)
+ let duration=1464.5,seekTarget,finishedAt
+ const player={getDuration:()=>duration}
+ const seek=evaluate(seekExpression,{playerRef:{current:player},beginPendingSeek:(_player,time)=>seekTarget=time,clampVideoTime:(time,max)=>Math.min(time,max),onSeekToEndRef:{current:time=>finishedAt=time}})
+ seek(1);assert.equal(seekTarget,1464.5);assert.equal(finishedAt,1464.5)
+ finishedAt=null;seek(0);seek(.9);assert.equal(finishedAt,null,'Home and numeric seeks do not close stops')
+ duration=0;seek(1);assert.equal(finishedAt,null,'Unknown duration does not finish a stop')
+ assert.ok(fs.readFileSync('components/creator/creator-video-editor.tsx','utf8').includes('onSeekToEnd={handleEditorVideoEnded}'))
+
  let savedEnd,autoplay=0,recording=true
  const endingDraft={...hotel,time:1837.8},endingRef={current:endingDraft}
  await evaluate(extract('setStopEndTime'),{draftPoint:endingDraft,draftPointRef:endingRef,isCompletingStopRef:{current:false},pendingNearbyPlaceLookupRef:{current:null},recordMapEditSnapshot:noop,toPersistedDraftPoint:p=>p,video:{id:'ending'},points:[],upsertCreatorPoint:(_id,_points,p)=>[p],persistPoints:p=>savedEnd=p[0],setDraftPoint:noop,setIsAwaitingMapPlacement:noop,setIsRecordingStop:value=>recording=value,setIsTimestampNameEditing:noop,isPlaying:false,scheduleAutoplay:()=>autoplay++})(1838,false)

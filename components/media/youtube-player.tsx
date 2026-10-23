@@ -21,6 +21,7 @@ interface YouTubePlayerProps {
   onTimeChange?: (time: number) => void
   onPlayingChange?: (isPlaying: boolean) => void
   onVolumeChange?: (volume: number) => void
+  onSeekToEnd?: (duration: number) => void
   onEnded?: () => void
   onKeyboardEscape?: () => void
 }
@@ -176,6 +177,7 @@ export function YouTubePlayer({
   onPlayingChange,
   onVolumeChange,
   onEnded,
+  onSeekToEnd,
   onKeyboardEscape,
 }: YouTubePlayerProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -205,6 +207,7 @@ export function YouTubePlayer({
   const onTimeChangeRef = useRef(onTimeChange)
   const onPlayingChangeRef = useRef(onPlayingChange)
   const onVolumeChangeRef = useRef(onVolumeChange)
+  const onSeekToEndRef = useRef(onSeekToEnd)
   const onEndedRef = useRef(onEnded)
   const onKeyboardEscapeRef = useRef(onKeyboardEscape)
   const isPlayingRef = useRef(isPlaying)
@@ -250,12 +253,13 @@ export function YouTubePlayer({
     onTimeChangeRef.current = onTimeChange
     onPlayingChangeRef.current = onPlayingChange
     onVolumeChangeRef.current = onVolumeChange
+    onSeekToEndRef.current = onSeekToEnd
     onEndedRef.current = onEnded
     onKeyboardEscapeRef.current = onKeyboardEscape
     isPlayingRef.current = isPlaying
     isMutedRef.current = isMuted
     volumeRef.current = volume
-  }, [isMuted, isPlaying, onEnded, onKeyboardEscape, onReady, onPlayingChange, onTimeChange, onVolumeChange, volume])
+  }, [isMuted, isPlaying, onEnded, onSeekToEnd, onKeyboardEscape, onReady, onPlayingChange, onTimeChange, onVolumeChange, volume])
 
   useEffect(() => {
     if (!allowKeyboard) return
@@ -610,6 +614,7 @@ export function YouTubePlayer({
     }
 
     beginPendingSeek(player, clampVideoTime(duration * percentage, duration))
+    if (percentage === 1) onSeekToEndRef.current?.(duration)
   }
 
   useEffect(() => {

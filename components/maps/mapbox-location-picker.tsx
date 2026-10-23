@@ -4198,6 +4198,7 @@ export function MapboxLocationPicker({
 
       <div aria-label="Map toolbar" className="pointer-events-none absolute inset-x-3 top-3 z-40 flex items-start justify-between gap-2 sm:inset-x-4 sm:top-4">
       <form
+        data-editor-tour="map-search"
         onSubmit={searchLocations}
         className="pointer-events-auto min-w-0 flex-1 max-w-[22rem]"
       >

@@ -95,6 +95,7 @@ async function main() {
   assert.equal((await db.listPublishedCreatorVideosFromDb()).length, 1)
 
   const parser = load('lib/creator-video-payload.ts', {
+    '@/lib/stop-regions': load('lib/stop-regions.ts'),
     zod: require('zod'), '@/lib/video-locations': { maxVideoLocationSummaries: 40, summarizeVideoLocations: value => value },
   })
   const payload = { id: 'test', title: 'Test', youtubeId: 'abcdefghijk' }

@@ -76,3 +76,13 @@ The **Views** column uses VlogMaps `mapViews`; **YT views**, immediately after i
 ### Reliable duration metadata
 
 Creator content refreshes duration and YouTube view counts through an approved-creator batch endpoint (up to 50 IDs per request), avoiding per-video metadata rate limits. Successful durations are cached in this browser and saved to owned cloud video records. Requests retry transient failures, preserve known values, and can retry on focus/reconnection or the compact retry control. The editor also persists player-reported duration independently of timestamp saves. Saving an older video object with duration zero never erases a known cloud duration. Actual unavailable/deleted videos may still require retry or checking access; no duration is inferred from route timestamps.
+
+### Bulk video editing
+
+Use the checkbox at the far left of a video row to select it. The header checkbox selects or clears editable videos on the current page; selections persist across pagination and filters. Playlist summary rows are not selected—open the playlist to select its episodes.
+
+Choosing an action in the compact bulk toolbar immediately changes uploaded videos to Private, Unlisted or Public, or moves them back to drafts. Draft videos are skipped, and failed updates stay selected for retry. Successful updates are deselected. The row height remains unchanged.
+
+### Editor tutorial
+
+The editor guide uses short text without decorative illustrations or practice panels. Playback controls appear as shortcut badges; Point, Stop and Flight are explained in a list. The guide highlights the complete map search form, including its search button. Settings → Keybindings opens the same shortcut panel as the keyboard icon. Skip, Back and Next remain available; the editor hides the chapter dropdown.

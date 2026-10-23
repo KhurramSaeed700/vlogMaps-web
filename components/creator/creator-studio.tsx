@@ -301,6 +301,24 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
     }
   }
 
+  const handleBulkEdit = async (videos: TravelVideo[], action: VideoVisibility | "draft") => {
+    const savedIds: string[] = []
+    let failed = 0
+    for (const video of videos.filter(video => video.status === "published" && video.viewerCanEdit !== false)) {
+      try {
+        const response = action === "draft"
+          ? await unpublishCreatorVideoFromCloud(video.id)
+          : await setCreatorVideoVisibilityInCloud(video.id, action)
+        if (!response.video || response.error || ("updated" in response ? !response.updated : !response.unpublished)) { failed++; continue }
+        const savedVideo = response.video
+        setAllCreatorVideos(current => mergeTravelVideos(current, [savedVideo]))
+        savedIds.push(video.id)
+      } catch { failed++ }
+    }
+    setSyncMessage(`${savedIds.length} video${savedIds.length === 1 ? "" : "s"} updated.${failed ? ` ${failed} failed; choose the action again to retry.` : ""}${videos.some(video => video.status !== "published") ? " Drafts were skipped." : ""}`)
+    return savedIds
+  }
+
   const stats = useMemo(() => {
     const totalViews = allCreatorVideos.reduce((sum, video) => sum + video.views, 0)
     const totalMapViews = allCreatorVideos.reduce((sum, video) => sum + video.mapViews, 0)
@@ -320,6 +338,7 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
   const tableProps = {
     loading: isLoadingCreatorVideos,
     pendingId: visibilityUpdatingId || syncingVideoId || deletingVideoId,
+    onBulkEdit: handleBulkEdit,
     onEdit: (video: TravelVideo) => router.push(playlistId ? playlistEditorHref(video.id, playlistId) : `/creator/video/${video.id}/edit`),
     onVisibility: (video: TravelVideo, visibility: VideoVisibility) => { void handleVisibilityChange(video, visibility) },
     onUpload: (video: TravelVideo) => { void handleUploadVideo(video) },

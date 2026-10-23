@@ -37,7 +37,9 @@ const table = load('components/creator/creator-content-table.tsx', {
   react: { useEffect() {}, useState(value) { const i = cursor++; if (!(i in states)) states[i] = value; return [states[i], next => { states[i] = typeof next === 'function' ? next(states[i]) : next }] }, useMemo: fn => fn() },
   'react/jsx-runtime': { jsx, jsxs: jsx }, 'next/image': { default: 'image' }, 'next/link': { default: 'link' },
   '@radix-ui/react-dropdown-menu': Menu, 'lucide-react': new Proxy({}, { get: (_, name) => name }),
+  '@/components/ui/checkbox': { Checkbox: 'checkbox' },
   '@/components/ui/button': { Button: 'button' }, '@/components/ui/input': { Input: 'input' }, '@/components/ui/skeleton': { Skeleton: 'skeleton' },
+  '@/lib/video-trip-summary': load('lib/video-trip-summary.ts'),
   '@/lib/video-mapping-status': load('lib/video-mapping-status.ts'),
   '@/lib/creator-video-details-client': { fetchCreatorVideoDetails: async () => [] },
   '@/lib/creator-playlists': { creatorPlaylistHref: id => `/creator/playlists/${id}` },
@@ -106,7 +108,7 @@ states.length = 0
 props.videos = [{ ...videos[2], durationSeconds: 0, keyframes: [{ time: 1000 }] }]
 nodes = render()
 assert.ok(nodes.some(n => n.type === 'span' && text(n).trim() === 'Checking…'), 'Unknown duration is not falsely classified as Mapping')
-states[3] = { [videos[2].youtubeId]: 1200 }
+states[6] = { [videos[2].youtubeId]: 1200 }
 nodes = render()
 assert.ok(nodes.some(n => n.type === 'span' && text(n).trim() === 'Mapped'), 'Loaded duration reclassifies a timestamp within the final five minutes')
 assert.ok(!nodes.some(n => n.type === 'span' && text(n).trim() === 'Mapping'))
@@ -148,7 +150,65 @@ nodes=render()
 assert.ok(nodes.some(n=>n.type==='span'&&text(n).replace(/\s+/g,' ').trim()==='1 mapped'))
 assert.ok(nodes.some(n=>n.type==='span'&&text(n).replace(/\s+/g,' ').trim()==='1 mapping'))
 assert.ok(nodes.some(n=>n.type==='span'&&text(n).replace(/\s+/g,' ').includes('1 not mapped')&&text(n).includes('1 checking')))
-states[3]={checking123:1200}
+states[6]={checking123:1200}
 nodes=render()
 assert.ok(nodes.some(n=>n.type==='span'&&text(n).replace(/\s+/g,' ').trim()==='2 mapped'),'Playlist total updates when missing episode duration resolves')
 console.log('Playlist totals passed: mapped, mapping, not mapped and pending-duration completion.')
+
+// Selection persists across pages and never selects a grouped playlist or read-only video.
+states.length = 0; props.playlists = []; props.videos = videos
+nodes = render()
+nodes.find(n => n.props?.['aria-label'] === 'Select all videos on this page').props.onCheckedChange(true)
+nodes = render()
+assert.equal(nodes.find(n => n.props?.['aria-label'] === 'Select all videos on this page').props.checked, true)
+assert.ok(nodes.some(n => text(n).replace(/\s+/g, ' ').trim() === '10 selected'))
+nodes.find(n => n.props?.['aria-label'] === 'Next video page').props.onClick()
+nodes = render()
+assert.equal(nodes.find(n => n.props?.['aria-label'] === 'Select all videos on this page').props.checked, false)
+nodes.find(n => n.props?.['aria-label'] === 'Select Journey 0').props.onCheckedChange(true)
+nodes = render()
+assert.ok(nodes.some(n => text(n).replace(/\s+/g, ' ').trim() === '11 selected'))
+nodes.find(n => n.type === 'button' && text(n) === 'Clear selection').props.onClick()
+assert.ok(!render().some(n => n.props?.['aria-label'] === 'Bulk video editing'))
+states.length = 0; props.videos = [{...videos[1],viewerCanEdit:false}]; props.playlists = [{id:'series',title:'Series',videos:[videos[2]],uploadedCount:1}]
+nodes = render()
+assert.equal(nodes.filter(n=>n.type==='checkbox').length,2, 'Playlist rows have no video checkbox')
+assert.equal(nodes.find(n=>n.props?.['aria-label']==='Select Café in Gdańsk').props.disabled,true)
+console.log('Bulk selection passed: page selection, cross-page persistence, clear, playlists and read-only protection.')
+
+async function testBulkSave() {
+  states.length = 0; props.playlists = []; props.videos = videos
+  const calls = []
+  props.onBulkEdit = async (selected, action) => { calls.push({ ids: selected.map(v=>v.id), action }); return [selected[0].id] }
+  nodes = render()
+  nodes.find(n=>n.props?.['aria-label']==='Select all videos on this page').props.onCheckedChange(true)
+  nodes = render()
+  const action = nodes.find(n=>n.type==='menu-RadioItem'&&n.props.value==='private'&&n.props.onSelect)
+  action.props.onSelect()
+  assert.equal(render().find(n=>n.props?.['aria-label']==='Bulk edit action').props.disabled,true)
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(calls.length,1)
+  assert.equal(calls[0].ids.length,10)
+  assert.equal(calls[0].action,'private')
+  assert.equal(render().filter(n=>n.type==='tr'&&n.props['aria-selected']).length,9,'Only successful saves are deselected')
+
+  const source = fs.readFileSync(path.join(__dirname,'../components/creator/creator-studio.tsx'),'utf8')
+  const ast = ts.createSourceFile('studio.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let declaration
+  const visit = node => { if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==='handleBulkEdit') declaration=node; ts.forEachChild(node,visit) }; visit(ast)
+  const updates=[], messages=[], requested=[]
+  const body = ts.transpileModule('const '+declaration.getText(ast)+'; return handleBulkEdit', {compilerOptions:{target:ts.ScriptTarget.ES2020}}).outputText
+  const run = new Function('unpublishCreatorVideoFromCloud','setCreatorVideoVisibilityInCloud','setAllCreatorVideos','mergeTravelVideos','setSyncMessage',body)(
+    async id=>{requested.push(['draft',id]);return {unpublished:true,video:{id}}},
+    async (id,action)=>{requested.push([action,id]);if(id==='bad')throw Error('offline');return {updated:true,video:{id}}},
+    update=>updates.push(update([])), (old,next)=>next, message=>messages.push(message))
+  const sample=[{id:'good',status:'published'},{id:'bad',status:'published'},{id:'draft',status:'draft'},{id:'readonly',status:'published',viewerCanEdit:false}]
+  assert.deepEqual(await run(sample,'unlisted'),['good'])
+  assert.deepEqual(requested,[['unlisted','good'],['unlisted','bad']])
+  assert.ok(messages[0].includes('1 failed'))
+  requested.length=0
+  assert.deepEqual(await run([sample[0]],'draft'),['good'])
+  assert.deepEqual(requested,[['draft','good']])
+  console.log('Bulk saves passed: busy controls, partial failures, retry selection, owner/editable filtering, visibility and move-to-draft requests.')
+}
+testBulkSave().catch(error=>{console.error(error);process.exitCode=1})

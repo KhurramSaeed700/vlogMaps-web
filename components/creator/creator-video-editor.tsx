@@ -579,6 +579,8 @@ export function CreatorVideoEditor({
   const [isUploadingVideo, setIsUploadingVideo] = useState(false)
   const [playlistCompletionRequest, setPlaylistCompletionRequest] = useState(0)
   const [uploadMessage, setUploadMessage] = useState("")
+  const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false)
+  const openShortcutsAfterSettingsRef = useRef(false)
   const [isSavedPlacesOpen, setIsSavedPlacesOpen] = useState(false)
   const [newSavedPlaceName, setNewSavedPlaceName] = useState("")
   const [savedPlaceMessage, setSavedPlaceMessage] = useState("")
@@ -2376,10 +2378,12 @@ export function CreatorVideoEditor({
     }
   }
 
-  const handleEditorVideoEnded = () => {
+  const handleEditorVideoEnded = (seekEndTime?: number) => {
     setResumeCountdown(null)
     setIsPlaying(false)
-    const endTime = videoDurationRef.current > 0 ? videoDurationRef.current : currentTimeRef.current
+    const endTime = typeof seekEndTime === "number" && Number.isFinite(seekEndTime) && seekEndTime > 0
+      ? seekEndTime
+      : videoDurationRef.current > 0 ? videoDurationRef.current : currentTimeRef.current
     commitCurrentTime(endTime, true)
     if (isRecordingStop && draftPointRef.current?.pointType === "stop") {
       void setStopEndTime(endTime, false)
@@ -3079,7 +3083,7 @@ export function CreatorVideoEditor({
             headerLeadingActionsElement,
           )
         : null}
-      <Popover.Root>
+      <Popover.Root open={isKeyboardShortcutsOpen} onOpenChange={setIsKeyboardShortcutsOpen}>
         {headerActionsElement
           ? createPortal(
               <>
@@ -3257,6 +3261,12 @@ export function CreatorVideoEditor({
                   </DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
                     <DropdownMenu.Content
+                      onCloseAutoFocus={event => {
+                        if (!openShortcutsAfterSettingsRef.current) return
+                        event.preventDefault()
+                        openShortcutsAfterSettingsRef.current = false
+                        setIsKeyboardShortcutsOpen(true)
+                      }}
                       align="end"
                       sideOffset={8}
                       className="z-[70] w-[min(calc(100vw-2rem),19rem)] rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-xl"
@@ -3271,6 +3281,9 @@ export function CreatorVideoEditor({
                         onSelect={() => window.setTimeout(() => window.dispatchEvent(new Event(editorTourStartEvent)), 0)}
                       >
                         Show editor tutorial
+                      </DropdownMenu.Item>
+                      <DropdownMenu.Item className="mb-2 flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm outline-none focus:bg-accent" onSelect={() => { openShortcutsAfterSettingsRef.current = true }}>
+                        <Keyboard className="h-4 w-4" />Keybindings
                       </DropdownMenu.Item>
                       <PlaybackSettingsSection
                         preferences={playbackPreferences}
@@ -3534,6 +3547,7 @@ export function CreatorVideoEditor({
             onTimeChange={handleVideoTimeChange}
             onPlayingChange={handleEditorPlayingChange}
             onEnded={handleEditorVideoEnded}
+            onSeekToEnd={handleEditorVideoEnded}
             onVolumeChange={handleVolumeChange}
           />
           <AutoplayCountdown seconds={isEditorTourOpen ? null : resumeCountdown} />

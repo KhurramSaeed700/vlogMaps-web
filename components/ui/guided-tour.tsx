@@ -22,7 +22,7 @@ function findTarget(step: GuidedTourStep) {
 
 type TargetRect = { top: number; bottom: number; left: number; width: number; height: number }
 
-export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focusReturnSelector, onOpenChange, renderStepContent, label = "Quick tour" }: {
+export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focusReturnSelector, onOpenChange, renderStepContent, label = "Quick tour", showChapters = true }: {
   enabled: boolean
   steps: readonly GuidedTourStep[]
   startEvent: string
@@ -30,6 +30,7 @@ export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focu
   markSeen: (storage: Storage) => void
   focusReturnSelector: string
   onOpenChange?: (open: boolean) => void
+  showChapters?: boolean
   label?: string
   renderStepContent?: (step: GuidedTourStep, index: number) => ReactNode
 }) {
@@ -146,7 +147,7 @@ export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focu
           <Dialog.Close asChild>
             <Button variant="ghost" size="icon" className="absolute right-3 top-3 h-7 w-7 rounded-full text-muted-foreground hover:bg-accent hover:text-accent-foreground" aria-label="Skip tutorial"><X className="h-3.5 w-3.5" /></Button>
           </Dialog.Close>
-          {chapters.length > 1 && (
+          {showChapters && chapters.length > 1 && (
             <label className="mb-3 block pr-7 text-xs text-muted-foreground">
               <span className="sr-only">Jump to chapter</span>
               <select
@@ -160,7 +161,7 @@ export function GuidedTour({ enabled, steps, startEvent, hasSeen, markSeen, focu
             </label>
           )}
           <Dialog.Title className="pr-5 text-[21px] font-bold leading-7 tracking-[-0.02em] text-popover-foreground">{step.title}</Dialog.Title>
-          <Dialog.Description className="mt-1.5 text-sm leading-6 text-muted-foreground">{step.description}</Dialog.Description>
+          <Dialog.Description className={step.description ? "mt-1.5 text-sm leading-6 text-muted-foreground" : "sr-only"}>{step.description || step.title}</Dialog.Description>
           {stepContent || (step.preview ? <TourStepPreview key={stepIndex} kind={step.preview} /> : null)}
           <div className="sticky bottom-0 -mx-6 mt-2 flex flex-wrap items-center justify-between gap-2 rounded-b-2xl bg-popover px-6 py-4">
             <span aria-label={`${label}: step ${stepIndex + 1} of ${steps.length}`} className="shrink-0 text-sm tabular-nums text-muted-foreground">{stepIndex + 1} of {steps.length}</span>
