@@ -21,7 +21,7 @@ function loadMapFunctions(file, names) {
   const functions = source.statements.filter(node => ts.isFunctionDeclaration(node) && names.includes(node.name?.text))
   assert.equal(functions.length, names.length)
   const js = ts.transpileModule(functions.map(node => node.getText(source)).join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
-  return new Function('splitRoutedLegSections', 'createGreatCircleFlightCoordinates', js + '\nreturn {' + names.join(',') + '}')(splitRoutedLegSections, mod.exports.createGreatCircleFlightCoordinates)
+  return new Function('splitRoutedLegSections', 'createIllustrativeFlightCoordinates', js + '\nreturn {' + names.join(',') + '}')(splitRoutedLegSections, mod.exports.createIllustrativeFlightCoordinates)
 }
 async function main() {
   const water = [point(0, 18.1, 59.4), point(30, 18.12, 59.41)]

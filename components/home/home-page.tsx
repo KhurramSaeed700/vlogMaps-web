@@ -96,7 +96,14 @@ export default function HomePage({ initialVideos }: HomePageProps) {
           return []
         }
 
-        const baseVideos = response.videos
+        // Older imports stored their playlist title only in the description.
+        // Preserve it before YouTube metadata replaces that description.
+        const baseVideos = response.videos.map(video => {
+          const title = /^Imported from ([\s\S]+)\.$/.exec(video.description)?.[1]
+          return title && video.tags?.some(tag => tag.startsWith("playlist:")) && !video.tags.some(tag => tag.startsWith("playlist-title:"))
+            ? { ...video, tags: [...video.tags, `playlist-title:${title}`] }
+            : video
+        })
         const nextFallbackVideos = toResolvedFallbackVideos(baseVideos)
         setCatalogVideos(nextFallbackVideos)
         setIsCatalogLoading(false)

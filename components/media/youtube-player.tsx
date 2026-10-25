@@ -262,15 +262,19 @@ export function YouTubePlayer({
   }, [isMuted, isPlaying, onEnded, onSeekToEnd, onKeyboardEscape, onReady, onPlayingChange, onTimeChange, onVolumeChange, volume])
 
   useEffect(() => {
-    if (!allowKeyboard) return
+    if (!allowKeyboard && !allowWatchKeyboardControls) return
     let frame: number | null = null
     // The parent receives blur when the iframe takes focus. Check once after that
-    // transition, so Escape and our playback shortcuts remain in the page.
+    // transition. In fullscreen, F must remain reachable after mouse playback
+    // or seek actions inside the cross-origin YouTube iframe.
     const handlePlayerFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame)
       frame = window.requestAnimationFrame(() => {
         frame = null
-        returnEditorPlayerFocus(wrapperRef.current, document)
+        const wrapper = wrapperRef.current
+        const fullscreen = document.fullscreenElement
+        const ownsFullscreen = Boolean(wrapper && (wrapper.dataset.playerFullscreen === "true" || fullscreen === wrapper || fullscreen && wrapper.contains(fullscreen)))
+        if (allowKeyboard || ownsFullscreen) returnEditorPlayerFocus(wrapper, document, true)
       })
     }
     window.addEventListener("blur", handlePlayerFocus)
@@ -278,7 +282,7 @@ export function YouTubePlayer({
       window.removeEventListener("blur", handlePlayerFocus)
       if (frame !== null) window.cancelAnimationFrame(frame)
     }
-  }, [allowKeyboard, videoId])
+  }, [allowKeyboard, allowWatchKeyboardControls, videoId])
 
   const clearProgressInterval = () => {
     if (progressIntervalRef.current !== null) {
@@ -1029,6 +1033,7 @@ export function YouTubePlayer({
           {autoplayNeedsTap ? "Tap to play" : "Turn sound on"}
         </button>
       )}
+      {fullscreenError && <div role="status" className="pointer-events-none absolute bottom-3 left-3 right-3 z-30 rounded-lg bg-black/80 px-3 py-2 text-xs text-white">{fullscreenError}</div>}
       {seekFeedback && (
         <div
           aria-live="polite"
@@ -1069,17 +1074,6 @@ export function YouTubePlayer({
           {captionFeedback}
         </div>
       )}
-      </div>
-      <div className="flex min-h-8 shrink-0 items-center justify-end gap-3 bg-black px-2 text-xs text-white">
-        {fullscreenError && <span role="status" className="mr-auto">{fullscreenError}</span>}
-        <button
-          type="button"
-          onClick={() => { void toggleFullscreenFromKeyboard() }}
-          aria-label={isFullscreen ? "Exit video fullscreen" : "Enter video fullscreen"}
-          className="min-h-8 rounded px-2 hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
-        >
-          {isFullscreen ? "Exit fullscreen (Esc)" : "Fullscreen"}
-        </button>
       </div>
     </div>
   )

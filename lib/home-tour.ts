@@ -7,7 +7,7 @@ export const homeTourSteps = [
     target: "live-map",
     preview: "journey",
     title: "A video with a mapped journey",
-    description: "“Live map” means the video has mapped locations. The map follows along as you watch.",
+    description: "Open a video to explore its mapped locations. The map follows along as you watch.",
   },
   {
     target: "watch-video",

@@ -8,7 +8,7 @@ function load(file, mocks = {}) {
   return module.exports
 }
 const mapping=load('lib/playlist-mapping.ts')
-const helpers=load('lib/creator-playlists.ts',{'@/lib/playlist-mapping':mapping})
+const helpers=load('lib/creator-playlists.ts',{'@/lib/playlist-membership':load('lib/playlist-membership.ts')})
 const playlistId='PL1234567890'
 const videos=Array.from({length:99},(_,position)=>({id:`video-${position}`,youtubeId:`yt-${position}`,title:`Episode ${position+1}`,creator:'Creator',description:'Imported from Motorcycle Series.',thumbnail:'/placeholder.svg',createdAt:new Date(2026,0,1,0,0,position).toISOString(),tags:[`playlist:${playlistId}`],keyframes:position===0?[{time:0}]:[],status:position===0?'published':'draft'}))
 const solo={...videos[0],id:'solo',tags:['creator']}

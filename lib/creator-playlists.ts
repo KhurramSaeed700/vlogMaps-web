@@ -1,6 +1,6 @@
 import type { TravelVideo } from "@/lib/demo-data"
 import type { YouTubePlaylistPreview } from "@/lib/youtube-playlist"
-import { getVideoPlaylistId } from "@/lib/playlist-mapping"
+import { playlistIds } from "@/lib/playlist-membership"
 
 export interface CreatorPlaylist {
   id: string
@@ -14,7 +14,9 @@ export function creatorPlaylistHref(id: string) {
   return `/creator/playlists/${encodeURIComponent(id)}`
 }
 
-function importedPosition(video: TravelVideo) {
+function importedPosition(video: TravelVideo, id: string) {
+  const scoped = video.tags?.find(tag => tag.startsWith(`playlist-order:${id}:`))
+  if (scoped) return Number(scoped.slice(`playlist-order:${id}:`.length))
   const tag = video.tags?.find(tag => /^playlist-position:\d+$/.test(tag))
   return tag ? Number(tag.slice("playlist-position:".length)) : null
 }
@@ -23,19 +25,23 @@ export function groupCreatorPlaylists(videos: readonly TravelVideo[]) {
   const groups = new Map<string, TravelVideo[]>()
   const standalone: TravelVideo[] = []
   for (const video of videos) {
-    const id = getVideoPlaylistId(video)
-    if (!id) { standalone.push(video); continue }
-    const group = groups.get(id) ?? []
-    group.push(video)
-    groups.set(id, group)
+    const ids = playlistIds(video.tags)
+    if (!ids.length) { standalone.push(video); continue }
+    for (const id of ids) {
+      const group = groups.get(id) ?? []
+      group.push(video)
+      groups.set(id, group)
+    }
   }
+
   const playlists: CreatorPlaylist[] = [...groups].map(([id, items]) => {
     const ordered = [...items].sort((a, b) => {
-      const left = importedPosition(a), right = importedPosition(b)
+      const left = importedPosition(a, id), right = importedPosition(b, id)
       if (left !== null && right !== null) return left - right
       return (Date.parse(a.createdAt) || 0) - (Date.parse(b.createdAt) || 0) || a.id.localeCompare(b.id)
     })
-    const title = ordered.map(video => /^Imported from ([\s\S]+)\.$/.exec(video.description)?.[1]).find(Boolean)
+    const title = ordered.flatMap(video => video.tags ?? []).find(tag => tag.startsWith(`playlist-name:${id}:`))?.slice(`playlist-name:${id}:`.length)
+      ?? ordered.map(video => /^Imported from ([\s\S]+)\.$/.exec(video.description)?.[1]).find(Boolean)
       ?? ordered.flatMap(video => video.tags ?? []).find(tag => tag.startsWith("playlist-title:"))?.slice("playlist-title:".length)
       ?? "Imported playlist"
     return { id, title, videos: ordered, mappedCount: ordered.filter(video => video.keyframes.length > 0).length,

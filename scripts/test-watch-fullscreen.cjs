@@ -63,8 +63,8 @@ for (const editor of [false, true]) {
 const boundarySeekSource = source.slice(source.indexOf('const seekToDurationPercentage ='), source.indexOf('  useEffect(() => {', source.indexOf('const seekToDurationPercentage =')))
 let duration = 1121
 const destinations = []
-const boundarySeek = new Function('playerRef', 'beginPendingSeek', 'clampVideoTime', transpile(boundarySeekSource) + ';return seekToDurationPercentage')(
-  { current: { getDuration: () => duration } }, (_, time) => destinations.push(time), (time, total) => Math.min(Math.max(time, 0), total),
+const boundarySeek = new Function('onSeekToEndRef', 'playerRef', 'beginPendingSeek', 'clampVideoTime', transpile(boundarySeekSource) + ';return seekToDurationPercentage')(
+  { current: undefined }, { current: { getDuration: () => duration } }, (_, time) => destinations.push(time), (time, total) => Math.min(Math.max(time, 0), total),
 )
 boundarySeek(0); boundarySeek(1)
 assert.deepEqual(destinations, [0, 1121], 'Seek to the actual beginning and full duration')
@@ -102,7 +102,8 @@ async function checkFullscreenRequests() {
   assert.equal(preventedEscape, true)
   assert.equal(expanded.at(-1), false, 'Escape must close the fallback fullscreen mode')
   assert.doesNotMatch(source, /window\.focus\(\)|restoreFocusTimeout/, 'Player must not fight iframe focus with recurring timers')
-  assert.match(source, /aria-label=\{isFullscreen \? "Exit video fullscreen" : "Enter video fullscreen"\}/, 'An explicit fullscreen exit control must remain available')
-  console.log('Watch fullscreen passed: enter/exit, rejected requests, explicit exit control, and no iframe focus timers.')
+  assert.ok(!source.includes('aria-label={isFullscreen ? "Exit video fullscreen"'), 'No persistent fullscreen button')
+  assert.ok(!source.includes('flex min-h-8 shrink-0'), 'No footer reserves black space below the video')
+  console.log('Watch fullscreen passed: enter/exit, rejected requests, keyboard exits, no permanent footer, and no iframe focus timers.')
 }
 checkFullscreenRequests().catch(error => { console.error(error); process.exitCode = 1 })

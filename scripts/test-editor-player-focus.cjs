@@ -18,7 +18,29 @@ for (const override of [{ hidden: true }, { fullscreenElement: frame }, { hasFoc
 wrapper.dataset.playerFullscreen = 'true'
 exportsObject.returnEditorPlayerFocus(wrapper, doc)
 assert.equal(focus, 1, 'Never steal focus from typing, other apps, hidden tabs or fullscreen')
+// Fullscreen is opt-in and must belong to this player, never another element.
+wrapper.dataset.playerFullscreen = 'true'
+exportsObject.returnEditorPlayerFocus(wrapper, { ...doc, fullscreenElement: wrapper }, true)
+assert.equal(focus, 2, 'F remains reachable after clicking the iframe in browser fullscreen')
+exportsObject.returnEditorPlayerFocus(wrapper, doc, true)
+assert.equal(focus, 3, 'Expanded fullscreen also returns iframe focus')
+exportsObject.returnEditorPlayerFocus(wrapper, { ...doc, fullscreenElement: new Element() }, true)
+assert.equal(focus, 3, 'Unrelated fullscreen never loses focus')
+exportsObject.returnEditorPlayerFocus(wrapper, { ...doc, activeElement: new Element() }, true)
+assert.equal(focus, 3, 'Typing and other controls retain their focus')
 const source = fs.readFileSync('components/media/youtube-player.tsx', 'utf8')
+const focusEffectStart = source.indexOf('    if (!allowKeyboard && !allowWatchKeyboardControls) return')
+const focusEffectEnd = source.indexOf('  }, [allowKeyboard, allowWatchKeyboardControls, videoId])', focusEffectStart)
+const focusEffect = source.slice(focusEffectStart, focusEffectEnd)
+let scheduled, cancelledFrame=0
+const listeners={}
+const watchWindow={addEventListener(name,fn){listeners[name]=fn},removeEventListener(name){delete listeners[name]},requestAnimationFrame(fn){scheduled=fn;return 1},cancelAnimationFrame(){cancelledFrame++;scheduled=null}}
+const installFocusHandback=new Function('allowKeyboard','allowWatchKeyboardControls','wrapperRef','document','window','returnEditorPlayerFocus',compile(focusEffect))
+const cleanupFocus=installFocusHandback(false,true,{current:wrapper},doc,watchWindow,exportsObject.returnEditorPlayerFocus)
+listeners.blur();assert.equal(focus,3,'Focus is not changed during the mouse event itself')
+scheduled();assert.equal(focus,4,'Watch returns focus after a fullscreen iframe click')
+wrapper.dataset.playerFullscreen='false';listeners.blur();scheduled();assert.equal(focus,4,'Normal watch iframe controls retain native focus')
+wrapper.dataset.playerFullscreen='true';listeners.blur();cleanupFocus();assert.equal(scheduled,null);assert.ok(!listeners.blur,'Pending handback and blur listener are removed on unmount')
 const handlerSource = source.slice(source.indexOf('const handleKeyDown ='), source.indexOf('const handleKeyUp ='))
 let escapes = 0, cancelled = 0, cleared = 0, toggles = 0
 const deps = {

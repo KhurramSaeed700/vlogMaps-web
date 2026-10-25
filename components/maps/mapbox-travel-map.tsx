@@ -1,7 +1,9 @@
 "use client"
 
+import { getFlightRenderSegments } from "@/lib/flight-render-geometry"
 import { buildStopRegionCameraPlan, getStopRegionCameraAtTime, type StopRegionCameraWindow } from "@/lib/stop-region-camera"
 import { getTripPreviewTiming, getTripPreviewDistanceProgress, tripPreviewCameraMs, tripPreviewCompleteHoldMs } from "@/lib/trip-preview"
+import { PreviewReplayButton, usePreviewReplayOffer } from "@/components/maps/preview-replay"
 import { useStopRegions } from "@/components/maps/use-stop-regions"
 
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
@@ -14,7 +16,7 @@ import { Input } from "@/components/ui/input"
 import {
   fetchRoutedLegsForKeyframes,
   splitRoutedLegSections,
-  createGreatCircleFlightCoordinates,
+  createIllustrativeFlightCoordinates,
   isFlightRouteLeg,
   type RouteCoordinate,
   type RoutedLeg,
@@ -707,7 +709,7 @@ function normalizeRoutedLegsForManualKeyframes(legs: RoutedLeg[], keyframes: Key
         ...leg,
         isFallback: true,
         routeKind: "flight" as const,
-        coordinates: createGreatCircleFlightCoordinates(startCoordinate, endCoordinate),
+        coordinates: createIllustrativeFlightCoordinates(startCoordinate, endCoordinate),
       }
     }
 
@@ -794,7 +796,7 @@ function buildPendingRoutedLegs(keyframes: Keyframe[]) {
       isFallback: true,
       isStationary: keyframe.pointType === "stop",
       routeKind: isFlight ? "flight" as const : "offroad" as const,
-      coordinates: isFlight ? createGreatCircleFlightCoordinates([keyframe.lng, keyframe.lat], [nextKeyframe.lng, nextKeyframe.lat]) : [
+      coordinates: isFlight ? createIllustrativeFlightCoordinates([keyframe.lng, keyframe.lat], [nextKeyframe.lng, nextKeyframe.lat]) : [
         [keyframe.lng, keyframe.lat],
         [nextKeyframe.lng, nextKeyframe.lat],
       ] as RouteCoordinate[],
@@ -2199,14 +2201,14 @@ function buildRouteFeatureCollection(segments: RouteFeatureSegment[]) {
     type: "FeatureCollection" as const,
     features: segments
       .filter((segment) => segment.coordinates.length >= 2)
-      .map((segment) => ({
+      .flatMap((segment) => (segment.routeKind === "flight" ? getFlightRenderSegments(segment.coordinates) : [segment.coordinates]).map(coordinates => ({
         type: "Feature" as const,
         properties: { routeKind: segment.routeKind },
         geometry: {
           type: "LineString" as const,
-          coordinates: segment.coordinates,
+          coordinates,
         },
-      })),
+      }))),
   }
 }
 
@@ -2409,6 +2411,7 @@ export function MapboxTravelMap({
   const [isRouteResolving, setIsRouteResolving] = useState(false)
   const [isRouteIntroActive, setIsRouteIntroActive] = useState(hasMapboxAccessToken)
   const [isRouteIntroAutoStartCancelled, setIsRouteIntroAutoStartCancelled] = useState(false)
+  const previewReplay = usePreviewReplayOffer()
   const [routeIntroCountdownCycle, setRouteIntroCountdownCycle] = useState(0)
 
   isPlayingRef.current = isPlaying
@@ -4052,6 +4055,7 @@ export function MapboxTravelMap({
             routeIntroAutoStartTimerRef.current = null
             if (!routeIntroAutoStartCancelledRef.current && isRouteIntroActiveRef.current) {
               startTrackingFromRouteIntroRef.current()
+              previewReplay.offer()
             }
           }, tripPreviewCompleteHoldMs)
         }
@@ -4168,6 +4172,20 @@ export function MapboxTravelMap({
       setMapError(null)
     } catch {
       clearProgrammaticCameraMove()
+    }
+  }
+
+  const replayRouteIntro = () => {
+    const map = mapInstanceRef.current
+    if (!map || !markerRef.current || !hasUsableMapSize(map) || !canUpdateCamera(map)) return
+    previewReplay.dismiss()
+    routeIntroDismissedRef.current = false
+    routeIntroAutoStartCancelledRef.current = false
+    setIsRouteIntroAutoStartCancelled(false)
+    isFollowingRef.current = false
+    updateTrackingEnabled(false)
+    if (!beginRouteIntroPreview(map, latestPlaybackTimeRef.current, liveRouteCoordinateRef.current)) {
+      startTrackingFromRouteIntro()
     }
   }
 
@@ -5398,6 +5416,8 @@ export function MapboxTravelMap({
           </div>
         </div>
       )}
+
+      {previewReplay.visible && !isRouteIntroActive && <PreviewReplayButton onReplay={replayRouteIntro} />}
 
       {isRouteIntroActive && (
         <div className="pointer-events-none absolute inset-0 z-40 flex flex-col justify-between bg-gradient-to-b from-slate-950/10 via-transparent to-slate-950/45 p-3 text-white sm:p-4">

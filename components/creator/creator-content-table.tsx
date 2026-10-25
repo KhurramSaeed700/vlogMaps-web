@@ -19,6 +19,8 @@ import { playlistEditorHref } from "@/lib/playlist-mapping"
 import { isVideoVisibility, normalizeVideoVisibility, videoVisibilities, videoVisibilityDescriptions, videoVisibilityLabels, type VideoVisibility } from "@/lib/video-visibility"
 
 export interface CreatorContentTableProps {
+  onManagePlaylist?: (playlist: CreatorPlaylist) => void
+  onAddToPlaylist?: (videos: TravelVideo[]) => void
   playlists?: CreatorPlaylist[]
   playlistId?: string
   videos: TravelVideo[]
@@ -35,7 +37,7 @@ const menuClass = "z-50 w-64 rounded-lg border border-border bg-popover p-1 text
 const itemClass = "flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 outline-none focus:bg-accent data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
 const emptyPlaylists: CreatorPlaylist[] = []
 
-export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisibility, onUpload, onUnpublish, onDelete, onBulkEdit, playlistId, playlists = emptyPlaylists }: CreatorContentTableProps) {
+export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisibility, onUpload, onUnpublish, onDelete, onBulkEdit, onManagePlaylist, onAddToPlaylist, playlistId, playlists = emptyPlaylists }: CreatorContentTableProps) {
   const [filters, setFilters] = useState<DashboardFilters>({ query: "", status: "all", visibility: "all", sort: playlistId ? "playlist" : "date", ascending: Boolean(playlistId) })
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(10)
@@ -151,6 +153,7 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
     </div>
     {selectedVideos.length > 0 && <div aria-label="Bulk video editing" className="flex flex-wrap items-center gap-3 border-b border-border bg-muted/40 px-3 py-2">
       <span className="text-sm font-medium" role="status">{selectedVideos.length} selected</span>
+      {onAddToPlaylist && <Button variant="outline" size="sm" disabled={bulkDisabled} onClick={() => onAddToPlaylist(selectedVideos)}><ListVideo className="mr-2 h-4 w-4" />Add to playlist</Button>}
       <Menu.Root>
         <Menu.Trigger asChild><Button variant="outline" size="sm" disabled={bulkDisabled} aria-label="Bulk edit action" className="h-9 min-w-44 justify-between gap-3 rounded-lg bg-background shadow-sm">
           <span className="flex items-center gap-2">{bulkAction === 'draft' ? <CloudOff className="h-4 w-4 text-muted-foreground" /> : bulkAction === 'private' ? <Lock className="h-4 w-4 text-muted-foreground" /> : bulkAction === 'unlisted' ? <Link2 className="h-4 w-4 text-muted-foreground" /> : <Globe className="h-4 w-4 text-muted-foreground" />}{bulkBusy ? 'Saving…' : bulkAction === 'draft' ? 'Move to drafts' : videoVisibilityLabels[bulkAction]}</span>
@@ -208,7 +211,7 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
               <td className="px-3 py-4 text-muted-foreground">{playlist.uploadedCount === 0 ? 'Draft' : playlist.uploadedCount === playlist.videos.length ? 'Uploaded' : 'Partly uploaded'}</td>
               <td className="px-3 py-4 text-right tabular-nums">{video.keyframes.length}</td><td className="whitespace-nowrap px-3 py-4 text-right tabular-nums">{formatTravelDistance(travelDistances.get(video.id) || 0)}</td><td className="px-3 py-4 text-right tabular-nums">{formatCompactNumber(video.mapViews || 0)}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatCompactNumber(video.views)}</td>
-              <td className="px-3 py-4 text-right"><Button asChild variant="ghost" size="sm"><Link href={creatorPlaylistHref(playlist.id)}>Open playlist<ChevronRight className="ml-1 h-4 w-4" /></Link></Button></td>
+              <td className="px-3 py-4 text-right">{onManagePlaylist && <Button variant="ghost" size="sm" onClick={() => onManagePlaylist(playlist)}>Edit playlist</Button>}<Button asChild variant="ghost" size="sm"><Link href={creatorPlaylistHref(playlist.id)}>Open playlist<ChevronRight className="ml-1 h-4 w-4" /></Link></Button></td>
             </tr>
             const mappingStatus = getVideoMappingStatus({ ...video, durationSeconds: video.durationSeconds || durations[video.youtubeId] || 0 })
             const mappingLabel = mappingStatus === 'mapped' ? 'Mapped' : mappingStatus === 'mapping' ? 'Mapping' : mappingStatus === 'checking' ? durations[video.youtubeId] === null ? 'Retry duration' : 'Checking…' : 'Not mapped'
@@ -248,6 +251,8 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
                 <Button asChild variant="ghost" size="icon" title="Preview"><Link aria-label={`Preview ${video.title}`} href={`/watch/${video.id}`}><Eye className="h-4 w-4" /></Link></Button>
                 <Menu.Root><Menu.Trigger asChild><Button variant="ghost" size="icon" aria-label={`Open options for ${video.title}`}><MoreHorizontal className="h-4 w-4" /></Button></Menu.Trigger><Menu.Portal><Menu.Content align="end" className={menuClass} sideOffset={6}>
                   {editable && <Menu.Item asChild><Link className={itemClass} href={editHref(video)}>Edit video</Link></Menu.Item>}
+                  {editable && onAddToPlaylist && <Menu.Item className={itemClass} disabled={disabled} onSelect={() => onAddToPlaylist([video])}><ListVideo className="h-4 w-4" />Add to playlist</Menu.Item>}
+
                   {uploaded && editable && <Menu.Item className={itemClass} disabled={disabled} onSelect={() => onUnpublish(video.id, video.title)}><CloudOff className="h-4 w-4" />Move to drafts</Menu.Item>}
                   <Menu.Item className={`${itemClass} text-destructive`} disabled={!editable || disabled} onSelect={() => onDelete(video.id, video.title)}><Trash2 className="h-4 w-4" />Delete video</Menu.Item>
                 </Menu.Content></Menu.Portal></Menu.Root>

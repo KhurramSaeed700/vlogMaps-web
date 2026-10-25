@@ -35,14 +35,18 @@ import {
 } from "@/lib/creator-videos-cloud-client"
 import { migrateLegacyCreatorStorageToDatabase } from "@/lib/legacy-creator-storage-migration"
 import { normalizeVideoVisibility, videoVisibilityDescriptions, videoVisibilityLabels, type VideoVisibility } from "@/lib/video-visibility"
+import { PlaylistManager } from "@/components/creator/playlist-manager"
+import type { CreatorPlaylist } from "@/lib/creator-playlists"
+import { PlaylistImporter } from "@/components/creator/playlist-importer"
 
+interface CreatorStudioProps { initialUrl?: string; section?: "content" | "playlists"; playlistId?: string; initialView?: "overview" | "content" }
 
-interface CreatorStudioProps { section?: "content" | "playlists"; playlistId?: string; initialView?: "overview" | "content" }
-
-function CreatorDashboardContent({ section = "content", playlistId, initialView = "content" }: CreatorStudioProps) {
+function CreatorDashboardContent({ section = "content", playlistId, initialView = "content", initialUrl = "" }: CreatorStudioProps) {
   const router = useRouter()
   const { user } = useUser()
-  const [youtubeUrl, setYoutubeUrl] = useState("")
+  const [playlistEditor, setPlaylistEditor] = useState<{ id?: string; videoIds?: string[] } | null>(null)
+  const [youtubeUrl, setYoutubeUrl] = useState(initialUrl)
+  const [playlistUrl, setPlaylistUrl] = useState(() => extractYouTubePlaylistId(initialUrl) ? initialUrl : "")
   const [allCreatorVideos, setAllCreatorVideos] = useState<TravelVideo[]>([])
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
   const [syncingVideoId, setSyncingVideoId] = useState<string | null>(null)
@@ -123,7 +127,7 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
     }
 
     if (extractYouTubePlaylistId(youtubeUrl)) {
-      router.push(`/creator/video/new?${new URLSearchParams({ url: youtubeUrl })}`)
+      setPlaylistUrl(youtubeUrl)
       return
     }
     if (section === "playlists") {
@@ -339,6 +343,8 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
     loading: isLoadingCreatorVideos,
     pendingId: visibilityUpdatingId || syncingVideoId || deletingVideoId,
     onBulkEdit: handleBulkEdit,
+    onManagePlaylist: (playlist: CreatorPlaylist) => setPlaylistEditor({ id: playlist.id }),
+    onAddToPlaylist: (videos: TravelVideo[]) => setPlaylistEditor({ videoIds: videos.map(video => video.id) }),
     onEdit: (video: TravelVideo) => router.push(playlistId ? playlistEditorHref(video.id, playlistId) : `/creator/video/${video.id}/edit`),
     onVisibility: (video: TravelVideo, visibility: VideoVisibility) => { void handleVisibilityChange(video, visibility) },
     onUpload: (video: TravelVideo) => { void handleUploadVideo(video) },
@@ -348,6 +354,14 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
 
   return (
     <div className="min-h-screen bg-background text-foreground">
+      {playlistEditor && <PlaylistManager videos={allCreatorVideos} playlists={playlists} initialPlaylistId={playlistEditor.id} initialVideoIds={playlistEditor.videoIds} onClose={() => setPlaylistEditor(null)} onSaved={async () => {
+        const response = await fetchCreatorCloudVideos()
+        if (!response.configured || response.error) throw new Error("Playlist saved, but the library could not refresh. Reload to see your changes.")
+        setAllCreatorVideos(response.videos)
+        setCloudVideoIds(new Set(response.videos.map(video => video.id)))
+        if (playlistId && !response.videos.some(video => video.tags?.includes(`playlist:${playlistId}`))) router.push("/creator/playlists")
+        setSyncMessage("Playlist saved.")
+      }} />}
       <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
         <div className="flex items-center justify-between gap-2 px-3 py-2.5 sm:px-6 sm:py-3">
           <TravelMapLogo className="gap-2" textClassName="hidden sm:inline" />
@@ -395,6 +409,8 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
             </div>
           </div>
 
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+          <Button variant="outline" className="w-fit rounded-lg" disabled={isLoadingCreatorVideos} onClick={() => setPlaylistEditor({})}><Plus className="mr-2 h-4 w-4" />New playlist</Button>
           <form onSubmit={handleCreateVideo} className="grid w-full gap-2 sm:grid-cols-[minmax(18rem,28rem)_auto] lg:w-auto">
             <div className="relative min-w-0">
               <Youtube className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -417,7 +433,10 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
               {isCreatingVideo ? "Adding..." : section === "playlists" || extractYouTubePlaylistId(youtubeUrl) ? "Import playlist" : "Add Video"}
             </Button>
           </form>
+          </div>
         </div>
+
+        {playlistUrl && <PlaylistImporter key={playlistUrl} url={playlistUrl} onImported={setAllCreatorVideos} onBusyChange={setIsCreatingVideo} />}
 
         {section === 'content' && dashboardView === 'overview' && (<div className="mb-4 grid grid-cols-2 gap-2 sm:mb-6 sm:gap-3 lg:grid-cols-5">
           <Card className="overflow-hidden border-border bg-card shadow-sm">
@@ -515,7 +534,7 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
           isLoadingCreatorVideos ? <div aria-label="Loading playlist workspace" className="space-y-4"><Skeleton className="h-40 w-full" /><Skeleton className="h-80 w-full" /></div>
             : selectedPlaylist ? <CreatorPlaylistDetail key={playlistId} playlist={selectedPlaylist} tableProps={tableProps} />
               : <div className="rounded-xl border border-border p-8 text-center"><h2 className="font-semibold">Playlist not found</h2><p className="mt-2 text-sm text-muted-foreground">This playlist has no imported videos in your library.</p><Button asChild className="mt-4"><Link href="/creator/playlists">Back to playlists</Link></Button></div>
-        ) : <CreatorPlaylistCards playlists={playlists} loading={isLoadingCreatorVideos} /> : (
+        ) : <CreatorPlaylistCards playlists={playlists} loading={isLoadingCreatorVideos} onManage={tableProps.onManagePlaylist} /> : (
           <CreatorContentTable {...tableProps} videos={standalone} playlists={playlists} />
         )}
       </main>

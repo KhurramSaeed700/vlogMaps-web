@@ -110,6 +110,32 @@ export function createGreatCircleFlightCoordinates(
   return coordinates
 }
 
+// Illustrative ocean corridors, not airline flight plans. Keep the same path in
+// previews and live tracking so the airplane never changes routes on handoff.
+export function createIllustrativeFlightCoordinates(start: RouteCoordinate, end: RouteCoordinate) {
+  const canonical = (lng: number) => ((lng + 180) % 360 + 360) % 360 - 180
+  const isAmericas = ([lng, lat]: RouteCoordinate) => canonical(lng) >= -170 && canonical(lng) <= -30 && lat >= -60 && lat <= 83
+  const startInAmericas = isAmericas(start), endInAmericas = isAmericas(end)
+  if (startInAmericas === endInAmericas) return createGreatCircleFlightCoordinates(start, end)
+  const overseas = startInAmericas ? end : start
+  const overseasLng = canonical(overseas[0])
+  // Asia/Oceania use the Pacific; Europe/Africa use the Atlantic. Bound the
+  // corridor latitude to avoid routing a long-haul illustration over a pole.
+  const latitude = Math.max(-40, Math.min(45, (start[1] + end[1]) / 2))
+  const pacific = overseasLng >= 35 || overseasLng < -170
+  const corridor: RouteCoordinate[] = pacific ? [[150, latitude], [200, latitude]] : [[-35, latitude]]
+  if (startInAmericas) corridor.reverse()
+  const waypoints = [start, ...corridor, end]
+  const coordinates: RouteCoordinate[] = [start]
+  for (let leg = 1; leg < waypoints.length; leg++) {
+    const section = createGreatCircleFlightCoordinates(waypoints[leg - 1], waypoints[leg])
+    for (const point of section.slice(1)) {
+      coordinates.push([unwrapLongitude(point[0], coordinates[coordinates.length - 1][0]), point[1]])
+    }
+  }
+  return coordinates
+}
+
 function getCoordinateDistanceKm(start: RoutableKeyframe, end: RoutableKeyframe) {
   const toRadians = (value: number) => (value * Math.PI) / 180
   const startLat = toRadians(start.lat)
@@ -499,7 +525,7 @@ function createFlightLeg(keyframe: RoutableKeyframe, nextKeyframe: RoutableKeyfr
     isFallback: false,
     isStationary: false,
     routeKind: "flight" as const,
-    coordinates: createGreatCircleFlightCoordinates(start, end),
+    coordinates: createIllustrativeFlightCoordinates(start, end),
   } satisfies RoutedLeg
 }
 

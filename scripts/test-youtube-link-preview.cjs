@@ -34,8 +34,9 @@ async function main(){
  tree=preview.YouTubeLinkPreview({url:sample,isCreator:true,userId:'clerk-owner'});assert.ok(text(tree).includes('99 videos'));assert.ok(text(tree).includes('Import playlist in Creator Studio'));assert.ok(walk(tree).find(n=>n.type==='link').props.href.includes(encodeURIComponent('list=')))
  tree=preview.YouTubeLinkPreview({url:sample,isCreator:false,userId:'clerk-owner'});assert.ok(!walk(tree).some(n=>n.type==='link'))
  tree=preview.YouTubeLinkPreview({url:sample,isCreator:true,userId:'new-account'});assert.ok(!text(tree).includes('99 videos'),'Account switches hide previous user results')
- const page=load('app/creator/video/new/page.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'@/lib/youtube-playlist':playlist,'@/lib/youtube':youtube,'@/components/app-shell/content-page-shell':{ContentPageShell:'shell'},'@/components/creator/creator-access-guard':{CreatorAccessGuard:'guard'},'@/components/creator/creator-video-workspace':{CreatorVideoWorkspace:'workspace'}})
- const handoff=await page.default({searchParams:Promise.resolve({url:sample})});assert.equal(walk(handoff).find(n=>n.type==='workspace').props.initialUrl,sample,'Creator Studio receives the original playlist URL')
+ const page=load('app/creator/video/new/page.tsx',{'next/navigation':{redirect(url){throw new Error('REDIRECT:'+url)}}})
+ await assert.rejects(()=>page.default({searchParams:Promise.resolve({url:sample})}),error=>error.message==='REDIRECT:/creator/dashboard?'+new URLSearchParams({url:sample}))
+ await assert.rejects(()=>page.default({searchParams:Promise.resolve({})}),/REDIRECT:\/creator\/dashboard$/)
  console.log('YouTube link preview passed: playlist priority/count, private ownership, no shared cache, unavailable DB, creator-only actions, loading state, URL handoff and account-switch isolation.')
 }
 main().catch(e=>{console.error(e);process.exitCode=1})

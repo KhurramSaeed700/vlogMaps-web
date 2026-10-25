@@ -23,7 +23,7 @@ function render(){
   react:{memo:fn=>fn,useEffect:fn=>effects.push(fn),useRef:v=>({current:v}),useState:initial=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],v=>states[i]=typeof v==='function'?v(states[i]):v]}},
   'react/jsx-runtime':{jsx,jsxs:jsx},'next/navigation':{useRouter:()=>({push:href=>navigations.push(href)})},
   '@radix-ui/react-dialog':new Proxy({},{get:(_,key)=>`Dialog${key}`}),
-  '@/components/ui/button':{Button:'button'},'@/lib/creator-videos-cloud-client':{},'@/lib/playlist-mapping':helpers,
+  '@/components/ui/button':{Button:'button'},'@/lib/creator-videos-cloud-client':{},'@/lib/creator-playlists':{},'@/lib/playlist-mapping':helpers,
  })
  return PlaylistMappingControls({playlistId:playlist.id,youtubeId:'a',videoId:'db-a',completionRequest,saveBeforeNext:async()=>{saves++;return saveResult}})
 }

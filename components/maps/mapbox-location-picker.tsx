@@ -1,5 +1,8 @@
 "use client"
 
+import { getFlightRenderSegments } from "@/lib/flight-render-geometry"
+import { PreviewReplayButton, usePreviewReplayOffer } from "@/components/maps/preview-replay"
+
 import { buildStopRegionCameraPlan, getStopRegionCameraAtTime, type StopRegionCameraWindow } from "@/lib/stop-region-camera"
 import { getTripPreviewTiming } from "@/lib/trip-preview"
 import { useStopRegions, getStopRegionKeyAtPoint } from "@/components/maps/use-stop-regions"
@@ -21,7 +24,7 @@ import { getFlightRouteKeyframes } from "@/lib/flight-path"
 import type { CreatorTripEndpoint, CreatorTripRoute } from "@/lib/creator-trip-route"
 import { getTimestampLegKey, type CreatorRouteShapePoint, type CreatorRouteShapes } from "@/lib/creator-route-shapes"
 import { getCoordinateSearchResult } from "@/lib/location-search/query-utils"
-import { createGreatCircleFlightCoordinates, createInitialRoutedLegs, fetchRoutedLegsForKeyframes, splitRoutedLegSections, isFlightRouteLeg, type RouteCoordinate, type RoutedLeg } from "@/lib/mapbox-directions"
+import { createIllustrativeFlightCoordinates, createInitialRoutedLegs, fetchRoutedLegsForKeyframes, splitRoutedLegSections, isFlightRouteLeg, type RouteCoordinate, type RoutedLeg } from "@/lib/mapbox-directions"
 import {
   createFlightAirplaneMarkerElement,
   flightPathLineWidth,
@@ -382,14 +385,14 @@ function buildRouteFeatureCollection(
 ) {
   return {
     type: "FeatureCollection" as const,
-    features: segments.map((segment) => ({
+    features: segments.flatMap((segment) => (segment.properties?.routeKind === "flight" ? getFlightRenderSegments(segment.coordinates) : [segment.coordinates]).map(coordinates => ({
       type: "Feature" as const,
       properties: segment.properties ?? {},
       geometry: {
         type: "LineString" as const,
-        coordinates: segment.coordinates,
+        coordinates,
       },
-    })),
+    }))),
   }
 }
 
@@ -835,7 +838,7 @@ function buildTimestampRouteSegments(legs: TimestampRouteSegmentInput[]) {
           fromTime: leg.fromTime,
           toTime: leg.toTime,
           routeKind: "flight",
-          coordinates: createGreatCircleFlightCoordinates(leg.startCoordinate, leg.endCoordinate),
+          coordinates: createIllustrativeFlightCoordinates(leg.startCoordinate, leg.endCoordinate),
         }),
       ] satisfies TimestampRouteSegment[]
     }
@@ -1044,6 +1047,8 @@ export function MapboxLocationPicker({
   const [activeSearchIndex, setActiveSearchIndex] = useState(-1)
   const [isSearching, setIsSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
+  const previewReplay = usePreviewReplayOffer()
+  const [previewReplayCycle, setPreviewReplayCycle] = useState(0)
   const [isTrackingTraveler, setIsTrackingTraveler] = useState(false)
   const [isTrackingAutoStartCancelled, setIsTrackingAutoStartCancelled] = useState(false)
   const [trackingLoadingState, setTrackingLoadingState] = useState<TrackingLoadingState | null>(null)
@@ -2036,6 +2041,7 @@ export function MapboxLocationPicker({
     clearTrackingAutoStartTimer()
     trackingAutoStartDeadlineRef.current = null
     enableTravelerTracking()
+    previewReplay.offer()
   }
 
   const disableTravelerTracking = () => {
@@ -2047,6 +2053,16 @@ export function MapboxLocationPicker({
     setIsTrackingTraveler(false)
     cancelTrackingLoading()
     stopTravelerTrackingLoop()
+  }
+
+  const replayJourneyPreview = () => {
+    if (!mapInstanceRef.current || !isLoaded || !hasTrackableTraveler) return
+    previewReplay.dismiss()
+    disableTravelerTracking()
+    trackingAutoStartCancelledRef.current = false
+    trackingAutoStartDeadlineRef.current = null
+    setIsTrackingAutoStartCancelled(false)
+    setPreviewReplayCycle(cycle => cycle + 1)
   }
 
   const suspendTravelerTrackingForInteraction = () => {
@@ -2105,7 +2121,7 @@ export function MapboxLocationPicker({
     }, remainingMs)
 
     return clearTrackingAutoStartTimer
-  }, [hasTrackableTraveler, isLoaded, editorTrackingAutoStartDurationMs, points])
+  }, [hasTrackableTraveler, isLoaded, editorTrackingAutoStartDurationMs, points, previewReplayCycle])
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -4155,6 +4171,8 @@ export function MapboxLocationPicker({
           </div>
         </div>
       )}
+
+      {previewReplay.visible && isTrackingTraveler && <PreviewReplayButton onReplay={replayJourneyPreview} />}
 
       {trackingLoadingState && (
         <div

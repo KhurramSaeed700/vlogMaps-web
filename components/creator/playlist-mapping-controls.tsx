@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import * as Dialog from "@radix-ui/react-dialog"
 import { Button } from "@/components/ui/button"
 import { fetchCreatorCloudVideos } from "@/lib/creator-videos-cloud-client"
+import { groupCreatorPlaylists } from "@/lib/creator-playlists"
 import { getPlaylistMappingStep, playlistEditorHref } from "@/lib/playlist-mapping"
 import type { YouTubePlaylistPreview } from "@/lib/youtube-playlist"
 
@@ -21,17 +22,19 @@ export const PlaylistMappingControls = memo(function PlaylistMappingControls({ p
   useEffect(() => {
     const controller = new AbortController()
     setStep(null); setLoadError("")
-    Promise.all([
-      fetch(`/api/creator/playlists?${new URLSearchParams({ url: `https://www.youtube.com/playlist?list=${playlistId}` })}`, { cache: "no-store", signal: controller.signal }).then(async response => {
-        const body = await response.json()
-        if (!response.ok) throw new Error(body.error || "Unable to load the next video.")
-        return body as YouTubePlaylistPreview
-      }),
-      fetchCreatorCloudVideos(controller.signal).then(response => {
-        if (!response.configured || response.error || response.status) throw new Error("Unable to check your playlist videos.")
-        return response.videos
-      }),
-    ]).then(([playlist, videos]) => {
+    fetchCreatorCloudVideos(controller.signal).then(async response => {
+      if (!response.configured || response.error || response.status) throw new Error("Unable to check your playlist videos.")
+      const videos = response.videos
+      const local = groupCreatorPlaylists(videos).playlists.find(playlist => playlist.id === playlistId)
+      if (local?.videos.some(video => video.tags?.some(tag => tag.startsWith(`playlist-name:${playlistId}:`)))) {
+        return { videos, playlist: { id: local.id, title: local.title, unavailableCount: 0, truncated: false,
+          items: local.videos.map((video, position) => ({ youtubeId: video.youtubeId, title: video.title, creator: video.creator, channelId: "", position })) } }
+      }
+      const result = await fetch(`/api/creator/playlists?${new URLSearchParams({ url: `https://www.youtube.com/playlist?list=${playlistId}` })}`, { cache: "no-store", signal: controller.signal })
+      const body = await result.json()
+      if (!result.ok) throw new Error(body.error || "Unable to load the next video.")
+      return { videos, playlist: body as YouTubePlaylistPreview }
+    }).then(({ playlist, videos }) => {
       if (controller.signal.aborted) return
       const nextStep = getPlaylistMappingStep(playlist, videos, youtubeId)
       if (!nextStep) throw new Error("This video is no longer in the playlist.")

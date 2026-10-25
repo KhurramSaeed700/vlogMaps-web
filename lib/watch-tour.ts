@@ -47,7 +47,7 @@ export const watchTourSteps = [
     selectors: ['[data-watch-tour="player"]'],
     preview: "journey",
     title: "Adjust your viewing space",
-    description: "Use Fullscreen for a bigger video; Escape exits. On desktop, drag the divider to resize the panels.",
+    description: "Press F for a bigger video; Escape exits. On desktop, drag the divider to resize the panels.",
   },
   {
     selectors: ['button[aria-label="Open playback settings"]'],

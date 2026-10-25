@@ -1,6 +1,7 @@
+import { ListVideo } from "lucide-react"
+import type { CreatorPlaylist } from "@/lib/creator-playlists"
 import Link from "next/link"
 import Image from "next/image"
-import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatCompactNumber, formatDuration } from "@/lib/demo-data"
 import {
@@ -23,7 +24,7 @@ export function HomeVideoCard({ video, prioritizeThumbnail = false }: HomeVideoC
   return (
     <Link href={`/watch/${video.id}`} className="group block" data-home-tour="watch-video">
       <div className="space-y-3">
-        <div className="relative aspect-video overflow-hidden rounded-2xl bg-muted">
+        <div className="relative aspect-video overflow-hidden rounded-2xl bg-muted" data-home-tour="live-map">
           <Image
             src={video.thumbnail || "/placeholder.svg"}
             alt={video.title}
@@ -32,10 +33,7 @@ export function HomeVideoCard({ video, prioritizeThumbnail = false }: HomeVideoC
             sizes="(min-width: 1536px) 285px, (min-width: 1280px) calc((100vw - 92px) / 4), (min-width: 1024px) calc((100vw - 72px) / 3), (min-width: 640px) calc((100vw - 52px) / 2), calc(100vw - 32px)"
             className="object-cover transition duration-300 group-hover:scale-[1.02]"
           />
-          <div className="absolute left-3 top-3 flex w-fit" data-home-tour="live-map">
-            <Badge className="border-0 bg-black/75 text-white">Live map</Badge>
-          </div>
-          <div className="absolute bottom-3 right-3 rounded bg-black/80 px-2 py-1 text-xs text-white">
+          <div className="absolute bottom-1 right-1 rounded bg-black/80 px-1.5 py-0.5 text-xs text-white">
             {formatDuration(video.durationSeconds)}
           </div>
         </div>
@@ -74,10 +72,7 @@ export function HomeVideoSkeletonCard() {
     <div className="space-y-3">
       <div className="relative overflow-hidden rounded-2xl bg-muted">
         <Skeleton className="aspect-video w-full rounded-2xl" />
-        <div className="absolute left-3 top-3">
-          <Skeleton className="h-6 w-16 rounded-full bg-slate-300/80" />
-        </div>
-        <div className="absolute bottom-3 right-3">
+        <div className="absolute bottom-1 right-1">
           <Skeleton className="h-6 w-14 rounded-md bg-slate-300/80" />
         </div>
       </div>
@@ -89,4 +84,24 @@ export function HomeVideoSkeletonCard() {
       </div>
     </div>
   )
+}
+
+export function HomePlaylistCard({ playlist }: { playlist: CreatorPlaylist }) {
+  const first = playlist.videos[0]
+  if (!first) return null
+  return <Link href={`/playlists/${encodeURIComponent(playlist.id)}`} aria-label={`Open playlist ${playlist.title}`} className="group block">
+    <div className="space-y-3">
+      <div className="relative aspect-video rounded-2xl bg-muted shadow-[0_-5px_0_-1px_hsl(var(--muted)),0_-9px_0_-3px_hsl(var(--border))]">
+        <div className="relative h-full overflow-hidden rounded-2xl">
+          <Image src={first.thumbnail || "/placeholder.svg"} alt="" fill sizes="(min-width: 1280px) 285px, (min-width: 640px) 50vw, 100vw" className="object-cover transition duration-300 group-hover:scale-[1.02]" />
+          <span className="absolute bottom-1 right-1 inline-flex items-center gap-1.5 rounded bg-black/80 px-1.5 py-0.5 text-xs text-white"><ListVideo className="h-3.5 w-3.5" />{playlist.videos.length} {playlist.videos.length === 1 ? "video" : "videos"}</span>
+        </div>
+      </div>
+      <div className="space-y-1 px-1">
+        <h2 className="line-clamp-2 text-[15px] font-semibold leading-5 text-foreground">{playlist.title}</h2>
+        <p className="text-sm text-muted-foreground">{first.creator}</p>
+        <p className="text-xs text-muted-foreground">View playlist</p>
+      </div>
+    </div>
+  </Link>
 }

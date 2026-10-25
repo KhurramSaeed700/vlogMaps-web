@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { CopyCoordinatesButton } from "@/components/creator/copy-coordinates-button"
 import { createPortal } from "react-dom"
 import { ReportProblemButton } from "@/components/monitoring/report-problem-button"
 import Link from "next/link"
@@ -560,7 +561,7 @@ export function CreatorVideoEditor({
   })
   const [isAwaitingMapPlacement, setIsAwaitingMapPlacement] = useState(false)
   const [isTripRouteDialogOpen, setIsTripRouteDialogOpen] = useState(false)
-  const [isTimestampSortAscending, setIsTimestampSortAscending] = useState(true)
+  const [isTimestampSortAscending, setIsTimestampSortAscending] = useState(false)
   const [headerLeadingActionsElement, setHeaderLeadingActionsElement] = useState<HTMLElement | null>(null)
   const [headerActionsElement, setHeaderActionsElement] = useState<HTMLElement | null>(null)
   const [showScrollTop, setShowScrollTop] = useState(false)
@@ -3964,6 +3965,7 @@ export function CreatorVideoEditor({
                               >
                                 {canReuseTimestampLocation && landingPoint ? `From: ${timestampLocationLabel(point)}` : timestampDescription}
                               </button>
+                              <CopyCoordinatesButton lat={point.lat} lng={point.lng} />
                               {[point, ...(landingPoint ? [landingPoint] : [])].map(candidate => {
                                 const suggestion = timestampPlaceSuggestions.get(candidate.id)
                                 if (!suggestion?.kind) return null

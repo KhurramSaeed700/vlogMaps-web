@@ -2,7 +2,7 @@
 
 import { anonymousRegionName, anonymousRegionMessage } from "@/lib/stop-regions"
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import * as Dialog from "@radix-ui/react-dialog"
 import Image from "next/image"
@@ -29,6 +29,8 @@ interface WatchExperienceProps {
   video: TravelVideo | HydratedTravelVideo
   recommendedVideos?: TravelVideo[]
   viewerCanEdit?: boolean
+  playlistControls?: ReactNode
+  onPlaylistVideoEnded?: () => void
   editHref?: string | null
 }
 
@@ -328,6 +330,8 @@ export function WatchExperience({
   recommendedVideos = emptyRecommendedVideos,
   viewerCanEdit = false,
   editHref = null,
+  playlistControls,
+  onPlaylistVideoEnded,
 }: WatchExperienceProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const splitViewRef = useRef<HTMLDivElement>(null)
@@ -481,7 +485,8 @@ export function WatchExperience({
     setAutoplayCountdown(null)
     setIsPlaying(false)
     setHasEnded(true)
-  }, [])
+    onPlaylistVideoEnded?.()
+  }, [onPlaylistVideoEnded])
 
   const replayVideo = useCallback(() => {
     setAutoplayCountdown(null)
@@ -568,6 +573,7 @@ export function WatchExperience({
 
           <WatchVideoSearch key={video.id} />
 
+
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             <Dialog.Root open={isMobileTimestampsOpen} onOpenChange={setIsMobileTimestampsOpen}>
               <Dialog.Trigger asChild>
@@ -611,6 +617,7 @@ export function WatchExperience({
                 </Button>
               </Link>
             )}
+            {playlistControls}
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <Button

@@ -132,6 +132,7 @@ for (const { canceled, lateRoute } of routes.flatMap(lateRoute => [false, true].
     targetRouteCoordinateRef: ref([0, 0]), animatedRouteCoordinateRef: ref([0, 0]),
     syncTravelerMarker: noop, drawRouteIntroProgress: noop,
     startTrackingFromRouteIntroRef: ref(() => tracked++),
+    previewReplay: { offer: noop },
   }
   const compiled = ts.transpileModule(animation, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
   const startPreview = new Function(...Object.keys(deps), compiled + ';return startRouteIntroAnimation')(...Object.values(deps))

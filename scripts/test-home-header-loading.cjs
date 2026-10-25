@@ -99,30 +99,35 @@ function checkHeader() {
   const onReadyChange = ready => readiness.push(ready)
   const render = () => { h.reset(); return HomeHeader({ youtubeUrl: '', onReadyChange }) }
   try {
+    const assertCoreVisible = header => {
+      const nodes = walk(header)
+      assert.equal(header.props['data-home-header-ready'], true)
+      assert.ok(nodes.some(node => node.type === 'Logo'), 'Logo renders before account details')
+      assert.ok(nodes.some(node => node.type === 'form'), 'Search renders before account details')
+      assert.ok(nodes.some(node => node.props?.['aria-label'] === 'Open settings menu'), 'Settings renders immediately')
+      assert.ok(!nodes.some(node => node.props?.inert || node.props?.['aria-hidden'] === true && node.type === 'form'), 'Core controls are never gated')
+      assert.ok(!nodes.some(node => node.props?.className?.includes('invisible')), 'No hidden navbar while dependencies load')
+    }
     let header = render()
-    assert.equal(header.props['aria-busy'], true)
-    assert.ok(walk(header).some(node => node.props?.inert === true), 'All real navbar controls must be inert while loading')
+    assertCoreVisible(header)
+    assert.ok(walk(header).some(node => node.props?.['aria-label'] === 'Loading account'))
     h.commit()
+    assert.equal(readiness.at(-1), true)
     auth = { isLoaded: true, isSignedIn: true, user: { id: 'user-a', hasImage: true } }
     access.isCheckingCreatorAccess = true
-    header = render(); h.commit()
-    assert.equal(header.props['data-home-header-ready'], false)
-    widgetMounted = true
-    observerCallback()
-    assert.equal(render().props['data-home-header-ready'], false, 'A mounted avatar must also finish loading its image')
-    image.complete = true
-    observerCallback()
-    assert.equal(render().props['data-home-header-ready'], false, 'A ready avatar still waits for creator access')
-    access.isCheckingCreatorAccess = false
-    header = render(); h.commit()
-    assert.equal(header.props['data-home-header-ready'], true, 'The complete navbar reveals in one render')
-    assert.equal(walk(header).some(node => node.props?.inert === true), false)
-    assert.equal(readiness.at(-1), true, 'The guided tour is notified when navigation is ready')
+    header = render(); h.commit(); assertCoreVisible(header)
+    assert.ok(walk(header).some(node => node.props?.['aria-label'] === 'Loading creator access'))
+    assert.ok(!walk(header).some(node => node.props?.href === '/creator/apply'), 'Do not show an incorrect creator CTA while checking access')
+    access = { isCheckingCreatorAccess: false, isApprovedCreator: true }
+    header = render(); h.commit(); assertCoreVisible(header)
+    assert.ok(walk(header).some(node => node.props?.href === '/creator/dashboard'), 'Approved creator action resolves independently of avatar image')
     auth = { isLoaded: true, isSignedIn: false, user: null }
-    assert.equal(render().props['data-home-header-ready'], true, 'Signed-out navigation does not wait for an avatar')
+    header = render(); assertCoreVisible(header)
+    assert.ok(walk(header).some(node => node.props?.href === '/auth/login'))
+
   } finally { global.MutationObserver = originalObserver }
 }
 checkAccess().then(() => {
   checkHeader()
-  console.log('Home header passed: initial auth/access race, account switch, failed access, avatar mount/image loading, atomic reveal, and signed-out navigation.')
+  console.log('Home header passed: initial auth/access race, account switch, failed access, immediate core navigation, independent account placeholders, slow avatar and signed-out navigation.')
 }).catch(error => { console.error(error); process.exitCode = 1 })

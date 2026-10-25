@@ -37,11 +37,11 @@ export function CreatorVideoEditorPage({ id, playlistId, previousVideoId }: { id
           }
           const loadedVideo = response.video
           const sourcePlaylistId = playlistId ?? (loadedVideo ? getVideoPlaylistId(loadedVideo) : undefined)
-          if (loadedVideo && loadedVideo.keyframes.length === 0 && sourcePlaylistId && getVideoPlaylistId(loadedVideo) === sourcePlaylistId) {
+          if (loadedVideo && loadedVideo.keyframes.length === 0 && sourcePlaylistId && loadedVideo.tags?.includes(`playlist:${sourcePlaylistId}`)) {
             try {
               const library = await fetchCreatorCloudVideos(controller.signal)
               const previous = previousVideoId
-                ? library.videos.find(video => video.id === previousVideoId && video.id !== loadedVideo.id && getVideoPlaylistId(video) === sourcePlaylistId)
+                ? library.videos.find(video => video.id === previousVideoId && video.id !== loadedVideo.id && video.tags?.includes(`playlist:${sourcePlaylistId}`))
                 : getPreviousPlaylistVideo(library.videos, loadedVideo.id, sourcePlaylistId)
               if (previous) {
                 const saved = await loadCreatorVideoState(previous.id, controller.signal)
@@ -78,7 +78,7 @@ export function CreatorVideoEditorPage({ id, playlistId, previousVideoId }: { id
             ? "This creator video could not be found in your database-backed creator workspace."
             : "Checking access and preparing the video workspace."
       }
-      backHref={video === null ? "/creator/video/new" : activePlaylistId ? `/creator/playlists/${encodeURIComponent(activePlaylistId)}` : "/creator/dashboard"}
+      backHref={video === null ? "/creator/dashboard" : activePlaylistId ? `/creator/playlists/${encodeURIComponent(activePlaylistId)}` : "/creator/dashboard"}
       backLabel={video === null ? "Back to Workspace" : activePlaylistId ? "Back to playlist" : "Back to Dashboard"}
       mainClassName={shouldUseEditorLayout ? "w-full xl:fixed xl:inset-x-0 xl:bottom-0 xl:top-[73px] xl:overflow-hidden" : "w-full"}
       contentClassName={

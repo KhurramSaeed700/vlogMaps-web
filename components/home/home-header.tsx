@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react"
+import { useEffect, useMemo, useState, type FormEvent, type MouseEvent } from "react"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import { UserButton, useUser } from "@clerk/nextjs"
 import Link from "next/link"
@@ -31,30 +31,6 @@ interface HomeHeaderProps {
   onYoutubeUrlChange: (value: string) => void
 }
 
-function HomeHeaderSkeleton({ signedIn }: { signedIn?: boolean }) {
-  return (
-    <div className="absolute inset-x-0 top-0" role="status" aria-label="Loading navigation">
-      <div aria-hidden="true" className="mx-auto flex max-w-screen-2xl flex-wrap items-center gap-3 px-4 py-3 motion-safe:animate-pulse sm:flex-nowrap sm:gap-4">
-        <div className="flex shrink-0 items-center gap-3">
-          <div className="h-9 w-9 rounded-full bg-muted-foreground/15" />
-          <div className="h-5 w-[88px] rounded bg-muted-foreground/15" />
-        </div>
-        <div className="order-3 h-11 w-full rounded-xl bg-muted-foreground/10 sm:order-none sm:mx-auto sm:max-w-2xl" />
-        <div className="ml-auto flex shrink-0 items-center gap-3">
-          {signedIn !== false ? (
-            <>
-              <div className="hidden h-9 w-[10.5rem] rounded-full bg-muted-foreground/10 sm:block" />
-              <div className="h-9 w-9 rounded-full bg-muted-foreground/15" />
-            </>
-          ) : <div className="h-9 w-[72px] rounded-full bg-muted-foreground/10" />}
-          <div className="h-9 w-9 rounded-full bg-muted-foreground/10" />
-        </div>
-      </div>
-      <span className="sr-only">Loading navigation…</span>
-    </div>
-  )
-}
-
 export function HomeHeader({
   onReadyChange,
   isPending,
@@ -68,8 +44,6 @@ export function HomeHeader({
   const [isThemeMounted, setIsThemeMounted] = useState(false)
   const [isCreatorNavigationPending, setIsCreatorNavigationPending] = useState(false)
   const router = useRouter()
-  const avatarContainerRef = useRef<HTMLDivElement>(null)
-  const [readyAvatarUserId, setReadyAvatarUserId] = useState<string | null>(null)
   const { resolvedTheme, setTheme } = useTheme()
   const { isLoaded, isSignedIn, user } = useUser()
   const { preferences: playbackPreferences, updatePreferences: updatePlaybackPreferences } =
@@ -90,45 +64,10 @@ export function HomeHeader({
     preferenceOptions.find((option) => option.id === selectedPreference)?.label ?? "All"
   const previewVideoId = useMemo(() => extractYouTubeId(youtubeUrl), [youtubeUrl])
   const previewPlaylistId = useMemo(() => extractYouTubePlaylistId(youtubeUrl), [youtubeUrl])
-  const isNavbarReady = Boolean(isThemeMounted && isLoaded && !isCheckingCreatorAccess &&
-    (!isSignedIn || (user?.id && readyAvatarUserId === user.id)))
-
+  // Core navigation is present in the server HTML; account checks never hide it.
   useEffect(() => {
-    onReadyChange?.(isNavbarReady)
-  }, [isNavbarReady, onReadyChange])
-
-  useEffect(() => {
-    if (!isLoaded || !isSignedIn || !user?.id) {
-      setReadyAvatarUserId(null)
-      return
-    }
-    const container = avatarContainerRef.current
-    if (!container) return
-    const userId = user.id
-    let imageFailed = false
-    const checkAvatar = () => {
-      const button = container.querySelector("button")
-      if (!button) return
-      const image = button.querySelector("img")
-      if (user.hasImage && !image && !imageFailed) return
-      if (image && !image.complete) return
-      setReadyAvatarUserId(userId)
-    }
-    const handleImageEvent = (event: Event) => {
-      if (event.type === "error") imageFailed = true
-      checkAvatar()
-    }
-    const observer = new MutationObserver(checkAvatar)
-    observer.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] })
-    container.addEventListener("load", handleImageEvent, true)
-    container.addEventListener("error", handleImageEvent, true)
-    checkAvatar()
-    return () => {
-      observer.disconnect()
-      container.removeEventListener("load", handleImageEvent, true)
-      container.removeEventListener("error", handleImageEvent, true)
-    }
-  }, [isLoaded, isSignedIn, user?.id, user?.hasImage])
+    onReadyChange?.(true)
+  }, [onReadyChange])
 
   useEffect(() => {
     setIsThemeMounted(true)
@@ -144,13 +83,8 @@ export function HomeHeader({
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur" aria-busy={!isNavbarReady} data-home-header-ready={isNavbarReady}>
-      {!isNavbarReady && <HomeHeaderSkeleton signedIn={isLoaded ? Boolean(isSignedIn) : undefined} />}
-      <div
-        aria-hidden={!isNavbarReady}
-        inert={!isNavbarReady}
-        className={`mx-auto flex max-w-screen-2xl flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-4 ${isNavbarReady ? "" : "invisible pointer-events-none"}`}
-      >
+    <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur" data-home-header-ready={true}>
+      <div className="mx-auto flex max-w-screen-2xl flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap sm:gap-4">
         <TravelMapLogo textClassName="text-lg" />
 
         <div className="relative order-3 w-full sm:order-none sm:mx-auto sm:max-w-2xl">
@@ -158,7 +92,7 @@ export function HomeHeader({
             onSubmit={(event) => {
               if (previewPlaylistId && isApprovedCreator) {
                 event.preventDefault()
-                router.push(`/creator/video/new?${new URLSearchParams({ url: youtubeUrl.trim() })}`)
+                router.push(`/creator/dashboard?${new URLSearchParams({ url: youtubeUrl.trim() })}`)
               } else onSubmit(event)
             }}
             className="flex h-11 w-full items-center gap-2 rounded-xl border border-input bg-muted/30 px-3 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20"
@@ -195,10 +129,13 @@ export function HomeHeader({
         <div className="ml-auto flex items-center gap-3">
           <ReportProblemButton compact />
           {!isLoaded ? (
-            <div className="h-9 w-[72px] sm:h-10" aria-hidden="true" />
+            <div role="status" aria-label="Loading account" className="flex shrink-0 items-center gap-3">
+              <span aria-hidden="true" className="hidden h-9 w-[10.5rem] rounded-full bg-muted motion-safe:animate-pulse sm:block" />
+              <span aria-hidden="true" className="h-9 w-9 rounded-full bg-muted motion-safe:animate-pulse" />
+            </div>
           ) : isSignedIn ? (
             <>
-              {!isCheckingCreatorAccess && (
+              {isCheckingCreatorAccess ? <span role="status" aria-label="Loading creator access" className="hidden h-9 w-[10.5rem] shrink-0 rounded-full bg-muted motion-safe:animate-pulse sm:block" /> : (
                 <Link
                   href={creatorCtaHref}
                   className="hidden shrink-0 sm:block"
@@ -222,7 +159,7 @@ export function HomeHeader({
                   </Button>
                 </Link>
               )}
-              <div ref={avatarContainerRef} className="h-9 w-9 shrink-0">
+              <div className="h-9 w-9 shrink-0 rounded-full bg-muted">
               <UserButton
                 signInUrl="/auth/login"
                 appearance={{

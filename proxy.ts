@@ -9,5 +9,5 @@ export default clerkMiddleware(async (auth, req) => {
 })
 
 export const config = {
-  matcher: ["/", "/creator/:path*", "/api/:path*", "/trpc/:path*"],
+  matcher: ["/", "/playlists/:path*", "/creator/:path*", "/api/:path*", "/trpc/:path*"],
 }

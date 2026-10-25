@@ -29,7 +29,7 @@ export function YouTubeLinkPreview({ url, userId, isCreator }: { url: string; us
   }, [requestKey, url])
   const data = current?.data
   const thumbnail = data?.thumbnail || (videoId ? getYouTubeThumbnailUrl(videoId) : null)
-  const creatorHref = data?.editVideoId ? `/creator/video/${encodeURIComponent(data.editVideoId)}/edit` : `/creator/video/new?${new URLSearchParams({ url: url.trim() })}`
+  const creatorHref = data?.editVideoId ? `/creator/video/${encodeURIComponent(data.editVideoId)}/edit` : `/creator/dashboard?${new URLSearchParams({ url: url.trim() })}`
   return (
     <div className="pointer-events-none absolute left-0 right-0 top-full z-50 pt-2">
       <div aria-label={`YouTube ${kind} preview`} className="pointer-events-auto flex w-full overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl">

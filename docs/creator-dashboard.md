@@ -86,3 +86,23 @@ Choosing an action in the compact bulk toolbar immediately changes uploaded vide
 ### Editor tutorial
 
 The editor guide uses short text without decorative illustrations or practice panels. Playback controls appear as shortcut badges; Point, Stop and Flight are explained in a list. The guide highlights the complete map search form, including its search button. Settings → Keybindings opens the same shortcut panel as the keyboard icon. Skip, Back and Next remain available; the editor hides the chapter dropdown.
+
+### Uploaded playlists on Home
+
+Home displays uploaded playlist episodes as individual video cards and adds a playlist card with the series name and visible video count. Opening the playlist lists its visible uploaded episodes in imported order. The viewer playlist uses the same visibility-checked feed as Home, never draft episodes, and returns 404 when no visible members remain. Legacy playlist titles are preserved through YouTube metadata hydration.
+
+Public playlist cards open the shared Watch player and map. A compact playlist bar provides previous/next navigation and a responsive episode chooser. Episode links retain the selected video in the URL; finishing an episode automatically plays the next available episode in order. Only Home-visible uploaded episodes are included, in imported playlist order.
+
+The former `/creator/video/new` library page redirects to `/creator/dashboard`, preserving any supplied YouTube URL. Video creation and playlist import previews live directly in the dashboard; navigation links no longer open a separate video workspace.
+
+### Manage playlists
+
+Use **New playlist** on the dashboard to name a playlist and select at least one library video. **Edit playlist** is available on playlist cards, content rows and the playlist detail page. The searchable picker supports selecting all matching results, adding/removing videos and renaming. Single-video menus and bulk selections offer **Add to playlist**, with an existing-playlist chooser or a new-playlist option. A video may appear in multiple playlists.
+
+Changes save atomically to the creator-owned video tags, including a separate title and order for each playlist. Other memberships, video visibility and maps are preserved. Removing every member removes the playlist grouping, with an explanation before saving; videos remain in the library. These controls organize TravelMap playlists and do not modify the source playlist on YouTube. Managed playlists use saved library order for mapping and require no YouTube playlist lookup.
+
+Public `/playlists/*` routes initialize Clerk session middleware without requiring sign-in, matching Home visibility checks. Playlist playback starts at episode one (or the selected episode link), advances when a video ends, and stops at the last episode.
+
+After a journey preview automatically switches to tracking, Watch and Edit offer **Watch preview again** for 10 seconds. The control fades in and replays the existing map overview without seeking the video, then returns to tracking its current playback position. Its timer is cleaned up on dismissal or unmount and runs outside the map animation loop.
+
+Illustrative flights between Asia/Oceania and the Americas prefer a bounded-latitude Pacific corridor; Europe/Africa connections prefer an Atlantic corridor. Watch previews, live tracking and Edit use the same generated coordinates. These curves are illustrative ocean preferences, not verified airline flight plans. Flight timestamps and airports remain unchanged.
