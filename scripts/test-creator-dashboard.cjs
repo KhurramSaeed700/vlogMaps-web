@@ -203,12 +203,12 @@ async function testBulkSave() {
     async (id,action)=>{requested.push([action,id]);if(id==='bad')throw Error('offline');return {updated:true,video:{id}}},
     update=>updates.push(update([])), (old,next)=>next, message=>messages.push(message))
   const sample=[{id:'good',status:'published'},{id:'bad',status:'published'},{id:'draft',status:'draft'},{id:'readonly',status:'published',viewerCanEdit:false}]
-  assert.deepEqual(await run(sample,'unlisted'),['good'])
-  assert.deepEqual(requested,[['unlisted','good'],['unlisted','bad']])
+  assert.deepEqual(await run(sample,'unlisted'),['good','draft'])
+  assert.deepEqual(requested,[['unlisted','good'],['unlisted','bad'],['unlisted','draft']])
   assert.ok(messages[0].includes('1 failed'))
   requested.length=0
-  assert.deepEqual(await run([sample[0]],'draft'),['good'])
-  assert.deepEqual(requested,[['draft','good']])
-  console.log('Bulk saves passed: busy controls, partial failures, retry selection, owner/editable filtering, visibility and move-to-draft requests.')
+  assert.deepEqual(await run([sample[0]],'private'),['good'])
+  assert.deepEqual(requested,[['private','good']])
+  console.log('Bulk saves passed: busy controls, partial failures, retry selection, owner/editable filtering, visibility on legacy drafts and private requests.')
 }
 testBulkSave().catch(error=>{console.error(error);process.exitCode=1})

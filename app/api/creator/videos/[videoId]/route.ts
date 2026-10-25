@@ -95,7 +95,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     try {
       const video = await setCreatorVideoVisibilityFromDb(videoId, creator.ownerUserIds, payload.visibility)
       return NextResponse.json(
-        video ? { configured: true, updated: true, video } : { configured: true, updated: false, video: null, error: "Uploaded video not found." },
+        video ? { configured: true, updated: true, video } : { configured: true, updated: false, video: null, error: "Video not found." },
         { status: video ? 200 : 404, headers: { "Cache-Control": "private, no-store" } },
       )
     } catch (error) {

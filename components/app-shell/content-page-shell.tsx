@@ -45,15 +45,15 @@ export function ContentPageShell({
   return (
     <div className={pageClassName}>
       <header className="border-b border-border bg-background/80 backdrop-blur-sm">
-        <div className="container mx-auto flex items-center justify-between px-4 py-4">
+        <div className="container mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <TravelMapLogo />
             {headerLeadingActionsId ? (
               <div id={headerLeadingActionsId} className="flex shrink-0 items-center" />
             ) : null}
           </div>
-          <div className="flex items-center gap-2">
-            {headerActionsId ? <div id={headerActionsId} className="flex items-center gap-2" /> : null}
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+            {headerActionsId ? <div id={headerActionsId} className="flex max-w-full flex-wrap items-center gap-2" /> : null}
             {showThemeToggle ? <ThemeToggle /> : null}
             <Link href={backHref} className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground">
               <ArrowLeft className="h-4 w-4" />

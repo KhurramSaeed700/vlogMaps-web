@@ -1,7 +1,6 @@
 "use client"
 
 import { getFlightRenderSegments } from "@/lib/flight-render-geometry"
-import { PreviewReplayButton, usePreviewReplayOffer } from "@/components/maps/preview-replay"
 
 import { buildStopRegionCameraPlan, getStopRegionCameraAtTime, type StopRegionCameraWindow } from "@/lib/stop-region-camera"
 import { getTripPreviewTiming } from "@/lib/trip-preview"
@@ -1047,8 +1046,6 @@ export function MapboxLocationPicker({
   const [activeSearchIndex, setActiveSearchIndex] = useState(-1)
   const [isSearching, setIsSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
-  const previewReplay = usePreviewReplayOffer()
-  const [previewReplayCycle, setPreviewReplayCycle] = useState(0)
   const [isTrackingTraveler, setIsTrackingTraveler] = useState(false)
   const [isTrackingAutoStartCancelled, setIsTrackingAutoStartCancelled] = useState(false)
   const [trackingLoadingState, setTrackingLoadingState] = useState<TrackingLoadingState | null>(null)
@@ -2041,7 +2038,6 @@ export function MapboxLocationPicker({
     clearTrackingAutoStartTimer()
     trackingAutoStartDeadlineRef.current = null
     enableTravelerTracking()
-    previewReplay.offer()
   }
 
   const disableTravelerTracking = () => {
@@ -2053,16 +2049,6 @@ export function MapboxLocationPicker({
     setIsTrackingTraveler(false)
     cancelTrackingLoading()
     stopTravelerTrackingLoop()
-  }
-
-  const replayJourneyPreview = () => {
-    if (!mapInstanceRef.current || !isLoaded || !hasTrackableTraveler) return
-    previewReplay.dismiss()
-    disableTravelerTracking()
-    trackingAutoStartCancelledRef.current = false
-    trackingAutoStartDeadlineRef.current = null
-    setIsTrackingAutoStartCancelled(false)
-    setPreviewReplayCycle(cycle => cycle + 1)
   }
 
   const suspendTravelerTrackingForInteraction = () => {
@@ -2121,7 +2107,7 @@ export function MapboxLocationPicker({
     }, remainingMs)
 
     return clearTrackingAutoStartTimer
-  }, [hasTrackableTraveler, isLoaded, editorTrackingAutoStartDurationMs, points, previewReplayCycle])
+  }, [hasTrackableTraveler, isLoaded, editorTrackingAutoStartDurationMs, points])
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -4172,7 +4158,6 @@ export function MapboxLocationPicker({
         </div>
       )}
 
-      {previewReplay.visible && isTrackingTraveler && <PreviewReplayButton onReplay={replayJourneyPreview} />}
 
       {trackingLoadingState && (
         <div

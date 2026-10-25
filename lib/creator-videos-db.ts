@@ -177,7 +177,6 @@ export async function saveCreatorVideoToDb({
   ownerUserId,
   ownerUserIds,
   state,
-  publish = false,
 }: {
   video: TravelVideo
   ownerUserId: string
@@ -191,7 +190,7 @@ export async function saveCreatorVideoToDb({
   }
 
   const keyframes = state?.points?.length ? state.points.map(({ id: _id, ...point }) => point) : video.keyframes
-  const status = publish ? "published" : video.status
+  const status = "published" as const
   const editableOwnerUserIds = normalizeOwnerUserIds(ownerUserIds?.length ? ownerUserIds : ownerUserId)
 
   const savedVideo = await prisma.$transaction(async (tx) => {
@@ -215,6 +214,7 @@ export async function saveCreatorVideoToDb({
             mapViewCount: Math.max(0, Math.round(video.mapViews)),
             likeCount: Math.max(0, Math.round(video.likes)),
             status,
+            ...(existingVideo.status !== "published" ? { visibility: "private" } : {}),
             description: video.description,
             creatorName: video.creator,
             creatorChannelUrl: video.creatorChannelUrl,
@@ -234,7 +234,7 @@ export async function saveCreatorVideoToDb({
             mapViewCount: Math.max(0, Math.round(video.mapViews)),
             likeCount: Math.max(0, Math.round(video.likes)),
             status,
-            visibility: normalizeVideoVisibility(video.visibility),
+            visibility: video.visibility ? normalizeVideoVisibility(video.visibility) : "private",
             description: video.description,
             creatorName: video.creator,
             creatorChannelUrl: video.creatorChannelUrl,
@@ -308,6 +308,17 @@ export async function listCreatorVideosFromDb(ownerUserIds: OwnerUserIdInput, op
     orderBy: { createdAt: "desc" },
   })
 
+  // Retire the old upload gate for this creator's existing imports. Never expose drafts publicly.
+  const legacyDraftIds = videos.filter(video => video.status === "draft" && editableOwnerUserIds.includes(video.ownerUserId ?? "")).map(video => video.id)
+  if (legacyDraftIds.length) {
+    await prisma.video.updateMany({
+      where: { id: { in: legacyDraftIds }, ownerUserId: { in: editableOwnerUserIds }, status: "draft" },
+      data: { status: "published", visibility: "private" },
+    })
+    for (const video of videos) {
+      if (legacyDraftIds.includes(video.id)) { video.status = "published"; video.visibility = "private" }
+    }
+  }
   return videos.map((video) => rowToTravelVideo(video, { editableOwnerUserIds }))
 }
 
@@ -468,7 +479,8 @@ export async function unpublishCreatorVideoFromDb(videoId: string, ownerUserIds:
   const unpublishedVideo = await prisma.video.update({
     where: { id: video.id },
     data: {
-      status: "draft",
+      status: "published",
+      visibility: "private",
       updatedAt: new Date(),
     },
     include: {
@@ -490,9 +502,9 @@ export async function setCreatorVideoVisibilityFromDb(videoId: string, ownerUser
   return prisma.$transaction(async (tx) => {
     const changed = await tx.video.updateMany({
       where: {
-        AND: [getVideoLookup(videoId), { ownerUserId: { in: editableOwnerUserIds }, status: "published" }],
+        AND: [getVideoLookup(videoId), { ownerUserId: { in: editableOwnerUserIds } }],
       },
-      data: { visibility, updatedAt: new Date() },
+      data: { status: "published", visibility, updatedAt: new Date() },
     })
     if (!changed.count) return null
     const video = await tx.video.findFirst({

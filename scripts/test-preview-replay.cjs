@@ -14,7 +14,7 @@ render().offer();assert.equal(render().visible,true,'A completed replay can offe
 const watch=fs.readFileSync('components/maps/mapbox-travel-map.tsx','utf8')
 const editor=fs.readFileSync('components/maps/mapbox-location-picker.tsx','utf8')
 assert.match(watch,/startTrackingFromRouteIntroRef.current\(\)\s*previewReplay.offer\(\)/)
-assert.match(editor,/enableTravelerTracking\(\)\s*previewReplay.offer\(\)/)
+assert.doesNotMatch(editor,/PreviewReplayButton|usePreviewReplayOffer|previewReplay/,'Replay offer belongs only on the watch page')
 // Exercise the watch replay handoff without touching playback or its clock.
 const replaySource=watch.slice(watch.indexOf('  const replayRouteIntro ='),watch.indexOf('  startTrackingFromRouteIntroRef.current ='))
 const events=[];const ref=current=>({current})
@@ -23,4 +23,4 @@ const fn=new Function(...Object.keys(dependencies),ts.transpileModule(replaySour
 fn();assert.equal(dependencies.routeIntroDismissedRef.current,false);assert.equal(dependencies.isFollowingRef.current,false);assert.ok(events.some(e=>Array.isArray(e)&&e[0]==='preview'&&e[1]===123),'Preview hands back to current playback; video is not rewound')
 assert.ok(!events.includes('restore'))
 delete global.window
-console.log('Preview replay passed: auto-tracking offer, ten-second expiry, dismissal, cleanup, Watch/Edit parity and current-playback handoff.')
+console.log('Preview replay passed: auto-tracking offer, ten-second expiry, dismissal, cleanup, Watch-only placement and current-playback handoff.')

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import * as Menu from "@radix-ui/react-dropdown-menu"
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, Circle, CloudOff, Eye, Globe, Link2, Loader2, Lock, MapPin, ListVideo, MoreHorizontal, Search, SlidersHorizontal, Trash2, UploadCloud, X } from "lucide-react"
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, Circle, Eye, Globe, Link2, Loader2, Lock, MapPin, ListVideo, MoreHorizontal, Search, SlidersHorizontal, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -26,24 +26,22 @@ export interface CreatorContentTableProps {
   videos: TravelVideo[]
   loading: boolean
   pendingId: string | null
-  onBulkEdit: (videos: TravelVideo[], action: VideoVisibility | "draft") => Promise<string[]>
+  onBulkEdit: (videos: TravelVideo[], action: VideoVisibility) => Promise<string[]>
   onEdit: (video: TravelVideo) => void
   onVisibility: (video: TravelVideo, value: VideoVisibility) => void
-  onUpload: (video: TravelVideo) => void
-  onUnpublish: (id: string, title: string) => void
   onDelete: (id: string, title: string) => void
 }
 const menuClass = "z-50 w-64 rounded-lg border border-border bg-popover p-1 text-sm text-popover-foreground shadow-lg"
 const itemClass = "flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 outline-none focus:bg-accent data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
 const emptyPlaylists: CreatorPlaylist[] = []
 
-export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisibility, onUpload, onUnpublish, onDelete, onBulkEdit, onManagePlaylist, onAddToPlaylist, playlistId, playlists = emptyPlaylists }: CreatorContentTableProps) {
+export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisibility, onDelete, onBulkEdit, onManagePlaylist, onAddToPlaylist, playlistId, playlists = emptyPlaylists }: CreatorContentTableProps) {
   const [filters, setFilters] = useState<DashboardFilters>({ query: "", status: "all", visibility: "all", sort: playlistId ? "playlist" : "date", ascending: Boolean(playlistId) })
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(10)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
-  const [bulkAction, setBulkAction] = useState<VideoVisibility | "draft">("private")
+  const [bulkAction, setBulkAction] = useState<VideoVisibility>("private")
   const selectedVideos = videos.filter(video => selectedIds.has(video.id) && video.viewerCanEdit !== false)
   const bulkDisabled = bulkBusy || Boolean(pendingId)
   const toggleSelection = (id: string, checked: boolean) => setSelectedIds(current => {
@@ -51,8 +49,8 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
     if (checked) next.add(id); else next.delete(id)
     return next
   })
-  const applyBulkEdit = async (action: VideoVisibility | "draft") => {
-    if (bulkDisabled || !selectedVideos.some(video => video.status === "published")) return
+  const applyBulkEdit = async (action: VideoVisibility) => {
+    if (bulkDisabled) return
     setBulkBusy(true)
     try {
       const savedIds = await onBulkEdit(selectedVideos, action)
@@ -129,7 +127,7 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
 
   return <section aria-label="Creator videos" aria-busy={loading} className="min-w-0">
     <div className="flex gap-6 border-b border-border" aria-label="Video status filters">
-      {([['all', 'All videos'], ['published', 'Uploaded'], ['draft', 'Drafts']] as const).map(([status, label]) => <Button key={status} variant="ghost" onClick={() => updateFilters({ status })} aria-pressed={filters.status === status}
+      {([['all', 'All videos']] as const).map(([status, label]) => <Button key={status} variant="ghost" onClick={() => updateFilters({ status })} aria-pressed={filters.status === status}
         className={`h-12 rounded-none border-b-2 px-1 hover:bg-transparent ${filters.status === status ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground"}`}>
         {label}<span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{content.filter(video => matchesStatus(video, status)).length}</span>
       </Button>)}
@@ -156,17 +154,17 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
       {onAddToPlaylist && <Button variant="outline" size="sm" disabled={bulkDisabled} onClick={() => onAddToPlaylist(selectedVideos)}><ListVideo className="mr-2 h-4 w-4" />Add to playlist</Button>}
       <Menu.Root>
         <Menu.Trigger asChild><Button variant="outline" size="sm" disabled={bulkDisabled} aria-label="Bulk edit action" className="h-9 min-w-44 justify-between gap-3 rounded-lg bg-background shadow-sm">
-          <span className="flex items-center gap-2">{bulkAction === 'draft' ? <CloudOff className="h-4 w-4 text-muted-foreground" /> : bulkAction === 'private' ? <Lock className="h-4 w-4 text-muted-foreground" /> : bulkAction === 'unlisted' ? <Link2 className="h-4 w-4 text-muted-foreground" /> : <Globe className="h-4 w-4 text-muted-foreground" />}{bulkBusy ? 'Saving…' : bulkAction === 'draft' ? 'Move to drafts' : videoVisibilityLabels[bulkAction]}</span>
+          <span className="flex items-center gap-2">{bulkAction === 'private' ? <Lock className="h-4 w-4 text-muted-foreground" /> : bulkAction === 'unlisted' ? <Link2 className="h-4 w-4 text-muted-foreground" /> : <Globe className="h-4 w-4 text-muted-foreground" />}{bulkBusy ? 'Saving…' : videoVisibilityLabels[bulkAction]}</span>
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </Button></Menu.Trigger>
         <Menu.Portal><Menu.Content align="start" sideOffset={6} className={`${menuClass} max-w-[calc(100vw-2rem)] rounded-xl p-1.5`}>
           <Menu.Label className="px-2.5 py-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Bulk action</Menu.Label>
           <Menu.RadioGroup value={bulkAction}>
-            {([...videoVisibilities, 'draft'] as const).map(value => {
-              const ActionIcon = value === 'draft' ? CloudOff : value === 'private' ? Lock : value === 'unlisted' ? Link2 : Globe
-              return <Menu.RadioItem key={value} value={value} disabled={bulkDisabled || !selectedVideos.some(video => video.status === 'published')} onSelect={() => { setBulkAction(value); void applyBulkEdit(value) }} className={`${itemClass} gap-3 rounded-lg px-2.5 py-2.5 data-[state=checked]:bg-accent/70`}>
+            {videoVisibilities.map(value => {
+              const ActionIcon = value === 'private' ? Lock : value === 'unlisted' ? Link2 : Globe
+              return <Menu.RadioItem key={value} value={value} disabled={bulkDisabled} onSelect={() => { setBulkAction(value); void applyBulkEdit(value) }} className={`${itemClass} gap-3 rounded-lg px-2.5 py-2.5 data-[state=checked]:bg-accent/70`}>
                 <ActionIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="flex-1"><span className="font-medium">{value === 'draft' ? 'Move to drafts' : videoVisibilityLabels[value]}</span><span className="mt-0.5 block text-xs text-muted-foreground">{value === 'draft' ? 'Unpublish and keep editing' : value === 'private' ? 'Only you can watch' : value === 'unlisted' ? 'Anyone with the link' : 'Visible to everyone'}</span></span>
+                <span className="flex-1"><span className="font-medium">{videoVisibilityLabels[value]}</span><span className="mt-0.5 block text-xs text-muted-foreground">{value === 'private' ? 'Only you can watch' : value === 'unlisted' ? 'Anyone with the link' : 'Visible to everyone'}</span></span>
                 <span className="flex h-4 w-4 shrink-0 items-center justify-center"><Menu.ItemIndicator><Check className="h-4 w-4" /></Menu.ItemIndicator></span>
               </Menu.RadioItem>
             })}
@@ -174,7 +172,6 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
         </Menu.Content></Menu.Portal>
       </Menu.Root>
       <Button size="sm" variant="ghost" disabled={bulkDisabled} onClick={() => setSelectedIds(new Set())}>Clear selection</Button>
-      {selectedVideos.some(video => video.status !== 'published') && <span className="text-xs text-muted-foreground">Only uploaded videos will be updated. Drafts stay selected.</span>}
     </div>}
     <div className="overflow-x-auto">
       <table className="w-full min-w-[980px] border-collapse text-sm">
@@ -208,7 +205,7 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
                 <div className="relative h-[68px] w-[120px] shrink-0 overflow-hidden rounded-md bg-muted"><Image src={video.thumbnail || '/placeholder.svg'} alt="" fill sizes="120px" className="object-cover" /><span className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded bg-black/80 px-1 text-[10px] text-white"><ListVideo className="h-3 w-3" />{playlist.videos.length} videos</span></div>
                 <div className="min-w-0"><p className="line-clamp-2 font-medium leading-5 hover:underline">{playlist.title}</p><p className="mt-1 text-xs text-muted-foreground">Playlist · {playlist.videos.length} videos</p><p className={`mt-1 text-[11px] ${playlistMapping ? "text-yellow-700 dark:text-yellow-300" : playlistComplete ? "text-teal-700 dark:text-teal-300" : "text-muted-foreground"}`}><span className="text-teal-700 dark:text-teal-300">{playlistComplete} mapped</span> · <span className="text-yellow-700 dark:text-yellow-300">{playlistMapping} mapping</span> · <span className="text-muted-foreground">{playlistUnmapped} not mapped{playlistChecking > 0 ? ` · ${playlistChecking} checking…` : ''}</span></p></div>
               </Link></td>
-              <td className="px-3 py-4 text-muted-foreground">{playlist.uploadedCount === 0 ? 'Draft' : playlist.uploadedCount === playlist.videos.length ? 'Uploaded' : 'Partly uploaded'}</td>
+              <td className="px-3 py-4 text-muted-foreground">{new Set(playlist.videos.map(member => normalizeVideoVisibility(member.visibility))).size === 1 ? videoVisibilityLabels[normalizeVideoVisibility(playlist.videos[0]?.visibility)] : 'Mixed visibility'}</td>
               <td className="px-3 py-4 text-right tabular-nums">{video.keyframes.length}</td><td className="whitespace-nowrap px-3 py-4 text-right tabular-nums">{formatTravelDistance(travelDistances.get(video.id) || 0)}</td><td className="px-3 py-4 text-right tabular-nums">{formatCompactNumber(video.mapViews || 0)}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatCompactNumber(video.views)}</td>
               <td className="px-3 py-4 text-right">{onManagePlaylist && <Button variant="ghost" size="sm" onClick={() => onManagePlaylist(playlist)}>Edit playlist</Button>}<Button asChild variant="ghost" size="sm"><Link href={creatorPlaylistHref(playlist.id)}>Open playlist<ChevronRight className="ml-1 h-4 w-4" /></Link></Button></td>
@@ -221,7 +218,7 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
             const Icon = visibility === 'private' ? Lock : visibility === 'unlisted' ? Link2 : Globe
             const busy = pendingId === video.id
             const disabled = bulkDisabled
-            return <tr key={video.id} aria-selected={selectedIds.has(video.id)} className={`group border-b border-border transition-colors hover:bg-muted/35 ${editable ? 'cursor-pointer' : ''} ${mappingStatus === 'mapped' ? 'bg-teal-500/[0.035]' : mappingStatus === 'mapping' ? 'bg-yellow-500/[0.035]' : ''}`}
+            return <tr key={video.id} aria-selected={selectedIds.has(video.id)} className={`group border-b border-border transition-colors hover:bg-muted/35 ${editable ? 'cursor-pointer' : ''}`}
               onClick={event => { if (editable && !(event.target as HTMLElement).closest('a,button,input,[role="menuitem"],[role="menuitemradio"]')) onEdit(video) }}>
               <td className="px-3 py-4 text-center"><Checkbox aria-label={`Select ${video.title}`} checked={selectedIds.has(video.id)} disabled={!editable || bulkDisabled} onCheckedChange={checked => toggleSelection(video.id, checked === true)} /></td>
               <td className="px-3 py-4"><div className="flex items-start gap-4">
@@ -236,7 +233,7 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
                 </div>
               </div></td>
               <td className="px-3 py-4">
-                {uploaded && editable ? <Menu.Root><Menu.Trigger asChild><Button variant="ghost" size="sm" disabled={disabled} aria-label={`Change visibility for ${video.title}`} className="-ml-2 gap-2 px-2 font-normal">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4 text-muted-foreground" />}{busy ? 'Saving…' : videoVisibilityLabels[visibility]}<ChevronDown className="h-3 w-3 text-muted-foreground" /></Button></Menu.Trigger>
+                {editable ? <Menu.Root><Menu.Trigger asChild><Button variant="ghost" size="sm" disabled={disabled} aria-label={`Change visibility for ${video.title}`} className="-ml-2 gap-2 px-2 font-normal">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4 text-muted-foreground" />}{busy ? 'Saving…' : videoVisibilityLabels[visibility]}<ChevronDown className="h-3 w-3 text-muted-foreground" /></Button></Menu.Trigger>
                   <Menu.Portal><Menu.Content className={menuClass} sideOffset={6}><Menu.Label className="px-3 py-2 text-xs text-muted-foreground">Visibility on TravelMap</Menu.Label><Menu.RadioGroup value={visibility} onValueChange={value => { if (isVideoVisibility(value)) onVisibility(video, value) }}>
                     {videoVisibilities.map(value => <Menu.RadioItem key={value} value={value} disabled={disabled} className={itemClass}><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-muted-foreground"><Menu.ItemIndicator><Circle className="h-2 w-2 fill-current" /></Menu.ItemIndicator></span><span>{videoVisibilityLabels[value]}<span className="mt-0.5 block text-xs text-muted-foreground">{videoVisibilityDescriptions[value]}</span></span></Menu.RadioItem>)}
                   </Menu.RadioGroup></Menu.Content></Menu.Portal>
@@ -247,13 +244,11 @@ export function CreatorContentTable({ videos, loading, pendingId, onEdit, onVisi
               <td className="px-3 py-4 text-right tabular-nums">{formatCompactNumber(video.mapViews || 0)}</td>
               <td className="px-3 py-4 text-right tabular-nums">{playlist ? formatCompactNumber(video.views) : youtubeViews[video.youtubeId] != null ? formatCompactNumber(youtubeViews[video.youtubeId]!) : video.views > 0 ? formatCompactNumber(video.views) : video.youtubeId in youtubeViews ? "—" : "…"}</td>
               <td className="px-3 py-4"><div className="flex justify-end gap-1">
-                {!uploaded && editable && <Button variant="ghost" size="icon" aria-label={`Upload ${video.title}`} title="Upload video" disabled={disabled} onClick={() => onUpload(video)}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}</Button>}
                 <Button asChild variant="ghost" size="icon" title="Preview"><Link aria-label={`Preview ${video.title}`} href={`/watch/${video.id}`}><Eye className="h-4 w-4" /></Link></Button>
                 <Menu.Root><Menu.Trigger asChild><Button variant="ghost" size="icon" aria-label={`Open options for ${video.title}`}><MoreHorizontal className="h-4 w-4" /></Button></Menu.Trigger><Menu.Portal><Menu.Content align="end" className={menuClass} sideOffset={6}>
                   {editable && <Menu.Item asChild><Link className={itemClass} href={editHref(video)}>Edit video</Link></Menu.Item>}
                   {editable && onAddToPlaylist && <Menu.Item className={itemClass} disabled={disabled} onSelect={() => onAddToPlaylist([video])}><ListVideo className="h-4 w-4" />Add to playlist</Menu.Item>}
 
-                  {uploaded && editable && <Menu.Item className={itemClass} disabled={disabled} onSelect={() => onUnpublish(video.id, video.title)}><CloudOff className="h-4 w-4" />Move to drafts</Menu.Item>}
                   <Menu.Item className={`${itemClass} text-destructive`} disabled={!editable || disabled} onSelect={() => onDelete(video.id, video.title)}><Trash2 className="h-4 w-4" />Delete video</Menu.Item>
                 </Menu.Content></Menu.Portal></Menu.Root>
               </div></td>

@@ -66,7 +66,7 @@ export function PlaylistImporter({ url, onImported, onBusyChange }: { url: strin
             id: crypto.randomUUID(), youtubeId: item.youtubeId, title: item.title, creator: item.creator,
             creatorChannelUrl: item.channelId ? `https://www.youtube.com/channel/${item.channelId}` : `https://www.youtube.com/watch?v=${item.youtubeId}`,
             thumbnail: getYouTubeThumbnailUrl(item.youtubeId), durationSeconds: item.durationSeconds || 0,
-            views: 0, mapViews: 0, likes: 0, status: "draft", visibility: "private",
+            views: 0, mapViews: 0, likes: 0, status: "published", visibility: "private",
             createdAt: new Date().toISOString(), description: `Imported from ${playlist.title}.`, locations: [], keyframes: [], tags: ["creator", `playlist:${playlist.id}`, `playlist-position:${item.position}`, `playlist-title:${playlist.title.slice(0, 65)}`],
           }
           try {
@@ -79,7 +79,7 @@ export function PlaylistImporter({ url, onImported, onBusyChange }: { url: strin
       }
       if (mountedRef.current) {
         setSelected(previous => new Set([...previous].filter(id => !known.has(id))))
-        setMessage(`${imported} imported as drafts.${failed ? ` ${failed} failed—retry to import the remaining videos.` : stopRef.current ? " Import stopped. You can continue with the remaining videos." : " Ready to map."}`)
+        setMessage(`${imported} imported as private videos.${failed ? ` ${failed} failed—retry to import the remaining videos.` : stopRef.current ? " Import stopped. You can continue with the remaining videos." : " Ready to map."}`)
         const updated = await fetchCreatorCloudVideos()
         if (mountedRef.current && updated.configured && !updated.error) onImported(updated.videos)
       }
@@ -93,7 +93,7 @@ export function PlaylistImporter({ url, onImported, onBusyChange }: { url: strin
       <div className="flex items-center gap-2"><ListVideo className="h-5 w-5" /><h2 className="font-semibold">{playlist?.title || "Playlist import"}</h2></div>
       {loading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading playlist…</p>}
       {playlist && <>
-        <p className="text-sm text-muted-foreground">{playlist.items.length} available videos · {playlist.items.length - available.length} already in your library. Imported videos are private drafts.</p>
+        <p className="text-sm text-muted-foreground">{playlist.items.length} available videos · {playlist.items.length - available.length} already in your library. Imported videos are private by default. Choose Public in your dashboard when you’re ready.</p>
         {playlist.unavailableCount > 0 && <p className="text-xs text-muted-foreground">{playlist.unavailableCount} unavailable videos skipped.</p>}
         {playlist.truncated && <p className="text-sm text-amber-600 dark:text-amber-400">Showing the first 500 playlist entries.</p>}
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={busy || !available.length} checked={available.length > 0 && available.every(item => selected.has(item.youtubeId))} onChange={event => setSelected(new Set(event.target.checked ? available.map(item => item.youtubeId) : []))} />Select all new videos</label>

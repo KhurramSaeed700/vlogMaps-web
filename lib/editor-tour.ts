@@ -108,7 +108,7 @@ export const editorTourSteps = [
   {
     section: "Save & preview",
     selectors: ['[data-editor-tour="timestamps"]'],
-    title: "Understand drafts and saving",
+    title: "Understand autosave",
     description: "Completed changes autosave. Edit panels still need Save. Check connection warnings to make sure cloud sync finishes.",
   },
   {

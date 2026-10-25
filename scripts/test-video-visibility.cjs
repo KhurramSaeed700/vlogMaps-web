@@ -85,7 +85,8 @@ async function main() {
     assert.equal(Boolean(await mobile.getPublishedMobileRoute(row.id)), accessible)
   }
   assert.equal(await db.setCreatorVideoVisibilityFromDb('published-public', 'stranger', 'private'), null)
-  assert.equal(await db.setCreatorVideoVisibilityFromDb('draft-public', 'owner', 'private'), null)
+  assert.equal((await db.setCreatorVideoVisibilityFromDb('draft-public', 'owner', 'private')).status, 'published')
+  assert.equal(await db.getCreatorVideoFromDb('draft-public'), null, 'Legacy imports stay private after activation')
   assert.equal((await db.setCreatorVideoVisibilityFromDb('published-public', ['clerk-id', 'owner'], 'private')).visibility, 'private')
   assert.equal(await db.getCreatorVideoFromDb('published-public'), null)
   await db.setCreatorVideoVisibilityFromDb('published-public', 'owner', 'unlisted')
@@ -94,7 +95,16 @@ async function main() {
   await db.setCreatorVideoVisibilityFromDb('published-public', 'owner', 'public')
   assert.equal((await db.listPublishedCreatorVideosFromDb()).length, 1)
 
-  const parser = load('lib/creator-video-payload.ts', {
+  const previousPublic = rows.find(row => row.id === 'published-public').visibility
+  const foreignDraft = {...rows.find(row => row.id === 'draft-unlisted'), id:'foreign-draft', appId:'foreign-draft', ownerUserId:'stranger'}
+  rows.push(foreignDraft)
+  const library = await db.listCreatorVideosFromDb('owner')
+  assert.ok(library.every(video => video.status === 'published'), 'Existing creator imports are automatically available')
+  assert.equal(rows.find(row => row.id === 'draft-unlisted').visibility, 'private', 'Old drafts cannot accidentally become public or link-accessible')
+  assert.equal(rows.find(row => row.id === 'published-public').visibility, previousPublic, 'Existing visibility is preserved')
+  assert.equal(foreignDraft.status, 'draft', 'Another creator is never migrated')
+
+  const parser = load('lib/creator-video-payload.ts' , {
     '@/lib/stop-regions': load('lib/stop-regions.ts'),
     zod: require('zod'), '@/lib/video-locations': { maxVideoLocationSummaries: 40, summarizeVideoLocations: value => value },
   })
@@ -152,7 +162,18 @@ async function main() {
   assert.equal(unpublished, 1)
   const schema = fs.readFileSync(path.join(__dirname, '../lib/creator-videos-db.ts'), 'utf8')
   const updateBlock = schema.slice(schema.indexOf('? await tx.video.update('), schema.indexOf(': await tx.video.create('))
-  assert.equal(updateBlock.includes('visibility:'), false, 'stale editor saves must not overwrite visibility')
+  assert.equal(updateBlock.replace('...(existingVideo.status !== "published" ? { visibility: "private" } : {}),', '').includes('visibility:'), false, 'stale saves preserve existing published visibility')
+  let savedRow, updateData
+  const tx = {video:{findFirst:async()=>savedRow, create:async({data})=>(savedRow={...data,id:'new-import',editorState:null,keyframes:[]}),update:async({data})=>{updateData=data;Object.assign(savedRow,data);return savedRow},findUnique:async()=>savedRow},videoKeyframe:{deleteMany:async()=>{}}}
+  const saveDb=load('lib/creator-videos-db.ts',{'@/lib/prisma':{getPrisma:()=>({$transaction:fn=>fn(tx)})},'@/lib/database':{},'@/lib/video-locations':{summarizeVideoLocations:value=>value,summarizeKeyframeLocations:()=>[]}})
+  const imported={id:'new-import',title:'Imported',youtubeId:'abcdefghijk',keyframes:[],views:0,mapViews:0,likes:0,durationSeconds:0,status:'draft'}
+  const saved=await saveDb.saveCreatorVideoToDb({video:imported,ownerUserId:'owner'})
+  assert.equal(saved.status,'published');assert.equal(saved.visibility,'private','An import without visibility defaults private')
+  savedRow.visibility='unlisted'
+  await saveDb.saveCreatorVideoToDb({video:{...imported,visibility:'public'},ownerUserId:'owner'})
+  assert.equal(savedRow.visibility,'unlisted','Stale autosave cannot publish or reset existing visibility')
+  assert.equal(updateData.visibility,undefined)
+
   const mobileHeaders = fs.readFileSync(path.join(__dirname, '../lib/mobile-api-response.ts'), 'utf8')
   assert.match(mobileHeaders, /"Cache-Control": "no-store"/)
   console.log('Visibility tests passed: public-only discovery, unlisted links, owner-only private/drafts, mobile route protection, ownership updates, validation, legacy unpublish, stale editor saves and no stale cache.')

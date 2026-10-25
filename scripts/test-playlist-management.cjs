@@ -48,15 +48,15 @@ async function main(){
  const state=[],effects=[];let cursor=0
  const jsx=(type,props)=>({type,props})
  const controls=load('components/creator/playlist-mapping-controls.tsx',{
-  react:{memo:f=>f,useState:initial=>{const slot=cursor++;state[slot]=initial;return[initial,v=>state[slot]=v]},useEffect:f=>effects.push(f),useRef:current=>({current})},
-  'react/jsx-runtime':{jsx,jsxs:jsx},'next/navigation':{useRouter:()=>({})},'@radix-ui/react-dialog':{},'@/components/ui/button':{Button:'button'},
+  react:{memo:f=>f,useMemo:f=>f(),useState:initial=>{const slot=cursor++;state[slot]=initial;return[initial,v=>state[slot]=v]},useEffect:f=>effects.push(f),useRef:current=>({current})},
+  'react-dom':{createPortal:node=>node},'lucide-react':{ArrowRight:'svg'},'react/jsx-runtime':{jsx,jsxs:jsx},'next/navigation':{useRouter:()=>({})},'@radix-ui/react-dialog':{},'@/components/ui/button':{Button:'button'},'@/components/ui/input':{Input:'input'},'@/lib/video-mapping-status':load('lib/video-mapping-status.ts'),'@/lib/demo-data':{formatDuration:String},
   '@/lib/creator-videos-cloud-client':{fetchCreatorCloudVideos:async()=>({configured:true,videos:mappedVideos})},
   '@/lib/creator-playlists':groups,'@/lib/playlist-mapping':load('lib/playlist-mapping.ts'),
  })
  const originalFetch=global.fetch;global.fetch=()=>{throw Error('Managed playlists must not query YouTube')}
  controls.PlaylistMappingControls({playlistId:a,youtubeId:'yt-first',videoId:'first',saveBeforeNext:async()=>true})
  const cleanup=effects[0]();for(let count=0;count<8;count++)await Promise.resolve();cleanup();global.fetch=originalFetch
- assert.equal(state[0]?.next?.id,'second','Manual playlists continue mapping in their saved order without YouTube')
+ assert.equal(state[0]?.videos[1]?.id,'second','Manual playlists continue mapping in their saved order without YouTube')
  console.log('Playlist management passed: create, rename, add, remove, multiple memberships, ordering, foreign ownership, invalid input, auth and atomic rollback.')
 }
 main().catch(e=>{console.error(e);process.exitCode=1})

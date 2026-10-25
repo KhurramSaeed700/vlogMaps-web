@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { type ReactNode, useEffect, useRef, useState } from "react"
 import { createHoldToSpeed } from "@/lib/hold-to-speed"
 import { returnEditorPlayerFocus } from "@/lib/editor-player-focus"
 import { diagnosticEvent, reportHandledError } from "@/lib/monitoring/diagnostics"
 
 interface YouTubePlayerProps {
+  children?: ReactNode
   videoId: string
   currentTime: number
   seekToTime?: number | null
@@ -161,6 +162,7 @@ function getWatchShortcutDigit(event: globalThis.KeyboardEvent) {
 }
 
 export function YouTubePlayer({
+  children,
   videoId,
   currentTime: _currentTime,
   seekToTime = null,
@@ -1010,6 +1012,7 @@ export function YouTubePlayer({
     >
       <div className="relative min-h-0 flex-1">
       <div ref={containerRef} className="h-full w-full" />
+      {children}
       {isSpeedHeld && <div role="status" className="pointer-events-none absolute left-1/2 top-3 z-30 -translate-x-1/2 rounded-full bg-black/80 px-3 py-1 text-sm font-semibold text-white">2× speed</div>}
       {(autoplayMuted || autoplayNeedsTap) && (
         <button

@@ -29,7 +29,6 @@ import {
 import {
   deleteCreatorVideoFromCloud,
   fetchCreatorCloudVideos,
-  unpublishCreatorVideoFromCloud,
   uploadCreatorVideoToCloud,
   setCreatorVideoVisibilityInCloud,
 } from "@/lib/creator-videos-cloud-client"
@@ -49,7 +48,6 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
   const [playlistUrl, setPlaylistUrl] = useState(() => extractYouTubePlaylistId(initialUrl) ? initialUrl : "")
   const [allCreatorVideos, setAllCreatorVideos] = useState<TravelVideo[]>([])
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
-  const [syncingVideoId, setSyncingVideoId] = useState<string | null>(null)
   const [visibilityUpdatingId, setVisibilityUpdatingId] = useState<string | null>(null)
   const [isCreatingVideo, setIsCreatingVideo] = useState(false)
   const [cloudVideoIds, setCloudVideoIds] = useState<Set<string>>(() => new Set())
@@ -173,45 +171,6 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
     }
   }
 
-  const handleUploadVideo = async (video: TravelVideo) => {
-    if (syncingVideoId) {
-      return
-    }
-
-    setSyncingVideoId(video.id)
-    setSyncMessage("")
-
-    try {
-      const state = buildCreatorVideoStateSnapshot(video)
-      const uploadVideo = withSyncedVideoState(video, state, "published")
-      const response = await uploadCreatorVideoToCloud(uploadVideo, state, { publish: true })
-
-      if (!response.configured) {
-        setCloudConfigured(false)
-        setSyncMessage("Cloud database is not configured yet. Add DATABASE_URL in Vercel, then upload again.")
-        return
-      }
-
-      if (response.error) {
-        setSyncMessage(response.error)
-        return
-      }
-
-      if (!response.saved || !response.video) {
-        setSyncMessage("Could not upload this edited video. Please try again.")
-        return
-      }
-
-      const savedVideo = response.video
-      setCloudConfigured(true)
-      setCloudVideoIds((currentIds) => new Set(currentIds).add(savedVideo.id))
-      setAllCreatorVideos((currentVideos) => mergeTravelVideos(currentVideos, [savedVideo]))
-      setSyncMessage(`Uploaded "${savedVideo.title}" to the cloud.`)
-    } finally {
-      setSyncingVideoId(null)
-    }
-  }
-
   const handleDeleteVideo = async (videoId: string, videoTitle: string) => {
     const shouldDelete = window.confirm(`Delete "${videoTitle}" and all of its saved timestamp points?`)
     if (!shouldDelete) {
@@ -246,48 +205,8 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
     setDeletingVideoId(null)
   }
 
-  const handleUnpublishVideo = async (videoId: string, videoTitle: string) => {
-    if (syncingVideoId) {
-      return
-    }
-
-    const shouldUnpublish = window.confirm(
-      `Unpublish "${videoTitle}"? It will be removed from public pages but remain editable in your dashboard.`,
-    )
-    if (!shouldUnpublish) {
-      return
-    }
-
-    setSyncingVideoId(videoId)
-    setSyncMessage("")
-
-    try {
-      const response = await unpublishCreatorVideoFromCloud(videoId)
-
-      if (!response.configured) {
-        setCloudConfigured(false)
-        setSyncMessage("Cloud database is not configured, so this video could not be unpublished.")
-        return
-      }
-
-      if (response.error || !response.unpublished || !response.video) {
-        setSyncMessage(response.error || "Could not unpublish this video. Please try again.")
-        return
-      }
-
-      const unpublishedVideo = response.video
-      setCloudConfigured(true)
-      setAllCreatorVideos((currentVideos) => mergeTravelVideos(currentVideos, [unpublishedVideo]))
-      setSyncMessage(`Unpublished "${unpublishedVideo.title}". It is now a private draft.`)
-    } catch {
-      setSyncMessage("Could not unpublish this video. Check your connection and try again.")
-    } finally {
-      setSyncingVideoId(null)
-    }
-  }
-
   const handleVisibilityChange = async (video: TravelVideo, visibility: VideoVisibility) => {
-    if (visibilityUpdatingId || syncingVideoId || deletingVideoId || visibility === normalizeVideoVisibility(video.visibility)) return
+    if (visibilityUpdatingId || deletingVideoId || visibility === normalizeVideoVisibility(video.visibility)) return
     setVisibilityUpdatingId(video.id)
     try {
       const response = await setCreatorVideoVisibilityInCloud(video.id, visibility)
@@ -305,28 +224,26 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
     }
   }
 
-  const handleBulkEdit = async (videos: TravelVideo[], action: VideoVisibility | "draft") => {
+  const handleBulkEdit = async (videos: TravelVideo[], action: VideoVisibility) => {
     const savedIds: string[] = []
     let failed = 0
-    for (const video of videos.filter(video => video.status === "published" && video.viewerCanEdit !== false)) {
+    for (const video of videos.filter(video => video.viewerCanEdit !== false)) {
       try {
-        const response = action === "draft"
-          ? await unpublishCreatorVideoFromCloud(video.id)
-          : await setCreatorVideoVisibilityInCloud(video.id, action)
-        if (!response.video || response.error || ("updated" in response ? !response.updated : !response.unpublished)) { failed++; continue }
+        const response = await setCreatorVideoVisibilityInCloud(video.id, action)
+        if (!response.video || response.error || !response.updated) { failed++; continue }
         const savedVideo = response.video
         setAllCreatorVideos(current => mergeTravelVideos(current, [savedVideo]))
         savedIds.push(video.id)
       } catch { failed++ }
     }
-    setSyncMessage(`${savedIds.length} video${savedIds.length === 1 ? "" : "s"} updated.${failed ? ` ${failed} failed; choose the action again to retry.` : ""}${videos.some(video => video.status !== "published") ? " Drafts were skipped." : ""}`)
+    setSyncMessage(`${savedIds.length} video${savedIds.length === 1 ? "" : "s"} updated.${failed ? ` ${failed} failed; choose the action again to retry.` : ""}`)
     return savedIds
   }
 
   const stats = useMemo(() => {
     const totalViews = allCreatorVideos.reduce((sum, video) => sum + video.views, 0)
     const totalMapViews = allCreatorVideos.reduce((sum, video) => sum + video.mapViews, 0)
-    const publishedVideos = allCreatorVideos.filter((video) => video.status === "published").length
+    const publishedVideos = allCreatorVideos.filter((video) => video.status === "published" && normalizeVideoVisibility(video.visibility) === "public").length
 
     return {
       totalVideos: allCreatorVideos.length,
@@ -341,14 +258,12 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
   const selectedPlaylist = playlists.find(playlist => playlist.id === playlistId)
   const tableProps = {
     loading: isLoadingCreatorVideos,
-    pendingId: visibilityUpdatingId || syncingVideoId || deletingVideoId,
+    pendingId: visibilityUpdatingId || deletingVideoId,
     onBulkEdit: handleBulkEdit,
     onManagePlaylist: (playlist: CreatorPlaylist) => setPlaylistEditor({ id: playlist.id }),
     onAddToPlaylist: (videos: TravelVideo[]) => setPlaylistEditor({ videoIds: videos.map(video => video.id) }),
     onEdit: (video: TravelVideo) => router.push(playlistId ? playlistEditorHref(video.id, playlistId) : `/creator/video/${video.id}/edit`),
     onVisibility: (video: TravelVideo, visibility: VideoVisibility) => { void handleVisibilityChange(video, visibility) },
-    onUpload: (video: TravelVideo) => { void handleUploadVideo(video) },
-    onUnpublish: (id: string, title: string) => { void handleUnpublishVideo(id, title) },
     onDelete: (id: string, title: string) => { void handleDeleteVideo(id, title) },
   }
 
@@ -461,7 +376,7 @@ function CreatorDashboardContent({ section = "content", playlistId, initialView 
             <CardContent className="p-3 sm:p-5">
               <div className="flex items-center justify-between gap-3 sm:items-start sm:gap-4">
                 <div>
-                  <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Published</p>
+                  <p className="text-[10px] font-semibold uppercase text-muted-foreground sm:text-xs">Public videos</p>
                   {isLoadingCreatorVideos ? (
                     <Skeleton className="mt-2 h-9 w-12" />
                   ) : (

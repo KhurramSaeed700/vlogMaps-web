@@ -118,7 +118,7 @@ const travelVideoSchema = z.object({
   views: nonNegativeFiniteNumber.default(0).transform(Math.round),
   mapViews: nonNegativeFiniteNumber.default(0).transform(Math.round),
   likes: nonNegativeFiniteNumber.default(0).transform(Math.round),
-  status: z.enum(["draft", "published"]).default("draft"),
+  status: z.enum(["draft", "published"]).default("published"),
   visibility: z.enum(["private", "unlisted", "public"]).optional(),
   createdAt: safeText(64).default(() => new Date().toISOString()),
   description: safeText(5000).default(""),

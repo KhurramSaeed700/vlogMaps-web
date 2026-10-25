@@ -9,7 +9,7 @@ import { useTheme } from "next-themes"
 import * as Dialog from "@radix-ui/react-dialog"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import * as Popover from "@radix-ui/react-popover"
-import { ArrowDownUp, ArrowLeftRight, ArrowUp, Bookmark, ChevronDown, Keyboard, Map as MapIcon, MapPin, Moon, Pause, Pencil, Plane, Settings, Sun, Trash2, UploadCloud, X } from "lucide-react"
+import { ArrowDownUp, ArrowLeftRight, ArrowUp, Bookmark, ChevronDown, Keyboard, Map as MapIcon, MapPin, Moon, Pause, Pencil, Plane, Settings, Sun, Trash2, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,6 +18,7 @@ import { SplitViewResizer } from "@/components/ui/split-view-resizer"
 import { MapboxLocationPicker } from "@/components/maps/mapbox-location-picker"
 import { YouTubePlayer } from "@/components/media/youtube-player"
 import { AutoplayCountdown, autoplayCountdownSeconds } from "@/components/media/autoplay-countdown"
+import { getVideoMappingStatus } from "@/lib/video-mapping-status"
 import { PlaylistMappingControls } from "@/components/creator/playlist-mapping-controls"
 import { EditorGuidedTour } from "@/components/creator/editor-guided-tour"
 import { editorTourStartEvent } from "@/lib/editor-tour"
@@ -54,8 +55,7 @@ import {
   upsertCreatorPoint,
 } from "@/lib/creator-points"
 import { rememberPlayerDuration } from "@/lib/creator-video-details-client"
-import { syncVideoRouteMetadata, updateLocalCreatorVideo, withSyncedVideoState } from "@/lib/creator-videos"
-import { uploadCreatorVideoToCloud } from "@/lib/creator-videos-cloud-client"
+import { syncVideoRouteMetadata, updateLocalCreatorVideo } from "@/lib/creator-videos"
 import { loadCreatorVideoState } from "@/lib/creator-video-state-client"
 import type { CreatorVideoState } from "@/lib/creator-video-state"
 import { clearCreatorVideoStateLocalCache, loadCreatorVideoStateLocalCache } from "@/lib/creator-video-state-local"
@@ -577,9 +577,8 @@ export function CreatorVideoEditor({
   const [isResolvingNearbyPlace, setIsResolvingNearbyPlace] = useState(false)
   const [isTimestampNameEditing, setIsTimestampNameEditing] = useState(false)
   const [saveMessage, setSaveMessage] = useState("")
-  const [isUploadingVideo, setIsUploadingVideo] = useState(false)
-  const [playlistCompletionRequest, setPlaylistCompletionRequest] = useState(0)
-  const [uploadMessage, setUploadMessage] = useState("")
+  const [playlistPlayerOverlay, setPlaylistPlayerOverlay] = useState<HTMLDivElement | null>(null)
+  const [hasPlaylistVideoEnded, setHasPlaylistVideoEnded] = useState(false)
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false)
   const openShortcutsAfterSettingsRef = useRef(false)
   const [isSavedPlacesOpen, setIsSavedPlacesOpen] = useState(false)
@@ -646,9 +645,16 @@ export function CreatorVideoEditor({
     setResumeCountdown(resumeAutoplayDelaySeconds)
   }, [])
 
+  useEffect(() => {
+    if (hasPlaylistVideoEnded && videoDurationRef.current > 0 && currentTime < videoDurationRef.current - 1) {
+      setHasPlaylistVideoEnded(false)
+    }
+  }, [currentTime, hasPlaylistVideoEnded])
+
   const handleEditorPlayingChange = useCallback((nextIsPlaying: boolean) => {
     if (editorTourOpenRef.current && nextIsPlaying) return
     if (nextIsPlaying) {
+      setHasPlaylistVideoEnded(false)
       setResumeCountdown(null)
     }
     setIsPlaying(nextIsPlaying)
@@ -684,7 +690,6 @@ export function CreatorVideoEditor({
     setIsTripRouteDialogOpen(false)
     setIsLoadingSavedState(true)
     setSaveMessage("")
-    setUploadMessage("")
     setIsSavedPlacesOpen(false)
     setNewSavedPlaceName("")
     setSavedPlaceMessage("")
@@ -2380,6 +2385,7 @@ export function CreatorVideoEditor({
   }
 
   const handleEditorVideoEnded = (seekEndTime?: number) => {
+    setHasPlaylistVideoEnded(true)
     setResumeCountdown(null)
     setIsPlaying(false)
     const endTime = typeof seekEndTime === "number" && Number.isFinite(seekEndTime) && seekEndTime > 0
@@ -2536,12 +2542,12 @@ export function CreatorVideoEditor({
   )
   const isCapturingFlight = Boolean(flightAirportPrompt || pendingFlightTakeoff)
   const isPlacingFlightOnMap = flightAirportPrompt?.mode === "map"
+  const playlistVideoMappingStatus = useMemo(() => getVideoMappingStatus({ keyframes: sortedPoints, durationSeconds: video.durationSeconds }), [sortedPoints, video.durationSeconds])
   const savePlaylistVideoBeforeNext = useCallback(async () => {
-    if (isLoadingSavedState || draftPoint || pendingFlightTakeoff || flightAirportPrompt || isRecordingStop || isUploadingVideo) return false
+    if (isLoadingSavedState || draftPoint || pendingFlightTakeoff || flightAirportPrompt || isRecordingStop) return false
     setIsPlaying(false)
     return saveAndWait({ points: sortedPoints, tripRoute, routeShapes, savedPlaces })
-  }, [isLoadingSavedState, draftPoint, pendingFlightTakeoff, flightAirportPrompt, isRecordingStop, isUploadingVideo, saveAndWait, sortedPoints, tripRoute, routeShapes, savedPlaces])
-  const canUploadVideo = video.status !== "published"
+  }, [isLoadingSavedState, draftPoint, pendingFlightTakeoff, flightAirportPrompt, isRecordingStop, saveAndWait, sortedPoints, tripRoute, routeShapes, savedPlaces])
   const formatTripLocation = (location: CreatorTripLocation | null) => {
     if (!location) {
       return "Choose place"
@@ -2552,38 +2558,6 @@ export function CreatorVideoEditor({
 
   const scrollEditorToTop = () => {
     editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })
-  }
-
-  const uploadEditedVideo = async () => {
-    if (isUploadingVideo) {
-      return
-    }
-
-    setIsUploadingVideo(true)
-    setUploadMessage("")
-
-    const state = {
-      points: sortedPoints,
-      tripRoute,
-      routeShapes,
-      savedPlaces,
-    }
-
-    try {
-      const response = await uploadCreatorVideoToCloud(withSyncedVideoState(video, state, "published"), state, {
-        publish: true,
-      })
-
-      if (!response.configured) {
-        setUploadMessage("Cloud database is not configured yet. Add DATABASE_URL in Vercel, then upload again.")
-        return
-      }
-
-      setUploadMessage(response.saved ? "Uploaded to cloud." : "Upload failed. Please try again.")
-      if (response.saved && playlistId) setPlaylistCompletionRequest(value => value + 1)
-    } finally {
-      setIsUploadingVideo(false)
-    }
   }
 
   const enableTimestampNameEditing = () => {
@@ -3088,20 +3062,7 @@ export function CreatorVideoEditor({
         {headerActionsElement
           ? createPortal(
               <>
-                {playlistId && <PlaylistMappingControls playlistId={playlistId} youtubeId={video.youtubeId} videoId={video.id} completionRequest={playlistCompletionRequest} saveBeforeNext={savePlaylistVideoBeforeNext} />}
-                {canUploadVideo && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8"
-                    onClick={uploadEditedVideo}
-                    disabled={isUploadingVideo}
-                  >
-                    <UploadCloud className="mr-1 h-4 w-4" />
-                    {isUploadingVideo ? "Uploading..." : "Upload"}
-                  </Button>
-                )}
+                {playlistId && <PlaylistMappingControls playlistId={playlistId} youtubeId={video.youtubeId} videoId={video.id} videoEnded={hasPlaylistVideoEnded} overlayTarget={playlistPlayerOverlay} currentMappingStatus={playlistVideoMappingStatus} saveBeforeNext={savePlaylistVideoBeforeNext} />}
                 <Popover.Root open={isSavedPlacesOpen} onOpenChange={setIsSavedPlacesOpen}>
                   <Popover.Trigger asChild>
                     <Button
@@ -3550,15 +3511,11 @@ export function CreatorVideoEditor({
             onEnded={handleEditorVideoEnded}
             onSeekToEnd={handleEditorVideoEnded}
             onVolumeChange={handleVolumeChange}
-          />
+          >
+            {playlistId && <div ref={setPlaylistPlayerOverlay} />}
+          </YouTubePlayer>
           <AutoplayCountdown seconds={isEditorTourOpen ? null : resumeCountdown} />
         </div>
-
-        {uploadMessage && (
-          <div className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600" aria-live="polite">
-            {uploadMessage}
-          </div>
-        )}
 
         {saveMessage && (
           <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900" aria-live="polite">

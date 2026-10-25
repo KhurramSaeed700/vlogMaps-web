@@ -217,7 +217,8 @@ export async function createLocalCreatorVideo({
     views: metadata?.views ?? 0,
     mapViews: 0,
     likes: metadata?.likes ?? 0,
-    status: "draft",
+    status: "published",
+    visibility: "private",
     createdAt: now,
     description:
       metadata?.description?.trim() || "Creator-added travel video. Add timestamped route points to bring the map to life.",
