@@ -40,6 +40,7 @@ export const PlaylistMappingControls = memo(function PlaylistMappingControls({ p
   const [query, setQuery] = useState("")
   const [endScreenError, setEndScreenError] = useState("")
   const savingRef = useRef(false)
+  const autoAdvanceAttemptedRef = useRef(false)
   const activeRowRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const controller = new AbortController()
@@ -75,6 +76,7 @@ export const PlaylistMappingControls = memo(function PlaylistMappingControls({ p
     if (targetId === videoId) { setOpen(false); return }
     const target = playlist.videos.find(video => video.id === targetId && video.viewerCanEdit !== false)
     if (!target) return
+    autoAdvanceAttemptedRef.current = true
     savingRef.current = true
     setSavingId(targetId); setError(""); setEndScreenError("")
     try {
@@ -86,6 +88,21 @@ export const PlaylistMappingControls = memo(function PlaylistMappingControls({ p
       if (fromEndScreen) setEndScreenError(message); else { setError(message); setOpen(true) }
     } finally { savingRef.current = false; setSavingId(null) }
   }
+
+  const selectVideoRef = useRef(selectVideo)
+  selectVideoRef.current = selectVideo
+  useEffect(() => {
+    if (!videoEnded) autoAdvanceAttemptedRef.current = false
+  }, [videoEnded, videoId])
+  const autoAdvanceId = videoEnded && next?.viewerCanEdit !== false && overlayTarget && !open && !savingId && !endScreenError
+    ? next?.id : undefined
+  useEffect(() => {
+    if (!autoAdvanceId || autoAdvanceAttemptedRef.current) return
+    const timer = setTimeout(() => {
+      if (!autoAdvanceAttemptedRef.current) void selectVideoRef.current(autoAdvanceId, true)
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [autoAdvanceId])
 
   const navClass = "flex h-8 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   return <>
@@ -122,10 +139,12 @@ export const PlaylistMappingControls = memo(function PlaylistMappingControls({ p
       <button type="button" className={navClass} aria-label="Edit next playlist video" disabled={!next || next.viewerCanEdit === false || Boolean(savingId)} onClick={() => next && void selectVideo(next.id)}><ChevronRight size={18} /></button>
     </div>
     {videoEnded && next && next.viewerCanEdit !== false && overlayTarget && createPortal(
-      <div className="absolute right-3 top-1/2 z-30 w-72 max-w-[calc(100%_-_2rem)] -translate-y-1/2 rounded-2xl border border-white/20 bg-slate-950/90 p-4 text-white shadow-2xl backdrop-blur-md sm:right-5 sm:p-5" onKeyDown={event => event.stopPropagation()}>
-        <p className="text-xs font-medium uppercase tracking-wider text-teal-300">Up next in your playlist</p><p className="mt-2 line-clamp-2 text-sm font-semibold sm:text-base">{next.title}</p>
-        <Button type="button" disabled={Boolean(savingId)} onClick={() => void selectVideo(next.id, true)} className="mt-4 min-h-11 w-full gap-2 rounded-xl bg-teal-500 font-semibold text-slate-950 hover:bg-teal-400">{savingId ? "Saving…" : "Map next video"}<ArrowRight className="h-4 w-4" aria-hidden="true" /></Button>
-        <p className="mt-2 text-xs text-slate-300">Saves your current map before continuing.</p>{endScreenError && <p role="alert" className="mt-2 text-xs text-amber-200">{endScreenError}</p>}
+      <div className="absolute right-3 top-1/2 z-30 max-w-[calc(100%_-_2rem)] -translate-y-1/2 sm:right-5" onKeyDown={event => event.stopPropagation()}>
+        <Button type="button" disabled={Boolean(savingId)} onClick={() => void selectVideo(next.id, true)} aria-label="Map next video; saves and opens automatically after 5 seconds" className="relative min-h-11 overflow-hidden rounded-xl bg-teal-700 px-5 font-semibold text-white shadow-lg hover:bg-teal-700">
+          {autoAdvanceId && !autoAdvanceAttemptedRef.current && <span aria-hidden="true" className="route-intro-countdown-fill absolute inset-0 origin-left bg-teal-500" style={{ animationDuration: "5000ms" }} />}
+          <span className="relative z-10 flex items-center gap-2">{savingId ? "Saving…" : "Map next video"}<ArrowRight className="h-4 w-4" aria-hidden="true" /></span>
+        </Button>
+        {endScreenError && <p role="alert" className="mt-2 max-w-64 rounded-lg bg-slate-950/90 p-3 text-xs text-amber-200">{endScreenError}</p>}
       </div>, overlayTarget
     )}
   </>

@@ -79,6 +79,21 @@ export function createGreatCircleFlightCoordinates(
     flightPathMaxSegments,
   )
   const sinAngularDistance = Math.sin(angularDistance)
+  // Antipodal endpoints have no unique shortest arc. Pick a stable plane,
+  // rather than interpolating longitude/latitude into a longer rhumb-like path.
+  let antipodalTangent: number[] | null = null
+  if (angularDistance > Math.PI / 2 && Math.abs(sinAngularDistance) < 0.000001) {
+    antipodalTangent = endVector.map((value, axis) => value - dotProduct * startVector[axis])
+    let length = Math.hypot(...antipodalTangent)
+    if (length < 1e-12) {
+      const axis = Math.abs(startVector[0]) < Math.abs(startVector[1])
+        ? Math.abs(startVector[0]) < Math.abs(startVector[2]) ? 0 : 2
+        : Math.abs(startVector[1]) < Math.abs(startVector[2]) ? 1 : 2
+      antipodalTangent = startVector.map((value, index) => (index === axis ? 1 : 0) - startVector[axis] * value)
+      length = Math.hypot(...antipodalTangent)
+    }
+    antipodalTangent = antipodalTangent.map(value => value / length)
+  }
   const coordinates: RouteCoordinate[] = [start]
   let previousLongitude = start[0]
 
@@ -87,7 +102,15 @@ export function createGreatCircleFlightCoordinates(
     let longitude: number
     let latitude: number
 
-    if (Math.abs(sinAngularDistance) < 0.000001) {
+    if (index === segmentCount) {
+      longitude = end[0]
+      latitude = end[1]
+    } else if (antipodalTangent) {
+      const angle = angularDistance * progress
+      const [x, y, z] = startVector.map((value, axis) => value * Math.cos(angle) + antipodalTangent![axis] * Math.sin(angle))
+      longitude = Math.atan2(y, x) * 180 / Math.PI
+      latitude = Math.asin(Math.min(1, Math.max(-1, z))) * 180 / Math.PI
+    } else if (Math.abs(sinAngularDistance) < 0.000001) {
       const endLongitude = unwrapLongitude(end[0], start[0])
       longitude = start[0] + (endLongitude - start[0]) * progress
       latitude = start[1] + (end[1] - start[1]) * progress
@@ -110,30 +133,11 @@ export function createGreatCircleFlightCoordinates(
   return coordinates
 }
 
-// Illustrative ocean corridors, not airline flight plans. Keep the same path in
-// previews and live tracking so the airplane never changes routes on handoff.
+// With only airport endpoints available, use the shortest spherical path as an
+// illustration, not a claimed flight track. Real routing depends on date,
+// airline, weather and airspace. Preview and tracking share this geometry.
 export function createIllustrativeFlightCoordinates(start: RouteCoordinate, end: RouteCoordinate) {
-  const canonical = (lng: number) => ((lng + 180) % 360 + 360) % 360 - 180
-  const isAmericas = ([lng, lat]: RouteCoordinate) => canonical(lng) >= -170 && canonical(lng) <= -30 && lat >= -60 && lat <= 83
-  const startInAmericas = isAmericas(start), endInAmericas = isAmericas(end)
-  if (startInAmericas === endInAmericas) return createGreatCircleFlightCoordinates(start, end)
-  const overseas = startInAmericas ? end : start
-  const overseasLng = canonical(overseas[0])
-  // Asia/Oceania use the Pacific; Europe/Africa use the Atlantic. Bound the
-  // corridor latitude to avoid routing a long-haul illustration over a pole.
-  const latitude = Math.max(-40, Math.min(45, (start[1] + end[1]) / 2))
-  const pacific = overseasLng >= 35 || overseasLng < -170
-  const corridor: RouteCoordinate[] = pacific ? [[150, latitude], [200, latitude]] : [[-35, latitude]]
-  if (startInAmericas) corridor.reverse()
-  const waypoints = [start, ...corridor, end]
-  const coordinates: RouteCoordinate[] = [start]
-  for (let leg = 1; leg < waypoints.length; leg++) {
-    const section = createGreatCircleFlightCoordinates(waypoints[leg - 1], waypoints[leg])
-    for (const point of section.slice(1)) {
-      coordinates.push([unwrapLongitude(point[0], coordinates[coordinates.length - 1][0]), point[1]])
-    }
-  }
-  return coordinates
+  return createGreatCircleFlightCoordinates(start, end)
 }
 
 function getCoordinateDistanceKm(start: RoutableKeyframe, end: RoutableKeyframe) {

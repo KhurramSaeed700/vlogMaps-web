@@ -65,6 +65,25 @@ async function main(){
  reset();states[0]=null;render();const cleanup=effects[0]();await flush();assert.equal(states[0].title,playlist.title,'All imported playlist types load from creator library without YouTube');cleanup()
  reset();fetchResponse={configured:true,videos:[],error:'offline'};render();effects[0]();await flush();assert.ok(states[4]);assert.ok(button(render(),'Choose playlist video to edit'),'Retry remains accessible after load error')
  reset();states[0]=null;render();const abort=effects[0]();abort();await flush();assert.equal(states[0],null,'Unmount cancels stale library response')
- console.log('Editor playlist passed: library loading, manual middle entry, full chooser, mapping statuses, search, save-before-switch, failure guards, concurrency, read-only episodes, next/previous bounds, end overlay, retry and abort.')
+ const realSetTimeout=global.setTimeout,realClearTimeout=global.clearTimeout
+ let scheduled=null,delay,cancelled=0
+ global.setTimeout=(fn,ms)=>{scheduled=fn;delay=ms;return 123}
+ global.clearTimeout=id=>{assert.equal(id,123);scheduled=null;cancelled++}
+ try {
+  reset();tree=render(overlay)
+  const fill=walk(tree).find(n=>n.props?.className?.includes('route-intro-countdown-fill'))
+  assert.equal(fill.props.style.animationDuration,'5000ms','Fill animation lasts five seconds')
+  const cancelTimer=effects.at(-1)();assert.equal(delay,5000);assert.equal(saves,0)
+  scheduled();await flush();assert.equal(saves,1);assert.equal(navigations[0],helpers.playlistEditorHref('db-c',playlist.id,'db-b'),'Countdown saves and opens next episode')
+  cancelTimer();assert.equal(scheduled,null)
+  reset();render(overlay);const cancelReplay=effects.at(-1)();cancelReplay();assert.equal(scheduled,null,'Replay/unmount clears countdown')
+  reset();states[1]=true;render(overlay);assert.equal(effects.at(-1)(),undefined,'Choosing another episode pauses automatic advance')
+  reset();tree=render(overlay);effects.at(-1)();const staleTimer=scheduled
+  await endButton(tree).props.onClick();await flush();staleTimer();await flush();assert.equal(saves,1,'Early click cannot race countdown')
+  reset();saveResult=false;render(overlay);effects.at(-1)();scheduled();await flush()
+  assert.equal(navigations.length,0);assert.ok(states[7],'Failed automatic save stays in editor with an error')
+  render(overlay);assert.equal(effects.at(-1)(),undefined,'Failed save is not automatically retried')
+ } finally {global.setTimeout=realSetTimeout;global.clearTimeout=realClearTimeout}
+ console.log('Editor playlist passed: library loading, manual middle entry, full chooser, mapping statuses, search, save-before-switch, failure guards, concurrency, read-only episodes, next/previous bounds, end overlay, five-second auto advance, cancellation, retry and abort.')
 }
 main().catch(e=>{console.error(e);process.exitCode=1})

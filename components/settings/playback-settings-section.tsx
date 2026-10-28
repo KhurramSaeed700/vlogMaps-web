@@ -1,5 +1,6 @@
 "use client"
 
+import { DefaultMapStyleSetting } from "@/components/settings/default-map-style-setting"
 import * as SliderPrimitive from "@radix-ui/react-slider"
 import { Volume2 } from "lucide-react"
 import type { PlaybackPreferences } from "@/lib/playback-preferences"
@@ -61,6 +62,7 @@ export function PlaybackSettingsSection({
           />
         </SliderPrimitive.Root>
       </div>
+      <DefaultMapStyleSetting tone={tone} />
     </div>
   )
 }

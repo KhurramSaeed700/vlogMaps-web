@@ -1,5 +1,6 @@
 "use client"
 
+import { useMapStylePreference } from "@/lib/use-map-style-preference"
 import { getFlightRenderSegments } from "@/lib/flight-render-geometry"
 
 import { buildStopRegionCameraPlan, getStopRegionCameraAtTime, type StopRegionCameraWindow } from "@/lib/stop-region-camera"
@@ -951,11 +952,6 @@ export function MapboxLocationPicker({
   if (persistedViewRef.current === undefined) {
     persistedViewRef.current = loadPersistedMapView(persistentViewKey)
   }
-  const persistedMapStyleRef = useRef<MapStyleOptionId | undefined>(undefined)
-  if (persistedMapStyleRef.current === undefined) {
-    persistedMapStyleRef.current = loadPersistedMapStyle(persistentViewKey) ?? persistedViewRef.current?.style ?? "streets"
-  }
-
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<mapboxgl.Map | null>(null)
   const routePreloadTimerRef = useRef<number | null>(null)
@@ -1026,7 +1022,7 @@ export function MapboxLocationPicker({
   const activeTripEndpointRef = useRef(activeTripEndpoint)
   const hasSetInitialViewRef = useRef(false)
   const skipInitialValueCenterRef = useRef(Boolean(persistedViewRef.current))
-  const appliedMapStyleRef = useRef<MapStyleOptionId>(persistedMapStyleRef.current)
+  const appliedMapStyleRef = useRef<MapStyleOptionId>("streets")
   const routeRequestIdRef = useRef(0)
   const timestampRouteSegmentsRef = useRef<TimestampRouteSegment[]>([])
   const tripRouteCoordinatesRef = useRef<RouteCoordinate[]>([])
@@ -1036,7 +1032,7 @@ export function MapboxLocationPicker({
   const suppressAutocompleteRef = useRef(false)
   const pendingTripRouteKeyRef = useRef<string | null>(null)
   const [isLoaded, setIsLoaded] = useState(false)
-  const [mapStyle, setMapStyle] = useState<MapStyleOptionId>(persistedMapStyleRef.current)
+  const { style: mapStyle, ready: isMapStylePreferenceReady, setStyle: setMapStyle } = useMapStylePreference()
   const onStopRegionClickRef = useRef(onStopRegionClick)
   useEffect(() => { onStopRegionClickRef.current = onStopRegionClick }, [onStopRegionClick])
   useStopRegions(mapInstanceRef, isLoaded, mapStyle, regionPoints ?? points, onStopRegionClick)
@@ -3538,6 +3534,7 @@ export function MapboxLocationPicker({
   }
 
   useEffect(() => {
+    if (!isMapStylePreferenceReady) return
     if (!hasMapboxAccessToken) {
       setIsLoaded(true)
       return
@@ -3570,6 +3567,7 @@ export function MapboxLocationPicker({
       maxTileCacheSize: editorVisibleMapMaxTileCacheSize,
     })
 
+    appliedMapStyleRef.current = mapStyle
     attachMapLoading(map, () => mapStyleOptions.find((option) => option.id === appliedMapStyleRef.current)?.style ?? mapStyleOptions[0].style)
     map.addControl(new mapboxgl.NavigationControl(), "bottom-right")
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right")
@@ -3733,7 +3731,7 @@ export function MapboxLocationPicker({
       tripStartMarkerRef.current = null
       tripEndMarkerRef.current = null
     }
-  }, [])
+  }, [isMapStylePreferenceReady])
 
   useEffect(() => {
     const container = mapRef.current

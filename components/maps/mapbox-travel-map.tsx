@@ -1,5 +1,6 @@
 "use client"
 
+import { useMapStylePreference } from "@/lib/use-map-style-preference"
 import { getFlightRenderSegments } from "@/lib/flight-render-geometry"
 import { buildStopRegionCameraPlan, getStopRegionCameraAtTime, type StopRegionCameraWindow } from "@/lib/stop-region-camera"
 import { getTripPreviewTiming, getTripPreviewDistanceProgress, tripPreviewCameraMs, tripPreviewCompleteHoldMs } from "@/lib/trip-preview"
@@ -2397,7 +2398,7 @@ export function MapboxTravelMap({
   const searchAbortRef = useRef<AbortController | null>(null)
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const suppressAutocompleteRef = useRef(false)
-  const [mapStyle, setMapStyle] = useState<MapStyleOptionId>("streets")
+  const { style: mapStyle, ready: isMapStylePreferenceReady, setStyle: setMapStyle } = useMapStylePreference()
   const [isLoaded, setIsLoaded] = useState(false)
   const [isTrackingEnabled, setIsTrackingEnabled] = useState(true)
   const [isTrackingLoading, setIsTrackingLoading] = useState(false)
@@ -4371,6 +4372,7 @@ export function MapboxTravelMap({
   }
 
   useEffect(() => {
+    if (!isMapStylePreferenceReady) return
     if (!hasMapboxAccessToken) {
       setMapError("Mapbox is not configured. Add NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN to .env.local and restart the dev server.")
       setIsLoaded(true)
@@ -4591,7 +4593,7 @@ export function MapboxTravelMap({
       travelerMarkerSizeRef.current = null
       routeLayersReadyRef.current = false
     }
-  }, [])
+  }, [isMapStylePreferenceReady])
 
   useEffect(() => {
     if (!mapInstanceRef.current || !isLoaded) {
