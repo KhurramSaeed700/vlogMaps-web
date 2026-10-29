@@ -168,3 +168,21 @@ test('rapid land movement retains its existing zoom and flight zoom respects map
   const limited = build([flight(10,20)],{...desktop,maxZoom:8})
   assert.equal(getCameraPlanZoom(limited,20),8)
 })
+
+test('landing keeps city context on small screens and at high latitudes', () => {
+  for (const latitude of [0, 45, 70, 80]) for (const width of [320, 768, 1440]) {
+    const viewport={width,height:800,minZoom:1,maxZoom:18}
+    const plan=build([{...flight(10,70),coordinates:[[-74,40],[24,latitude]]}],viewport)
+    const w=plan[0]
+    assert.ok(w.landingZoom<=9,'Approach never tightens to airport detail')
+    const visibleKm=40075*Math.cos(latitude*Math.PI/180)*Math.min(width,800)/(512*2**w.landingZoom)
+    assert.ok(visibleKm>=60/0.8-1e-8,'At least a city-sized region stays visible')
+    for(const time of [70,71,73,76]) {
+      assert.equal(getCameraPlanZoom(plan,time),w.landingZoom,'City view is held for six video seconds after touchdown')
+      assert.equal(getCameraPlanTarget(plan,time).center,null,'Traveler remains centered')
+    }
+    assert.ok(getCameraPlanZoom(plan,78)>w.landingZoom,'Ground detail returns gently after the hold')
+    assert.equal(getCameraPlanZoom(plan,w.end),12)
+  }
+  for(const name of ['mapbox-travel-map','mapbox-location-picker']) assert.match(fs.readFileSync(path.join(__dirname,'../components/maps',name+'.tsx'),'utf8'),/getFlightLandingCityZoom\(/,'Both live target fallbacks share the city zoom')
+})

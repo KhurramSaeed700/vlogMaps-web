@@ -19,6 +19,9 @@ import { MapboxLocationPicker } from "@/components/maps/mapbox-location-picker"
 import { YouTubePlayer } from "@/components/media/youtube-player"
 import { AutoplayCountdown, autoplayCountdownSeconds } from "@/components/media/autoplay-countdown"
 import { getVideoMappingStatus } from "@/lib/video-mapping-status"
+import { getStopRoutePreviewPoints } from "@/lib/stop-route-preview"
+import { getTimestampGapWarnings } from "@/lib/timestamp-gap-warnings"
+import { TimestampGapWarning } from "@/components/creator/timestamp-gap-warning"
 import { PlaylistMappingControls } from "@/components/creator/playlist-mapping-controls"
 import { EditorGuidedTour } from "@/components/creator/editor-guided-tour"
 import { editorTourStartEvent } from "@/lib/editor-tour"
@@ -848,6 +851,18 @@ export function CreatorVideoEditor({
   }, [])
 
   const sortedPoints = useMemo(() => sortCreatorPoints(points), [points])
+  const stopRoutePreviewPoints = useMemo(() => getStopRoutePreviewPoints(sortedPoints, draftPoint, isRecordingStop), [sortedPoints, draftPoint, isRecordingStop])
+  const timestampGapWarnings = useMemo(() => getTimestampGapWarnings(sortedPoints), [sortedPoints])
+  const draftTimestampGap = useMemo(() => {
+    if (!draftPoint) return null
+    const drafts = [
+      { ...draftPoint, id: draftPoint.id ?? "pending:point" },
+      ...(draftFlightLandingPoint ? [{ ...draftFlightLandingPoint, id: draftFlightLandingPoint.id ?? "pending:landing" }] : []),
+    ]
+    const draftIds = new Set(drafts.map(point => point.id))
+    const candidates = [...sortedPoints.filter(point => !draftIds.has(point.id)), ...drafts]
+    return getTimestampGapWarnings(candidates).find(warning => draftIds.has(warning.fromId) || draftIds.has(warning.toId)) ?? null
+  }, [sortedPoints, draftPoint, draftFlightLandingPoint])
   const stopRegionPoints = useMemo<StopRegionPoint[]>(() => {
     const regions: StopRegionPoint[] = sortedPoints.filter(point => point.id !== draftPoint?.id)
     if (draftPoint?.regionCircle && draftPoint.lat !== null && draftPoint.lng !== null) {
@@ -2591,6 +2606,7 @@ export function CreatorVideoEditor({
               : "border-orange-200 bg-orange-50 text-orange-950 dark:border-orange-400/30 dark:bg-orange-500/10 dark:text-orange-100"
         }`}
       >
+        {draftTimestampGap && <TimestampGapWarning warning={draftTimestampGap} />}
         <div className="flex flex-wrap items-center gap-2" title={draftPoint.pointType !== "flight" ? "Drag the numbered map pin to move this timestamp." : undefined}>
           <span className="mr-auto text-xs font-semibold">Edit {activePointNumber ? `#${activePointNumber}` : "timestamp"}</span>
           {draftPoint.pointType !== "flight" && (
@@ -3768,6 +3784,8 @@ export function CreatorVideoEditor({
                 </div>
               </div>
 
+              {(draftTimestampGap ?? timestampGapWarnings[0]) && <TimestampGapWarning warning={draftTimestampGap ?? timestampGapWarnings[0]} />}
+
               {draftPoint && !draftPoint.id && !isRecordingStop && (
                 <div className="w-full rounded-md bg-orange-50 px-3 py-2 text-sm text-orange-900 dark:bg-orange-500/10 dark:text-orange-100">
                   <div className="flex items-center justify-between gap-3">
@@ -4003,7 +4021,7 @@ export function CreatorVideoEditor({
           landmarkSearchResult={landmarkSearchResult}
           value={activeDraftMapValue}
           activeRegionRadiusKm={activeDraftMapPoint?.regionCircle?.radiusKm}
-          points={sortedPoints}
+          points={stopRoutePreviewPoints}
           onSearchLocationChange={(location) => {
             searchedLocationRef.current = location
           }}
@@ -4041,7 +4059,7 @@ export function CreatorVideoEditor({
                 ? `flight-edit:${draftPoint.id}:${activeFlightEditEndpoint}`
                 : null
           }
-          isRouteShapingDisabled={isAwaitingMapPlacement || isPlacingSavedPlace || isPlacingFlightOnMap}
+          isRouteShapingDisabled={isRecordingStop || isAwaitingMapPlacement || isPlacingSavedPlace || isPlacingFlightOnMap}
           activeTripEndpoint={activeTripEndpoint}
           onTripEndpointChange={updateTripEndpoint}
           onTripRouteShapeChange={updateTripRouteShape}

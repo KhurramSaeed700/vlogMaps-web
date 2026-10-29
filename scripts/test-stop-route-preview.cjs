@@ -1,0 +1,33 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript')
+function load(file,mocks={}){const mod={exports:{}};new Function('module','exports','require',ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText)(mod,mod.exports,name=>mocks[name]??{});return mod.exports}
+const {getStopRoutePreviewPoints:preview}=load('lib/stop-route-preview.ts')
+const {createInitialRoutedLegs}=load('lib/mapbox-directions.ts')
+const previous={id:'previous',time:500,stopEndTime:518,lat:70,lng:-149,pointType:'stop',location:'Previous stop',description:''}
+const point={id:'point',time:546,lat:70.05,lng:-149,pointType:'point',location:'Road',description:''}
+const points=[previous,point],original=JSON.stringify(points)
+const draft={time:599,lat:70.1,lng:-149,pointType:'stop',location:'New stop',description:''}
+assert.equal(preview(points,null,true),points)
+assert.equal(preview(points,draft,false),points,'No preview outside stop recording')
+assert.equal(preview(points,{...draft,lat:null},true),points,'Do not route before a stop is placed')
+assert.equal(preview(points,{...draft,lng:NaN},true),points)
+assert.equal(preview(points,{...draft,pointType:'point'},true),points,'Ordinary drafts retain their existing flow')
+const open=preview(points,draft,true)
+assert.equal(open.length,3);assert.equal(open.at(-1).time,599);assert.equal(open.at(-1).stopEndTime,undefined)
+const legs=createInitialRoutedLegs(open)
+assert.equal(legs.length,2,'Incoming route exists immediately while stop remains open')
+assert.equal(legs.at(-1).fromTime,546);assert.equal(legs.at(-1).toTime,599)
+assert.deepEqual(legs.at(-1).coordinates.at(-1),[-149,70.1]);assert.notEqual(legs.at(-1).routeKind,'flight','Arrival uses ground routing')
+const anonymous=preview(points,{...draft,regionCircle:{anonymous:true,radiusKm:5}},true)
+assert.equal(anonymous.at(-1).regionCircle.anonymous,true)
+assert.equal(preview(points,{...draft,id:'point'},true).length,2,'Existing stop draft is replaced without duplicate markers')
+const moved=preview(points,{...draft,lat:70.2},true);assert.equal(moved.at(-1).lat,70.2,'Repositioning immediately moves the preview route')
+assert.equal(preview(points,null,false),points,'Cancelling removes route preview')
+assert.equal(JSON.stringify(points),original,'Saved timestamps and stop duration are untouched')
+const closed=[...points,{...draft,id:'saved',stopEndTime:650}]
+assert.equal(preview(closed,null,false),closed,'Closing hands off to one persisted stop')
+assert.equal(preview([],draft,true).length,1,'A first stop works without inventing a prior location')
+const editor=fs.readFileSync('components/creator/creator-video-editor.tsx','utf8')
+assert.match(editor,/points=\{stopRoutePreviewPoints\}/)
+assert.match(editor,/getStopRoutePreviewPoints\(sortedPoints, draftPoint, isRecordingStop\), \[sortedPoints, draftPoint, isRecordingStop\]/,'Playback time cannot refetch preview routes each frame')
+assert.match(editor,/isRouteShapingDisabled=\{isRecordingStop \|\|/,'Unfinished preview legs cannot create persisted shaping handles')
+console.log('Open stop route passed: immediate incoming ground path, placed/searched/reused locations, no premature save, anonymous stops, repositioning, cancellation, completion, duplicate prevention and stable playback dependencies.')

@@ -40,6 +40,7 @@ import { getCoordinateSearchResult } from "@/lib/location-search/query-utils"
 import {
   flightOverviewPaddingRatio,
   getFlightCameraPreloadTargets,
+  getFlightLandingCityZoom,
   getFlightLandingApproachProgress,
   getFlightLandingApproachStartTime,
   getFlightOverviewSegment,
@@ -1419,8 +1420,8 @@ function getFlightOverviewCameraTarget(
 
   const landingApproachProgress = getFlightLandingApproachProgress(flightLeg, currentTime)
   const landingApproachZoom = Math.max(
-    target?.zoom ?? map.getMinZoom(),
-    Math.min(map.getMaxZoom(), sharedFlightCameraMotion.landingApproachZoom),
+    map.getMinZoom(),
+    getFlightLandingCityZoom(map.getContainer().clientWidth, map.getContainer().clientHeight, flightEnd[1], map.getMaxZoom()),
   )
   const landingApproachTarget =
     target && landingApproachProgress > 0

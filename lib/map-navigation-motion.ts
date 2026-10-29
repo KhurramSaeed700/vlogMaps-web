@@ -14,13 +14,25 @@ export const sharedFlightCameraMotion = {
   preflightLeadSeconds: 8,
   landingApproachLeadSeconds: 12,
   landingApproachMaxDurationFraction: 0.3,
-  landingApproachZoom: 10.8,
+  landingApproachZoom: 9,
+  landingCitySpanKm: 60,
+  landingCityHoldSeconds: 6,
+  landingRecoverySeconds: 4,
   pathViewportFraction: 0.58,
   maxZoom: 6.6,
   centerSmoothingMs: 480,
   zoomSmoothingMs: 900,
   boundedLookAheadSegments: 6,
 } as const
+
+// Keep a city-sized area visible around the airport on narrow maps and at high
+// latitudes too. Called while planning targets; no route scans or lookups.
+export function getFlightLandingCityZoom(width: number, height: number, latitude: number, maxZoom: number) {
+  const pixels = Math.max(128, Math.min(width, height)) * 0.8
+  const latitudeScale = Math.cos(Math.min(80, Math.abs(latitude)) * Math.PI / 180)
+  const cityZoom = Math.log2(40075 * latitudeScale * pixels / (512 * sharedFlightCameraMotion.landingCitySpanKm))
+  return Math.min(maxZoom, sharedFlightCameraMotion.landingApproachZoom, cityZoom)
+}
 
 export function getFlightLandingApproachStartTime(segment: {
   fromTime: number

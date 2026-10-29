@@ -34,6 +34,7 @@ import {
 import {
   flightOverviewPaddingRatio,
   getFlightCameraPreloadTargets,
+  getFlightLandingCityZoom,
   getFlightLandingApproachProgress,
   getFlightOverviewSegment,
   getFlightPreloadSegment,
@@ -1375,11 +1376,11 @@ export function MapboxLocationPicker({
       flightSegment,
       progressTime,
     )
-    const landingApproachZoom = Math.max(
-      camera.zoom,
-      Math.min(map.getMaxZoom(), sharedFlightCameraMotion.landingApproachZoom),
-    )
     const flightEnd = flightSegment.coordinates[flightSegment.coordinates.length - 1]
+    const landingApproachZoom = Math.max(
+      map.getMinZoom(),
+      getFlightLandingCityZoom(container.clientWidth, container.clientHeight, flightEnd[1], map.getMaxZoom()),
+    )
     const landingBounds = new mapboxgl.LngLatBounds(activeTravelerCoordinate, activeTravelerCoordinate)
     landingBounds.extend(flightEnd)
     const landingCamera =

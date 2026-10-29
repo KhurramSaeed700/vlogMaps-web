@@ -1,4 +1,4 @@
-import { getFlightLandingApproachStartTime, isRealtimeNavigationSegment, sharedFlightCameraMotion } from "./map-navigation-motion"
+import { getFlightLandingApproachStartTime, getFlightLandingCityZoom, isRealtimeNavigationSegment, sharedFlightCameraMotion } from "./map-navigation-motion"
 
 interface CameraSegment {
   fromTime: number
@@ -109,11 +109,11 @@ export function buildCameraZoomPlan(
       start: segment.fromTime - lead,
       departure: segment.fromTime,
       arrival: segment.toTime,
-      end: segment.toTime + 1.5,
+      end: segment.toTime + (isFlight ? sharedFlightCameraMotion.landingCityHoldSeconds + sharedFlightCameraMotion.landingRecoverySeconds : 1.5),
       zoom,
       approachStart: isFlight ? getFlightLandingApproachStartTime(segment) : segment.toTime,
       landingZoom: isFlight
-        ? Math.max(zoom, Math.min(viewport.maxZoom, sharedFlightCameraMotion.landingApproachZoom))
+        ? Math.max(viewport.minZoom, getFlightLandingCityZoom(viewport.width, viewport.height, segment.coordinates[segment.coordinates.length - 1][1], viewport.maxZoom))
         : zoom,
       fromZoom: zoom, toZoom: zoom,
       flightContexts: isFlight
@@ -185,8 +185,9 @@ function getWindowZoom(window: CameraZoomWindow, time: number) {
     zoom = window.zoom + (window.landingZoom - window.zoom) *
       ease((time - window.approachStart) / (window.arrival - window.approachStart))
   } else {
-    zoom = window.landingZoom + (window.toZoom - window.landingZoom) *
-      ease((time - window.arrival) / (window.end - window.arrival))
+    const holdEnd = Math.min(window.end, window.arrival + (window.flightContexts.length ? sharedFlightCameraMotion.landingCityHoldSeconds : 0))
+    zoom = time <= holdEnd ? window.landingZoom : window.landingZoom + (window.toZoom - window.landingZoom) *
+      ease((time - holdEnd) / (window.end - holdEnd))
   }
 
   return zoom
